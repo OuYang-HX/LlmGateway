@@ -157,7 +157,7 @@ impl LlmProxy {
     }
 
     /// Extract model name from request body
-    fn extract_model_from_body(&self, body: &[u8]) -> Option<String> {
+    pub fn extract_model_from_body(&self, body: &[u8]) -> Option<String> {
         serde_json::from_slice::<serde_json::Value>(body)
             .ok()
             .and_then(|v| v.get("model")?.as_str().map(|s| s.to_string()))
