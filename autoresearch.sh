@@ -13,12 +13,12 @@ fi
 TEST_OUTPUT=$(cargo test 2>&1 || true)
 
 # Count total tests and passed tests
-TOTAL=$(echo "$TEST_OUTPUT" | grep -oP '\d+ passed' | grep -oP '\d+' || echo "0")
-FAILED=$(echo "$TEST_OUTPUT" | grep -oP '\d+ failed' | grep -oP '\d+' || echo "0")
-PASSED=$((TOTAL))
+PASSED=$(echo "$TEST_OUTPUT" | grep -oP '\d+ passed' | head -1 | grep -oP '\d+' || echo "0")
+FAILED=$(echo "$TEST_OUTPUT" | grep -oP '\d+ failed' | head -1 | grep -oP '\d+' || echo "0")
+TOTAL=$((PASSED + FAILED))
 
 # If cargo test itself failed to run, report 0
-if echo "$TEST_OUTPUT" | grep -q "error\["; then
+if echo "$TEST_OUTPUT" | grep -q "could not compile"; then
   PASSED=0
   TOTAL=0
 fi
