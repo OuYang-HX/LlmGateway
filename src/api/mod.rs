@@ -210,6 +210,7 @@ fn default_token_header_field() -> String { "Authorization".to_string() }
 fn default_token_header_prefix() -> String { "Bearer ".to_string() }
 fn default_token_expiry() -> i64 { 86400 }
 fn default_weight() -> i64 { 1 }
+fn default_cost_multiplier() -> f64 { 1.0 }
 fn default_post() -> String { "POST".to_string() }
 fn default_json() -> String { "json".to_string() }
 fn default_username_field() -> String { "username".to_string() }
@@ -813,4 +814,254 @@ pub async fn get_token_rate(
 #[derive(Debug, Deserialize)]
 pub struct TokenRateParams {
     pub provider_id: Option<String>,
+}
+
+// ========== Unified Model handlers ==========
+
+#[derive(Debug, Deserialize)]
+pub struct CreateModelRequest {
+    pub id: String,
+    pub name: String,
+    pub description: Option<String>,
+    #[serde(default = "default_model_type")]
+    pub model_type: String,
+    #[serde(default)]
+    pub priority: i64,
+    pub config: Option<serde_json::Value>,
+}
+
+fn default_model_type() -> String { "chat".to_string() }
+
+/// Create a new unified model
+pub async fn create_model(
+    State(state): State<AppState>,
+    Json(req): Json<CreateModelRequest>,
+) -> impl IntoResponse {
+    let config_json = req.config.as_ref().map(|c| serde_json::to_string(c).unwrap_or_default());
+    
+    match state.db.create_model(
+        &req.id,
+        &req.name,
+        req.description.as_deref(),
+        &req.model_type,
+        req.priority,
+        config_json.as_deref(),
+    ).await {
+        Ok(()) => (StatusCode::CREATED, Json(serde_json::json!({
+            "id": req.id,
+            "name": req.name,
+            "message": "Model created successfully"
+        }))).into_response(),
+        Err(e) => {
+            tracing::error!("Failed to create model: {}", e);
+            (StatusCode::INTERNAL_SERVER_ERROR, Json(serde_json::json!({"error": e.to_string()}))).into_response()
+        }
+    }
+}
+
+/// List all unified models
+pub async fn list_models(
+    State(state): State<AppState>,
+) -> impl IntoResponse {
+    match state.db.list_models_with_mappings().await {
+        Ok(models) => Json(models).into_response(),
+        Err(e) => {
+            tracing::error!("Failed to list models: {}", e);
+            (StatusCode::INTERNAL_SERVER_ERROR, Json(serde_json::json!({"error": e.to_string()}))).into_response()
+        }
+    }
+}
+
+/// Get a specific unified model
+pub async fn get_model(
+    State(state): State<AppState>,
+    Path(id): Path<String>,
+) -> impl IntoResponse {
+    match state.db.get_model_with_mappings(&id).await {
+        Ok(Some(model)) => Json(model).into_response(),
+        Ok(None) => (StatusCode::NOT_FOUND, Json(serde_json::json!({"error": "Model not found"}))).into_response(),
+        Err(e) => {
+            tracing::error!("Failed to get model: {}", e);
+            (StatusCode::INTERNAL_SERVER_ERROR, Json(serde_json::json!({"error": e.to_string()}))).into_response()
+        }
+    }
+}
+
+/// Update a unified model
+#[derive(Debug, Deserialize)]
+pub struct UpdateModelRequest {
+    pub name: Option<String>,
+    pub description: Option<String>,
+    pub model_type: Option<String>,
+    pub is_active: Option<bool>,
+    pub priority: Option<i64>,
+    pub config: Option<serde_json::Value>,
+}
+
+pub async fn update_model(
+    State(state): State<AppState>,
+    Path(id): Path<String>,
+    Json(req): Json<UpdateModelRequest>,
+) -> impl IntoResponse {
+    // Get existing model
+    let existing = match state.db.get_model(&id).await {
+        Ok(Some(m)) => m,
+        Ok(None) => return (StatusCode::NOT_FOUND, Json(serde_json::json!({"error": "Model not found"}))).into_response(),
+        Err(e) => {
+            tracing::error!("Failed to get model: {}", e);
+            return (StatusCode::INTERNAL_SERVER_ERROR, Json(serde_json::json!({"error": e.to_string()}))).into_response();
+        }
+    };
+
+    let name = req.name.as_deref().unwrap_or(&existing.name);
+    let description = req.description.as_ref().map(|s| s.as_str()).or(existing.description.as_deref());
+    let model_type = req.model_type.as_deref().unwrap_or(&existing.model_type);
+    let is_active = req.is_active.unwrap_or(existing.is_active);
+    let priority = req.priority.unwrap_or(existing.priority);
+    let config_json = req.config.as_ref()
+        .map(|c| serde_json::to_string(c).ok())
+        .unwrap_or(existing.config.clone());
+
+    match state.db.update_model(
+        &id,
+        name,
+        description,
+        model_type,
+        is_active,
+        priority,
+        config_json.as_deref(),
+    ).await {
+        Ok(()) => (StatusCode::OK, Json(serde_json::json!({"id": id, "message": "Model updated"}))).into_response(),
+        Err(e) => {
+            tracing::error!("Failed to update model: {}", e);
+            (StatusCode::INTERNAL_SERVER_ERROR, Json(serde_json::json!({"error": e.to_string()}))).into_response()
+        }
+    }
+}
+
+/// Delete a unified model
+pub async fn delete_model(
+    State(state): State<AppState>,
+    Path(id): Path<String>,
+) -> impl IntoResponse {
+    match state.db.delete_model(&id).await {
+        Ok(true) => (StatusCode::OK, Json(serde_json::json!({"message": "Model deleted"}))).into_response(),
+        Ok(false) => (StatusCode::NOT_FOUND, Json(serde_json::json!({"error": "Model not found"}))).into_response(),
+        Err(e) => {
+            tracing::error!("Failed to delete model: {}", e);
+            (StatusCode::INTERNAL_SERVER_ERROR, Json(serde_json::json!({"error": e.to_string()}))).into_response()
+        }
+    }
+}
+
+/// List mappings for a model
+pub async fn list_model_mappings(
+    State(state): State<AppState>,
+    Path(id): Path<String>,
+) -> impl IntoResponse {
+    match state.db.list_model_mappings(&id).await {
+        Ok(mappings) => Json(mappings).into_response(),
+        Err(e) => {
+            tracing::error!("Failed to list model mappings: {}", e);
+            (StatusCode::INTERNAL_SERVER_ERROR, Json(serde_json::json!({"error": e.to_string()}))).into_response()
+        }
+    }
+}
+
+/// Add a provider mapping to a model
+#[derive(Debug, Deserialize)]
+pub struct AddModelMappingRequest {
+    pub provider_id: String,
+    pub provider_model_id: String,
+    #[serde(default = "default_weight")]
+    pub weight: i64,
+    #[serde(default = "default_cost_multiplier")]
+    pub cost_multiplier: f64,
+}
+
+pub async fn add_model_mapping(
+    State(state): State<AppState>,
+    Path(id): Path<String>,
+    Json(req): Json<AddModelMappingRequest>,
+) -> impl IntoResponse {
+    // Verify model exists
+    if state.db.get_model(&id).await.ok().flatten().is_none() {
+        return (StatusCode::NOT_FOUND, Json(serde_json::json!({"error": "Model not found"}))).into_response();
+    }
+    
+    // Verify provider exists
+    if state.db.get_provider(&req.provider_id).await.ok().flatten().is_none() {
+        return (StatusCode::NOT_FOUND, Json(serde_json::json!({"error": "Provider not found"}))).into_response();
+    }
+
+    match state.db.add_model_mapping(
+        &id,
+        &req.provider_id,
+        &req.provider_model_id,
+        req.weight,
+        req.cost_multiplier,
+    ).await {
+        Ok(()) => (StatusCode::CREATED, Json(serde_json::json!({
+            "model_id": id,
+            "provider_id": req.provider_id,
+            "provider_model_id": req.provider_model_id,
+            "message": "Mapping added successfully"
+        }))).into_response(),
+        Err(e) => {
+            tracing::error!("Failed to add model mapping: {}", e);
+            (StatusCode::INTERNAL_SERVER_ERROR, Json(serde_json::json!({"error": e.to_string()}))).into_response()
+        }
+    }
+}
+
+/// Update a model mapping
+#[derive(Debug, Deserialize)]
+pub struct UpdateModelMappingRequest {
+    pub provider_model_id: String,
+    #[serde(default)]
+    pub is_active: bool,
+    #[serde(default = "default_weight")]
+    pub weight: i64,
+    #[serde(default = "default_cost_multiplier")]
+    pub cost_multiplier: f64,
+}
+
+pub async fn update_model_mapping(
+    State(state): State<AppState>,
+    Path((model_id, provider_id)): Path<(String, String)>,
+    Json(req): Json<UpdateModelMappingRequest>,
+) -> impl IntoResponse {
+    match state.db.update_model_mapping(
+        &model_id,
+        &provider_id,
+        &req.provider_model_id,
+        req.is_active,
+        req.weight,
+        req.cost_multiplier,
+    ).await {
+        Ok(()) => (StatusCode::OK, Json(serde_json::json!({
+            "model_id": model_id,
+            "provider_id": provider_id,
+            "message": "Mapping updated"
+        }))).into_response(),
+        Err(e) => {
+            tracing::error!("Failed to update model mapping: {}", e);
+            (StatusCode::INTERNAL_SERVER_ERROR, Json(serde_json::json!({"error": e.to_string()}))).into_response()
+        }
+    }
+}
+
+/// Remove a provider mapping from a model
+pub async fn remove_model_mapping(
+    State(state): State<AppState>,
+    Path((model_id, provider_id)): Path<(String, String)>,
+) -> impl IntoResponse {
+    match state.db.remove_model_mapping(&model_id, &provider_id).await {
+        Ok(true) => (StatusCode::OK, Json(serde_json::json!({"message": "Mapping removed"}))).into_response(),
+        Ok(false) => (StatusCode::NOT_FOUND, Json(serde_json::json!({"error": "Mapping not found"}))).into_response(),
+        Err(e) => {
+            tracing::error!("Failed to remove model mapping: {}", e);
+            (StatusCode::INTERNAL_SERVER_ERROR, Json(serde_json::json!({"error": e.to_string()}))).into_response()
+        }
+    }
 }

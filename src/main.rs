@@ -3,7 +3,7 @@ use llm_gateway::auth::token_refresh::TokenRefreshTask;
 
 use axum::{
     Router,
-    routing::{get, post, delete},
+    routing::{get, post, delete, put},
     http::Method,
 };
 use std::sync::Arc;
@@ -71,6 +71,13 @@ async fn main() -> anyhow::Result<()> {
         .route("/api/v1/providers/:id/models/:model_id", delete(api::remove_provider_model))
         .route("/api/v1/providers/:id/models/:model_id/test", post(api::test_provider_model))
         .route("/api/v1/providers/:id/models/test-all", post(api::test_all_provider_models))
+
+        // Unified Model management
+        .route("/api/v1/models", post(api::create_model).get(api::list_models))
+        .route("/api/v1/models/:id", get(api::get_model).delete(api::delete_model).put(api::update_model))
+        .route("/api/v1/models/:id/mappings", get(api::list_model_mappings))
+        .route("/api/v1/models/:id/mappings", post(api::add_model_mapping))
+        .route("/api/v1/models/:id/mappings/:provider_id", put(api::update_model_mapping).delete(api::remove_model_mapping))
 
         // Statistics
         .route("/api/v1/stats", get(api::get_stats))

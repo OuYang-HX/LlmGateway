@@ -138,6 +138,36 @@ impl Database {
                 UNIQUE(provider_id, model_id)
             );
 
+            CREATE TABLE IF NOT EXISTS models (
+                id TEXT PRIMARY KEY,
+                name TEXT NOT NULL,
+                description TEXT,
+                model_type TEXT NOT NULL DEFAULT 'chat',
+                is_active BOOLEAN NOT NULL DEFAULT 1,
+                priority INTEGER NOT NULL DEFAULT 0,
+                config TEXT,
+                created_at TEXT NOT NULL DEFAULT (datetime('now')),
+                updated_at TEXT NOT NULL DEFAULT (datetime('now'))
+            );
+
+            CREATE TABLE IF NOT EXISTS model_mappings (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                model_id TEXT NOT NULL,
+                provider_id TEXT NOT NULL,
+                provider_model_id TEXT NOT NULL,
+                is_active BOOLEAN NOT NULL DEFAULT 1,
+                weight INTEGER NOT NULL DEFAULT 1,
+                cost_multiplier REAL NOT NULL DEFAULT 1.0,
+                created_at TEXT NOT NULL DEFAULT (datetime('now')),
+                FOREIGN KEY (model_id) REFERENCES models(id) ON DELETE CASCADE,
+                FOREIGN KEY (provider_id) REFERENCES providers(id) ON DELETE CASCADE,
+                UNIQUE(model_id, provider_id)
+            );
+
+            CREATE INDEX IF NOT EXISTS idx_models_active ON models(is_active);
+            CREATE INDEX IF NOT EXISTS idx_model_mappings_model ON model_mappings(model_id);
+            CREATE INDEX IF NOT EXISTS idx_model_mappings_provider ON model_mappings(provider_id);
+            CREATE INDEX IF NOT EXISTS idx_model_mappings_active ON model_mappings(model_id, is_active);
             CREATE INDEX IF NOT EXISTS idx_provider_models_provider ON provider_models(provider_id);
 
             CREATE INDEX IF NOT EXISTS idx_request_logs_api_key ON request_logs(api_key_id);
@@ -1002,6 +1032,300 @@ impl Database {
             throttle_count_24h: stats_24h.throttle_count,
         })
     }
+
+    // ========== Unified Model operations ==========
+
+    /// Create a new unified model
+    pub async fn create_model(
+        &self,
+        id: &str,
+        name: &str,
+        description: Option<&str>,
+        model_type: &str,
+        priority: i64,
+        config: Option<&str>,
+    ) -> Result<(), sqlx::Error> {
+        sqlx::query(
+            "INSERT INTO models (id, name, description, model_type, priority, config) VALUES (?, ?, ?, ?, ?, ?)"
+        )
+        .bind(id)
+        .bind(name)
+        .bind(description)
+        .bind(model_type)
+        .bind(priority)
+        .bind(config)
+        .execute(&self.pool)
+        .await?;
+        Ok(())
+    }
+
+    /// Get model by ID
+    pub async fn get_model(&self, id: &str) -> Result<Option<ModelRow>, sqlx::Error> {
+        let row = sqlx::query_as::<_, ModelRow>(
+            "SELECT * FROM models WHERE id = ?"
+        )
+        .bind(id)
+        .fetch_optional(&self.pool)
+        .await?;
+        Ok(row)
+    }
+
+    /// List all models
+    pub async fn list_models(&self) -> Result<Vec<ModelRow>, sqlx::Error> {
+        let rows = sqlx::query_as::<_, ModelRow>(
+            "SELECT * FROM models ORDER BY priority DESC, name"
+        )
+        .fetch_all(&self.pool)
+        .await?;
+        Ok(rows)
+    }
+
+    /// List active models
+    pub async fn list_active_models(&self) -> Result<Vec<ModelRow>, sqlx::Error> {
+        let rows = sqlx::query_as::<_, ModelRow>(
+            "SELECT * FROM models WHERE is_active = 1 ORDER BY priority DESC, name"
+        )
+        .fetch_all(&self.pool)
+        .await?;
+        Ok(rows)
+    }
+
+    /// Update model
+    pub async fn update_model(
+        &self,
+        id: &str,
+        name: &str,
+        description: Option<&str>,
+        model_type: &str,
+        is_active: bool,
+        priority: i64,
+        config: Option<&str>,
+    ) -> Result<(), sqlx::Error> {
+        sqlx::query(
+            r#"UPDATE models SET 
+                name = ?, description = ?, model_type = ?, is_active = ?, 
+                priority = ?, config = ?, updated_at = datetime('now')
+                WHERE id = ?"#
+        )
+        .bind(name)
+        .bind(description)
+        .bind(model_type)
+        .bind(is_active)
+        .bind(priority)
+        .bind(config)
+        .bind(id)
+        .execute(&self.pool)
+        .await?;
+        Ok(())
+    }
+
+    /// Delete model
+    pub async fn delete_model(&self, id: &str) -> Result<bool, sqlx::Error> {
+        let result = sqlx::query("DELETE FROM models WHERE id = ?")
+            .bind(id)
+            .execute(&self.pool)
+            .await?;
+        Ok(result.rows_affected() > 0)
+    }
+
+    /// Add a provider mapping to a model
+    pub async fn add_model_mapping(
+        &self,
+        model_id: &str,
+        provider_id: &str,
+        provider_model_id: &str,
+        weight: i64,
+        cost_multiplier: f64,
+    ) -> Result<(), sqlx::Error> {
+        sqlx::query(
+            "INSERT INTO model_mappings (model_id, provider_id, provider_model_id, weight, cost_multiplier) VALUES (?, ?, ?, ?, ?)"
+        )
+        .bind(model_id)
+        .bind(provider_id)
+        .bind(provider_model_id)
+        .bind(weight)
+        .bind(cost_multiplier)
+        .execute(&self.pool)
+        .await?;
+        Ok(())
+    }
+
+    /// Remove a provider mapping from a model
+    pub async fn remove_model_mapping(
+        &self,
+        model_id: &str,
+        provider_id: &str,
+    ) -> Result<bool, sqlx::Error> {
+        let result = sqlx::query(
+            "DELETE FROM model_mappings WHERE model_id = ? AND provider_id = ?"
+        )
+        .bind(model_id)
+        .bind(provider_id)
+        .execute(&self.pool)
+        .await?;
+        Ok(result.rows_affected() > 0)
+    }
+
+    /// List all mappings for a model
+    pub async fn list_model_mappings(
+        &self,
+        model_id: &str,
+    ) -> Result<Vec<ModelMappingRow>, sqlx::Error> {
+        let rows = sqlx::query_as::<_, ModelMappingRow>(
+            "SELECT * FROM model_mappings WHERE model_id = ? ORDER BY weight DESC"
+        )
+        .bind(model_id)
+        .fetch_all(&self.pool)
+        .await?;
+        Ok(rows)
+    }
+
+    /// List active mappings for a model
+    pub async fn list_active_model_mappings(
+        &self,
+        model_id: &str,
+    ) -> Result<Vec<ModelMappingRow>, sqlx::Error> {
+        let rows = sqlx::query_as::<_, ModelMappingRow>(
+            "SELECT * FROM model_mappings WHERE model_id = ? AND is_active = 1 ORDER BY weight DESC"
+        )
+        .bind(model_id)
+        .fetch_all(&self.pool)
+        .await?;
+        Ok(rows)
+    }
+
+    /// Update model mapping
+    pub async fn update_model_mapping(
+        &self,
+        model_id: &str,
+        provider_id: &str,
+        provider_model_id: &str,
+        is_active: bool,
+        weight: i64,
+        cost_multiplier: f64,
+    ) -> Result<(), sqlx::Error> {
+        sqlx::query(
+            r#"UPDATE model_mappings SET 
+                provider_model_id = ?, is_active = ?, weight = ?, cost_multiplier = ?
+                WHERE model_id = ? AND provider_id = ?"#
+        )
+        .bind(provider_model_id)
+        .bind(is_active)
+        .bind(weight)
+        .bind(cost_multiplier)
+        .bind(model_id)
+        .bind(provider_id)
+        .execute(&self.pool)
+        .await?;
+        Ok(())
+    }
+
+    /// Get model with all provider mappings (full model info)
+    pub async fn get_model_with_mappings(
+        &self,
+        id: &str,
+    ) -> Result<Option<ModelWithMappings>, sqlx::Error> {
+        let model = self.get_model(id).await?;
+        if model.is_none() {
+            return Ok(None);
+        }
+        let model = model.unwrap();
+
+        let mappings = self.list_model_mappings(id).await?;
+        let mut mappings_with_provider = Vec::new();
+
+        for mapping in mappings {
+            if let Some(provider) = self.get_provider(&mapping.provider_id).await? {
+                mappings_with_provider.push(ModelMappingWithProvider {
+                    mapping,
+                    provider,
+                });
+            }
+        }
+
+        Ok(Some(ModelWithMappings {
+            model,
+            mappings: mappings_with_provider,
+        }))
+    }
+
+    /// List all models with their mappings
+    pub async fn list_models_with_mappings(&self) -> Result<Vec<ModelWithMappings>, sqlx::Error> {
+        let models = self.list_models().await?;
+        let mut result = Vec::new();
+
+        for model in models {
+            let mappings = self.list_model_mappings(&model.id).await?;
+            let mut mappings_with_provider = Vec::new();
+
+            for mapping in mappings {
+                if let Some(provider) = self.get_provider(&mapping.provider_id).await? {
+                    mappings_with_provider.push(ModelMappingWithProvider {
+                        mapping,
+                        provider,
+                    });
+                }
+            }
+
+            result.push(ModelWithMappings {
+                model,
+                mappings: mappings_with_provider,
+            });
+        }
+
+        Ok(result)
+    }
+
+    /// Get model by the external model ID used in requests
+    pub async fn get_model_by_external_id(&self, external_id: &str) -> Result<Option<ModelRow>, sqlx::Error> {
+        // First check if it's a unified model ID
+        if let Some(model) = self.get_model(external_id).await? {
+            return Ok(Some(model));
+        }
+        // If not found, return None (could be extended to search provider_model_id)
+        Ok(None)
+    }
+}
+
+// ========== Model Row types ==========
+
+#[derive(Debug, Clone, Serialize, sqlx::FromRow)]
+pub struct ModelRow {
+    pub id: String,
+    pub name: String,
+    pub description: Option<String>,
+    pub model_type: String,
+    pub is_active: bool,
+    pub priority: i64,
+    pub config: Option<String>,
+    pub created_at: String,
+    pub updated_at: String,
+}
+
+#[derive(Debug, Clone, Serialize, sqlx::FromRow)]
+pub struct ModelMappingRow {
+    pub id: i64,
+    pub model_id: String,
+    pub provider_id: String,
+    pub provider_model_id: String,
+    pub is_active: bool,
+    pub weight: i64,
+    pub cost_multiplier: f64,
+    pub created_at: String,
+}
+
+// ========== Unified Model response types ==========
+
+#[derive(Debug, Clone, Serialize)]
+pub struct ModelWithMappings {
+    pub model: ModelRow,
+    pub mappings: Vec<ModelMappingWithProvider>,
+}
+
+#[derive(Debug, Clone, Serialize)]
+pub struct ModelMappingWithProvider {
+    pub mapping: ModelMappingRow,
+    pub provider: ProviderRow,
 }
 
 // ========== Row types ==========

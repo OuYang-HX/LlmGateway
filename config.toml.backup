@@ -1,0 +1,51 @@
+# LLM Gateway Configuration
+# Copy this file to config.toml and modify as needed
+
+[server]
+host = "0.0.0.0"
+port = 49127
+
+[database]
+url = "sqlite:/root/LlmGateway/llm_gateway.db?mode=rwc"
+
+# Provider configurations
+# Each provider can use either static API key or dynamic token authentication
+
+# Example: Static API Key provider (OpenAI-compatible)
+# [[providers]]
+# id = "openai"
+# name = "OpenAI"
+# base_url = "https://api.openai.com/v1"
+# api_type = "openai"
+# auth_type = "api_key"
+# api_key = "sk-your-openai-key"
+# weight = 1
+
+# Example: Dynamic Token provider (internal corporate API)
+# [[providers]]
+# id = "internal"
+# name = "Internal LLM Service"
+# base_url = "https://llm.internal.company.com/v1"
+# api_type = "openai"
+# auth_type = "dynamic_token"
+# token_url = "https://auth.internal.company.com/api/login"
+# token_username = "your-username"
+# token_password = "your-password"
+# token_field = "token"              # JSON field name for the access token in response
+# refresh_token_field = "refreshToken"  # JSON field name for the refresh token
+# token_header_field = "Authorization"  # HTTP header to set
+# token_header_prefix = "Bearer "       # Prefix for the header value
+# token_expiry_seconds = 86400          # Token validity in seconds (24h)
+# weight = 2
+
+# Example: Custom header provider
+# [[providers]]
+# id = "custom-auth"
+# name = "Custom Auth Provider"
+# base_url = "https://custom.llm.com/v1"
+# api_type = "openai"
+# auth_type = "api_key"
+# api_key = "your-api-key"
+# token_header_field = "X-API-Key"   # Custom header name
+# token_header_prefix = ""            # No prefix
+# weight = 1
