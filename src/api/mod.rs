@@ -19,14 +19,13 @@ pub async fn create_api_key(
     let id = Uuid::new_v4().to_string();
     let raw_key = format!("lgk-{}", Uuid::new_v4().to_string().replace('-', ""));
     let key_prefix = raw_key[..12].to_string();
-    let key_hash = crate::utils::sha256_hash(&raw_key);
     let allowed_providers_json = req.allowed_providers.as_ref()
         .map(|p| serde_json::to_string(p).unwrap_or_default());
 
     match state.db.create_api_key(
         &id,
         &req.name,
-        &key_hash,
+        &raw_key,
         &key_prefix,
         allowed_providers_json.as_deref(),
     ).await {
@@ -61,7 +60,7 @@ pub async fn list_api_keys(
                 ApiKeyResponse {
                     id: k.id,
                     name: k.name,
-                    key: "***".to_string(),
+                    key: k.api_key,
                     key_prefix: k.key_prefix,
                     allowed_providers,
                     is_active: k.is_active,
@@ -89,7 +88,7 @@ pub async fn get_api_key(
             let response = ApiKeyResponse {
                 id: k.id,
                 name: k.name,
-                key: "***".to_string(),
+                key: k.api_key,
                 key_prefix: k.key_prefix,
                 allowed_providers,
                 is_active: k.is_active,
@@ -115,6 +114,46 @@ pub async fn delete_api_key(
         Ok(false) => (StatusCode::NOT_FOUND, Json(serde_json::json!({"error": "API key not found"}))).into_response(),
         Err(e) => {
             tracing::error!("Failed to delete API key: {}", e);
+            (StatusCode::INTERNAL_SERVER_ERROR, Json(serde_json::json!({"error": e.to_string()}))).into_response()
+        }
+    }
+}
+
+/// Regenerate an API key - old key becomes invalid, new key is returned
+pub async fn regenerate_api_key(
+    State(state): State<AppState>,
+    Path(id): Path<String>,
+) -> impl IntoResponse {
+    // Check the key exists
+    let existing = match state.db.get_api_key_by_id(&id).await {
+        Ok(Some(k)) => k,
+        Ok(None) => return (StatusCode::NOT_FOUND, Json(serde_json::json!({"error": "API key not found"}))).into_response(),
+        Err(e) => {
+            tracing::error!("Failed to get API key: {}", e);
+            return (StatusCode::INTERNAL_SERVER_ERROR, Json(serde_json::json!({"error": e.to_string()}))).into_response();
+        }
+    };
+
+    let raw_key = format!("lgk-{}", Uuid::new_v4().to_string().replace('-', ""));
+    let key_prefix = raw_key[..12].to_string();
+
+    match state.db.regenerate_api_key(&id, &raw_key, &key_prefix).await {
+        Ok(true) => {
+            let response = ApiKeyResponse {
+                id: id.clone(),
+                name: existing.name,
+                key: raw_key,
+                key_prefix,
+                allowed_providers: existing.allowed_providers
+                    .map(|s| serde_json::from_str(&s).unwrap_or_default()),
+                is_active: existing.is_active,
+                created_at: existing.created_at,
+            };
+            (StatusCode::OK, Json(response)).into_response()
+        }
+        Ok(false) => (StatusCode::NOT_FOUND, Json(serde_json::json!({"error": "API key not found"}))).into_response(),
+        Err(e) => {
+            tracing::error!("Failed to regenerate API key: {}", e);
             (StatusCode::INTERNAL_SERVER_ERROR, Json(serde_json::json!({"error": e.to_string()}))).into_response()
         }
     }

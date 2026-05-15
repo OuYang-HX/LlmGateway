@@ -24,13 +24,13 @@ async fn test_create_and_get_api_key() {
     let db = test_db().await;
     let id = "test-key-1";
     let name = "Test Key";
-    let key_hash = utils::sha256_hash("lgk-test-secret-key");
+    let api_key = "lgk-test-secret-key";
     let key_prefix = "lgk-test-xxx";
 
-    db.create_api_key(id, name, &key_hash, key_prefix, None).await.unwrap();
+    db.create_api_key(id, name, api_key, key_prefix, None).await.unwrap();
 
-    let result = db.get_api_key_by_hash(&key_hash).await;
-    assert!(result.is_ok(), "Should find key by hash");
+    let result = db.get_api_key_by_key(api_key).await;
+    assert!(result.is_ok(), "Should find key by value");
     let key_row = result.unwrap().unwrap();
     assert_eq!(key_row.id, id);
     assert_eq!(key_row.name, name);
@@ -43,9 +43,9 @@ async fn test_create_api_key_with_allowed_providers() {
     let db = test_db().await;
     let providers = serde_json::to_string(&vec!["provider-a".to_string(), "provider-b".to_string()]).unwrap();
 
-    db.create_api_key("key-2", "Restricted Key", "hash2", "lgk-rest", Some(&providers)).await.unwrap();
+    db.create_api_key("key-2", "Restricted Key", "lgk-restricted-key", "lgk-rest", Some(&providers)).await.unwrap();
 
-    let key_row = db.get_api_key_by_hash("hash2").await.unwrap().unwrap();
+    let key_row = db.get_api_key_by_key("lgk-restricted-key").await.unwrap().unwrap();
     assert!(key_row.allowed_providers.is_some());
     let parsed: Vec<String> = serde_json::from_str(&key_row.allowed_providers.unwrap()).unwrap();
     assert_eq!(parsed, vec!["provider-a", "provider-b"]);
@@ -64,13 +64,13 @@ async fn test_list_api_keys() {
 #[tokio::test]
 async fn test_deactivate_api_key() {
     let db = test_db().await;
-    db.create_api_key("key-c", "Key C", "hash-c", "lgk-c", None).await.unwrap();
+    db.create_api_key("key-c", "Key C", "lgk-hash-c", "lgk-c", None).await.unwrap();
 
     let deactivated = db.deactivate_api_key("key-c").await.unwrap();
     assert!(deactivated, "Should deactivate existing key");
 
     // Deactivated key should not be found by hash (active only)
-    let result = db.get_api_key_by_hash("hash-c").await.unwrap();
+    let result = db.get_api_key_by_key("lgk-hash-c").await.unwrap();
     assert!(result.is_none(), "Deactivated key should not be found in active lookup");
 }
 
@@ -1005,9 +1005,9 @@ async fn test_proxy_log_streaming_with_throttle() {
 async fn test_api_key_with_specific_providers() {
     let db = test_db().await;
     let providers = serde_json::to_string(&vec!["openai".to_string()]).unwrap();
-    db.create_api_key("key-openai-only", "OpenAI Only", "hash-openai", "lgk-oi", Some(&providers)).await.unwrap();
+    db.create_api_key("key-openai-only", "OpenAI Only", "lgk-hash-openai", "lgk-oi", Some(&providers)).await.unwrap();
 
-    let key = db.get_api_key_by_hash("hash-openai").await.unwrap().unwrap();
+    let key = db.get_api_key_by_key("lgk-hash-openai").await.unwrap().unwrap();
     let allowed: Vec<String> = serde_json::from_str(&key.allowed_providers.unwrap()).unwrap();
     assert_eq!(allowed, vec!["openai"]);
 
@@ -1028,9 +1028,9 @@ async fn test_api_key_with_specific_providers() {
 #[tokio::test]
 async fn test_api_key_with_all_providers() {
     let db = test_db().await;
-    db.create_api_key("key-all", "All Providers", "hash-all", "lgk-all", None).await.unwrap();
+    db.create_api_key("key-all", "All Providers", "lgk-hash-all", "lgk-all", None).await.unwrap();
 
-    let key = db.get_api_key_by_hash("hash-all").await.unwrap().unwrap();
+    let key = db.get_api_key_by_key("lgk-hash-all").await.unwrap().unwrap();
     assert!(key.allowed_providers.is_none(), "No provider restriction means all providers allowed");
 }
 

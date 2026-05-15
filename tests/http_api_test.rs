@@ -124,8 +124,8 @@ async fn test_http_list_api_keys() {
     let body: serde_json::Value = response.json();
     let keys = body.as_array().unwrap();
     assert_eq!(keys.len(), 2);
-    // Keys should be masked after creation
-    assert_eq!(keys[0]["key"], "***");
+    // Keys are stored as plaintext
+    assert!(keys[0]["key"].as_str().unwrap().starts_with("lgk-"));
 }
 
 #[tokio::test]
@@ -578,7 +578,7 @@ async fn test_http_api_key_crud_full_cycle() {
     assert_eq!(get.status_code(), StatusCode::OK);
     let got: serde_json::Value = get.json();
     assert_eq!(got["name"], "CRUD Key");
-    assert_eq!(got["key"], "***"); // Key should be masked
+    assert!(got["key"].as_str().unwrap().starts_with("lgk-")); // Key is plaintext
     let providers = got["allowed_providers"].as_array().unwrap();
     assert_eq!(providers[0], "prov-1");
 

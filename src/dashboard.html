@@ -421,11 +421,11 @@ async function loadApiKeysManage(){
         const tb=document.querySelector('#apikey-manage-table tbody');
         if(!ks.length){tb.innerHTML='<tr><td colspan="6" class="empty-state"><p>暂无 API Key，点击上方按钮创建</p></td></tr>';return;}
         tb.innerHTML=ks.map(k=>`<tr>
-            <td>${k.name}</td><td style="font-family:monospace">${k.key_prefix}***</td>
+            <td>${k.name}</td><td style="font-family:monospace;font-size:12px">${k.key}</td>
             <td>${k.allowed_providers?k.allowed_providers.join(', '):'全部'}</td>
             <td><span class="badge ${k.is_active?'badge-green':'badge-red'}">${k.is_active?'活跃':'停用'}</span></td>
             <td>${new Date(k.created_at).toLocaleString()}</td>
-            <td><button class="btn btn-sm btn-danger" onclick='deleteApiKey("${k.id}")'>删除</button></td>
+            <td><button class="btn btn-sm" onclick='copyKey("${k.key}")' title='复制 Key'>📋</button> <button class="btn btn-sm btn-danger" onclick='deleteApiKey("${k.id}")'>删除</button></td>
         </tr>`).join('');
     }catch(e){console.error(e)}
 }
@@ -462,6 +462,14 @@ async function createApiKey(){
 function copyApiKey(){
     const inp=document.getElementById('ak-show-key');
     inp.select();document.execCommand('copy');
+}
+function copyKey(key){
+    navigator.clipboard.writeText(key).then(()=>{
+        // brief visual feedback
+    }).catch(()=>{
+        // fallback
+        const ta=document.createElement('textarea');ta.value=key;document.body.appendChild(ta);ta.select();document.execCommand('copy');document.body.removeChild(ta);
+    });
 }
 function closeApiKeyShowModal(){document.getElementById('apikey-show-modal').classList.add('hidden')}
 async function deleteApiKey(id){

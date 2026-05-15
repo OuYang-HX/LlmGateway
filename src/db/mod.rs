@@ -40,7 +40,7 @@ impl Database {
             CREATE TABLE IF NOT EXISTS api_keys (
                 id TEXT PRIMARY KEY,
                 name TEXT NOT NULL,
-                key_hash TEXT NOT NULL UNIQUE,
+                api_key TEXT NOT NULL UNIQUE,
                 key_prefix TEXT NOT NULL,
                 allowed_providers TEXT,
                 is_active BOOLEAN NOT NULL DEFAULT 1,
@@ -134,16 +134,16 @@ impl Database {
         &self,
         id: &str,
         name: &str,
-        key_hash: &str,
+        api_key: &str,
         key_prefix: &str,
         allowed_providers: Option<&str>,
     ) -> Result<(), sqlx::Error> {
         sqlx::query(
-            "INSERT INTO api_keys (id, name, key_hash, key_prefix, allowed_providers) VALUES (?, ?, ?, ?, ?)"
+            "INSERT INTO api_keys (id, name, api_key, key_prefix, allowed_providers) VALUES (?, ?, ?, ?, ?)"
         )
         .bind(id)
         .bind(name)
-        .bind(key_hash)
+        .bind(api_key)
         .bind(key_prefix)
         .bind(allowed_providers)
         .execute(&self.pool)
@@ -152,12 +152,12 @@ impl Database {
         Ok(())
     }
 
-    /// Get API key by hash (for authentication)
-    pub async fn get_api_key_by_hash(&self, key_hash: &str) -> Result<Option<ApiKeyRow>, sqlx::Error> {
+    /// Get API key by the raw key value (plaintext lookup)
+    pub async fn get_api_key_by_key(&self, api_key: &str) -> Result<Option<ApiKeyRow>, sqlx::Error> {
         let row = sqlx::query_as::<_, ApiKeyRow>(
-            "SELECT id, name, key_hash, key_prefix, allowed_providers, is_active, created_at, updated_at FROM api_keys WHERE key_hash = ? AND is_active = 1"
+            "SELECT id, name, api_key, key_prefix, allowed_providers, is_active, created_at, updated_at FROM api_keys WHERE api_key = ? AND is_active = 1"
         )
-        .bind(key_hash)
+        .bind(api_key)
         .fetch_optional(&self.pool)
         .await?;
 
@@ -167,7 +167,7 @@ impl Database {
     /// Get API key by ID
     pub async fn get_api_key_by_id(&self, id: &str) -> Result<Option<ApiKeyRow>, sqlx::Error> {
         let row = sqlx::query_as::<_, ApiKeyRow>(
-            "SELECT id, name, key_hash, key_prefix, allowed_providers, is_active, created_at, updated_at FROM api_keys WHERE id = ?"
+            "SELECT id, name, api_key, key_prefix, allowed_providers, is_active, created_at, updated_at FROM api_keys WHERE id = ?"
         )
         .bind(id)
         .fetch_optional(&self.pool)
@@ -179,7 +179,7 @@ impl Database {
     /// List all API keys
     pub async fn list_api_keys(&self) -> Result<Vec<ApiKeyRow>, sqlx::Error> {
         let rows = sqlx::query_as::<_, ApiKeyRow>(
-            "SELECT id, name, key_hash, key_prefix, allowed_providers, is_active, created_at, updated_at FROM api_keys ORDER BY created_at DESC"
+            "SELECT id, name, api_key, key_prefix, allowed_providers, is_active, created_at, updated_at FROM api_keys ORDER BY created_at DESC"
         )
         .fetch_all(&self.pool)
         .await?;
@@ -205,6 +205,20 @@ impl Database {
             .bind(id)
             .execute(&self.pool)
             .await?;
+
+        Ok(result.rows_affected() > 0)
+    }
+
+    /// Regenerate an API key - updates the key and prefix, returns the new raw key
+    pub async fn regenerate_api_key(&self, id: &str, new_api_key: &str, new_key_prefix: &str) -> Result<bool, sqlx::Error> {
+        let result = sqlx::query(
+            "UPDATE api_keys SET api_key = ?, key_prefix = ?, updated_at = datetime('now') WHERE id = ?"
+        )
+        .bind(new_api_key)
+        .bind(new_key_prefix)
+        .bind(id)
+        .execute(&self.pool)
+        .await?;
 
         Ok(result.rows_affected() > 0)
     }
@@ -673,7 +687,7 @@ impl Database {
 pub struct ApiKeyRow {
     pub id: String,
     pub name: String,
-    pub key_hash: String,
+    pub api_key: String,
     pub key_prefix: String,
     pub allowed_providers: Option<String>,
     pub is_active: bool,

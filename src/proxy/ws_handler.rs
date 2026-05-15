@@ -60,9 +60,8 @@ async fn handle_ws_proxy(mut socket: WebSocket, state: AppState) {
         return;
     }
 
-    // Validate API key
-    let key_hash = crate::utils::sha256_hash(api_key);
-    let api_key_row = match state.db.get_api_key_by_hash(&key_hash).await {
+    // Validate API key (plaintext lookup)
+    let api_key_row = match state.db.get_api_key_by_key(api_key).await {
         Ok(Some(row)) => row,
         Ok(None) => {
             let _ = socket
