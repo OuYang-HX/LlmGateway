@@ -21,6 +21,6 @@ Thumbs.db
 .env
 .env.local
 
-# Autoresearch artifacts
-autoresearch.jsonl
-autoresearch.ideas.md
+# Autoresearch artifacts (tracked for research progress)
+# autoresearch.jsonl
+# autoresearch.ideas.md
