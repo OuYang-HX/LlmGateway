@@ -33,7 +33,10 @@ impl LlmProxy {
         Self {
             db,
             auth_manager,
-            http_client: reqwest::Client::new(),
+            http_client: reqwest::Client::builder()
+                .no_proxy()
+                .build()
+                .expect("Failed to build HTTP client"),
             no_proxy_client,
             rr_counter: Arc::new(RwLock::new(HashMap::new())),
         }
@@ -107,8 +110,17 @@ impl LlmProxy {
             .map_err(|e| ProxyError::AuthError(e.to_string()))?;
 
         // Build the target URL
+        // Strip /v1 or /v2 prefix from request path since base_url already includes the API version path
+        // e.g. request /v1/chat/completions -> base_url + /chat/completions
         let base_url = provider.base_url.trim_end_matches('/');
-        let target_url = format!("{}{}", base_url, path);
+        let suffix_path = if let Some(stripped) = path.strip_prefix("/v1") {
+            stripped.to_string()
+        } else if let Some(stripped) = path.strip_prefix("/v2") {
+            stripped.to_string()
+        } else {
+            path.to_string()
+        };
+        let target_url = format!("{}{}", base_url, suffix_path);
 
         // Select HTTP client based on bypass_proxy setting
         let client = if provider.bypass_proxy {
@@ -219,8 +231,17 @@ impl LlmProxy {
             .map_err(|e| ProxyError::AuthError(e.to_string()))?;
 
         // Build the target URL
+        // Strip /v1 or /v2 prefix from request path since base_url already includes the API version path
+        // e.g. request /v1/chat/completions -> base_url + /chat/completions
         let base_url = provider.base_url.trim_end_matches('/');
-        let target_url = format!("{}{}", base_url, path);
+        let suffix_path = if let Some(stripped) = path.strip_prefix("/v1") {
+            stripped.to_string()
+        } else if let Some(stripped) = path.strip_prefix("/v2") {
+            stripped.to_string()
+        } else {
+            path.to_string()
+        };
+        let target_url = format!("{}{}", base_url, suffix_path);
 
         // Select HTTP client based on bypass_proxy setting
         let client = if provider.bypass_proxy {

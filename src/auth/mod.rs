@@ -23,7 +23,10 @@ pub struct TokenResponse {
 
 impl AuthManager {
     pub fn new(db: Arc<Database>) -> Self {
-        let http_client = reqwest::Client::new();
+        let http_client = reqwest::Client::builder()
+            .no_proxy()
+            .build()
+            .expect("Failed to build HTTP client");
         let no_proxy_client = reqwest::Client::builder()
             .no_proxy()
             .build()
