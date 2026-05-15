@@ -92,7 +92,7 @@ async fn test_proxy_logs_usage_from_db() {
     // they are correctly stored and retrievable
     let db = test_db().await;
     db.create_api_key("key", "Key", "hash", "lgk", None).await.unwrap();
-    db.create_provider("prov", "Provider", "https://p.com", "openai", "api_key", Some("key"), None, None, None, "token", "refreshToken", "Authorization", "Bearer ", 86400, 1).await.unwrap();
+    db.create_provider_simple("prov", "Provider", "https://p.com", "openai", "api_key", Some("key"), None, None, None, "token", "refreshToken", "Authorization", "Bearer ", 86400, 1).await.unwrap();
 
     // Log a request with actual token counts (simulating what forward_and_collect does)
     db.insert_request_log(
@@ -118,7 +118,7 @@ async fn test_proxy_logs_usage_per_api_key() {
     let db = test_db().await;
     db.create_api_key("alice", "Alice", "hash-a", "lgk-a", None).await.unwrap();
     db.create_api_key("bob", "Bob", "hash-b", "lgk-b", None).await.unwrap();
-    db.create_provider("prov", "Provider", "https://p.com", "openai", "api_key", Some("key"), None, None, None, "token", "refreshToken", "Authorization", "Bearer ", 86400, 1).await.unwrap();
+    db.create_provider_simple("prov", "Provider", "https://p.com", "openai", "api_key", Some("key"), None, None, None, "token", "refreshToken", "Authorization", "Bearer ", 86400, 1).await.unwrap();
 
     // Alice's request
     db.insert_request_log(
@@ -147,8 +147,8 @@ async fn test_proxy_logs_usage_per_api_key() {
 async fn test_proxy_logs_usage_per_provider() {
     let db = test_db().await;
     db.create_api_key("key", "Key", "hash", "lgk", None).await.unwrap();
-    db.create_provider("openai", "OpenAI", "https://api.openai.com/v1", "openai", "api_key", Some("key1"), None, None, None, "token", "refreshToken", "Authorization", "Bearer ", 86400, 1).await.unwrap();
-    db.create_provider("internal", "Internal", "https://internal.com/v1", "openai", "api_key", Some("key2"), None, None, None, "token", "refreshToken", "Authorization", "Bearer ", 86400, 2).await.unwrap();
+    db.create_provider_simple("openai", "OpenAI", "https://api.openai.com/v1", "openai", "api_key", Some("key1"), None, None, None, "token", "refreshToken", "Authorization", "Bearer ", 86400, 1).await.unwrap();
+    db.create_provider_simple("internal", "Internal", "https://internal.com/v1", "openai", "api_key", Some("key2"), None, None, None, "token", "refreshToken", "Authorization", "Bearer ", 86400, 2).await.unwrap();
 
     // Request to OpenAI
     db.insert_request_log(
@@ -230,7 +230,7 @@ async fn test_proxy_response_struct() {
 async fn test_dashboard_summary_with_actual_usage() {
     let db = test_db().await;
     db.create_api_key("key", "Key", "hash", "lgk", None).await.unwrap();
-    db.create_provider("prov", "Provider", "https://p.com", "openai", "api_key", Some("key"), None, None, None, "token", "refreshToken", "Authorization", "Bearer ", 86400, 1).await.unwrap();
+    db.create_provider_simple("prov", "Provider", "https://p.com", "openai", "api_key", Some("key"), None, None, None, "token", "refreshToken", "Authorization", "Bearer ", 86400, 1).await.unwrap();
 
     // Log some requests with actual token counts
     for _ in 0..5 {
@@ -253,7 +253,7 @@ async fn test_dashboard_summary_with_actual_usage() {
 async fn test_time_bucketed_stats_with_actual_usage() {
     let db = test_db().await;
     db.create_api_key("key", "Key", "hash", "lgk", None).await.unwrap();
-    db.create_provider("prov", "Provider", "https://p.com", "openai", "api_key", Some("key"), None, None, None, "token", "refreshToken", "Authorization", "Bearer ", 86400, 1).await.unwrap();
+    db.create_provider_simple("prov", "Provider", "https://p.com", "openai", "api_key", Some("key"), None, None, None, "token", "refreshToken", "Authorization", "Bearer ", 86400, 1).await.unwrap();
 
     db.insert_request_log(
         "key", "prov", Some("gpt-4"), "/v1/chat", "POST",

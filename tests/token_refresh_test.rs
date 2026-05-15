@@ -18,7 +18,7 @@ async fn test_token_refresh_checks_expiry() {
     let auth_manager = Arc::new(AuthManager::new(db.clone()));
 
     // Create a dynamic token provider with a far-future expiry (should NOT need refresh)
-    db.create_provider(
+    db.create_provider_simple(
         "fresh-prov",
         "Fresh Provider",
         "https://fresh.com/v1",
@@ -54,7 +54,7 @@ async fn test_token_refresh_expired_token_needs_refresh() {
     let auth_manager = Arc::new(AuthManager::new(db.clone()));
 
     // Create a dynamic token provider with an expired token
-    db.create_provider(
+    db.create_provider_simple(
         "expired-prov",
         "Expired Provider",
         "https://expired.com/v1",
@@ -88,7 +88,7 @@ async fn test_token_refresh_skips_api_key_providers() {
     let auth_manager = Arc::new(AuthManager::new(db.clone()));
 
     // Create an api_key provider (should NOT be refreshed)
-    db.create_provider(
+    db.create_provider_simple(
         "static-prov",
         "Static Provider",
         "https://static.com/v1",
@@ -121,7 +121,7 @@ async fn test_token_refresh_no_expiry_needs_refresh() {
     let auth_manager = Arc::new(AuthManager::new(db.clone()));
 
     // Create a dynamic token provider with no expiry set (should need refresh)
-    db.create_provider(
+    db.create_provider_simple(
         "noexpiry-prov",
         "No Expiry Provider",
         "https://noexpiry.com/v1",

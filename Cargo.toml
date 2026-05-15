@@ -55,6 +55,9 @@ lazy_static = "1"
 # URL parsing
 url = "2"
 
+# URL encoding for form requests
+urlencoding = "2"
+
 # SHA-256 for API key hashing
 sha2 = "0.10"
 hex = "0.4"

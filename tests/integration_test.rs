@@ -115,7 +115,7 @@ async fn test_get_nonexistent_api_key_by_id() {
 #[tokio::test]
 async fn test_create_and_get_provider() {
     let db = test_db().await;
-    db.create_provider(
+    db.create_provider_simple(
         "provider-1",
         "Test Provider",
         "https://api.example.com/v1",
@@ -140,7 +140,7 @@ async fn test_create_and_get_provider() {
 #[tokio::test]
 async fn test_create_provider_with_dynamic_token() {
     let db = test_db().await;
-    db.create_provider(
+    db.create_provider_simple(
         "provider-dynamic",
         "Dynamic Token Provider",
         "https://internal.example.com/v1",
@@ -173,8 +173,8 @@ async fn test_create_provider_with_dynamic_token() {
 #[tokio::test]
 async fn test_list_providers() {
     let db = test_db().await;
-    db.create_provider("p1", "Provider 1", "https://p1.com", "openai", "api_key", Some("key1"), None, None, None, "token", "refreshToken", "Authorization", "Bearer ", 86400, 1).await.unwrap();
-    db.create_provider("p2", "Provider 2", "https://p2.com", "openai", "api_key", Some("key2"), None, None, None, "token", "refreshToken", "Authorization", "Bearer ", 86400, 1).await.unwrap();
+    db.create_provider_simple("p1", "Provider 1", "https://p1.com", "openai", "api_key", Some("key1"), None, None, None, "token", "refreshToken", "Authorization", "Bearer ", 86400, 1).await.unwrap();
+    db.create_provider_simple("p2", "Provider 2", "https://p2.com", "openai", "api_key", Some("key2"), None, None, None, "token", "refreshToken", "Authorization", "Bearer ", 86400, 1).await.unwrap();
 
     let providers = db.list_providers().await.unwrap();
     assert_eq!(providers.len(), 2);
@@ -183,8 +183,8 @@ async fn test_list_providers() {
 #[tokio::test]
 async fn test_list_active_providers() {
     let db = test_db().await;
-    db.create_provider("p1", "Provider 1", "https://p1.com", "openai", "api_key", Some("key1"), None, None, None, "token", "refreshToken", "Authorization", "Bearer ", 86400, 1).await.unwrap();
-    db.create_provider("p2", "Provider 2", "https://p2.com", "openai", "api_key", Some("key2"), None, None, None, "token", "refreshToken", "Authorization", "Bearer ", 86400, 1).await.unwrap();
+    db.create_provider_simple("p1", "Provider 1", "https://p1.com", "openai", "api_key", Some("key1"), None, None, None, "token", "refreshToken", "Authorization", "Bearer ", 86400, 1).await.unwrap();
+    db.create_provider_simple("p2", "Provider 2", "https://p2.com", "openai", "api_key", Some("key2"), None, None, None, "token", "refreshToken", "Authorization", "Bearer ", 86400, 1).await.unwrap();
 
     db.deactivate_provider("p2").await.unwrap();
 
@@ -196,7 +196,7 @@ async fn test_list_active_providers() {
 #[tokio::test]
 async fn test_delete_provider() {
     let db = test_db().await;
-    db.create_provider("p-del", "To Delete", "https://del.com", "openai", "api_key", Some("key"), None, None, None, "token", "refreshToken", "Authorization", "Bearer ", 86400, 1).await.unwrap();
+    db.create_provider_simple("p-del", "To Delete", "https://del.com", "openai", "api_key", Some("key"), None, None, None, "token", "refreshToken", "Authorization", "Bearer ", 86400, 1).await.unwrap();
 
     let deleted = db.delete_provider("p-del").await.unwrap();
     assert!(deleted);
@@ -208,7 +208,7 @@ async fn test_delete_provider() {
 #[tokio::test]
 async fn test_update_provider_token() {
     let db = test_db().await;
-    db.create_provider("p-token", "Token Provider", "https://tp.com", "openai", "dynamic_token", None, Some("https://auth.com"), Some("user"), Some("pass"), "token", "refreshToken", "Authorization", "Bearer ", 86400, 1).await.unwrap();
+    db.create_provider_simple("p-token", "Token Provider", "https://tp.com", "openai", "dynamic_token", None, Some("https://auth.com"), Some("user"), Some("pass"), "token", "refreshToken", "Authorization", "Bearer ", 86400, 1).await.unwrap();
 
     db.update_provider_token("p-token", "new-access-token", Some("new-refresh-token"), "2099-12-31 23:59:59").await.unwrap();
 
@@ -221,7 +221,7 @@ async fn test_update_provider_token() {
 #[tokio::test]
 async fn test_update_provider_token_without_refresh() {
     let db = test_db().await;
-    db.create_provider("p-token2", "Token Provider 2", "https://tp2.com", "openai", "dynamic_token", None, Some("https://auth.com"), Some("user"), Some("pass"), "token", "refreshToken", "Authorization", "Bearer ", 86400, 1).await.unwrap();
+    db.create_provider_simple("p-token2", "Token Provider 2", "https://tp2.com", "openai", "dynamic_token", None, Some("https://auth.com"), Some("user"), Some("pass"), "token", "refreshToken", "Authorization", "Bearer ", 86400, 1).await.unwrap();
 
     db.update_provider_token("p-token2", "access-only", None, "2099-12-31 23:59:59").await.unwrap();
 
@@ -243,7 +243,7 @@ async fn test_delete_nonexistent_provider() {
 async fn test_insert_and_query_request_logs() {
     let db = test_db().await;
     db.create_api_key("log-key", "Log Key", "log-hash", "lgk-log", None).await.unwrap();
-    db.create_provider("log-prov", "Log Provider", "https://lp.com", "openai", "api_key", Some("key"), None, None, None, "token", "refreshToken", "Authorization", "Bearer ", 86400, 1).await.unwrap();
+    db.create_provider_simple("log-prov", "Log Provider", "https://lp.com", "openai", "api_key", Some("key"), None, None, None, "token", "refreshToken", "Authorization", "Bearer ", 86400, 1).await.unwrap();
 
     let _log_id = db.insert_request_log(
         "log-key", "log-prov", Some("gpt-4"),
@@ -268,7 +268,7 @@ async fn test_query_logs_by_api_key() {
     let db = test_db().await;
     db.create_api_key("key-a", "Key A", "hash-a", "lgk-a", None).await.unwrap();
     db.create_api_key("key-b", "Key B", "hash-b", "lgk-b", None).await.unwrap();
-    db.create_provider("prov", "Provider", "https://p.com", "openai", "api_key", Some("key"), None, None, None, "token", "refreshToken", "Authorization", "Bearer ", 86400, 1).await.unwrap();
+    db.create_provider_simple("prov", "Provider", "https://p.com", "openai", "api_key", Some("key"), None, None, None, "token", "refreshToken", "Authorization", "Bearer ", 86400, 1).await.unwrap();
 
     db.insert_request_log("key-a", "prov", None, "/v1/chat", "POST", None, None, Some(200), None, None, 5, 10, 15, Some(100), false, false, None).await.unwrap();
     db.insert_request_log("key-b", "prov", None, "/v1/chat", "POST", None, None, Some(200), None, None, 5, 10, 15, Some(100), false, false, None).await.unwrap();
@@ -285,8 +285,8 @@ async fn test_query_logs_by_api_key() {
 async fn test_query_logs_by_provider() {
     let db = test_db().await;
     db.create_api_key("key", "Key", "hash", "lgk", None).await.unwrap();
-    db.create_provider("prov-1", "Provider 1", "https://p1.com", "openai", "api_key", Some("key"), None, None, None, "token", "refreshToken", "Authorization", "Bearer ", 86400, 1).await.unwrap();
-    db.create_provider("prov-2", "Provider 2", "https://p2.com", "openai", "api_key", Some("key"), None, None, None, "token", "refreshToken", "Authorization", "Bearer ", 86400, 1).await.unwrap();
+    db.create_provider_simple("prov-1", "Provider 1", "https://p1.com", "openai", "api_key", Some("key"), None, None, None, "token", "refreshToken", "Authorization", "Bearer ", 86400, 1).await.unwrap();
+    db.create_provider_simple("prov-2", "Provider 2", "https://p2.com", "openai", "api_key", Some("key"), None, None, None, "token", "refreshToken", "Authorization", "Bearer ", 86400, 1).await.unwrap();
 
     db.insert_request_log("key", "prov-1", None, "/v1/chat", "POST", None, None, Some(200), None, None, 5, 10, 15, Some(100), false, false, None).await.unwrap();
     db.insert_request_log("key", "prov-2", None, "/v1/chat", "POST", None, None, Some(200), None, None, 5, 10, 15, Some(100), false, false, None).await.unwrap();
@@ -299,7 +299,7 @@ async fn test_query_logs_by_provider() {
 async fn test_count_request_logs() {
     let db = test_db().await;
     db.create_api_key("key", "Key", "hash", "lgk", None).await.unwrap();
-    db.create_provider("prov", "Provider", "https://p.com", "openai", "api_key", Some("key"), None, None, None, "token", "refreshToken", "Authorization", "Bearer ", 86400, 1).await.unwrap();
+    db.create_provider_simple("prov", "Provider", "https://p.com", "openai", "api_key", Some("key"), None, None, None, "token", "refreshToken", "Authorization", "Bearer ", 86400, 1).await.unwrap();
 
     for _ in 0..5 {
         db.insert_request_log("key", "prov", None, "/v1/chat", "POST", None, None, Some(200), None, None, 5, 10, 15, Some(100), false, false, None).await.unwrap();
@@ -313,7 +313,7 @@ async fn test_count_request_logs() {
 async fn test_throttled_request_log() {
     let db = test_db().await;
     db.create_api_key("key", "Key", "hash", "lgk", None).await.unwrap();
-    db.create_provider("prov", "Provider", "https://p.com", "openai", "api_key", Some("key"), None, None, None, "token", "refreshToken", "Authorization", "Bearer ", 86400, 1).await.unwrap();
+    db.create_provider_simple("prov", "Provider", "https://p.com", "openai", "api_key", Some("key"), None, None, None, "token", "refreshToken", "Authorization", "Bearer ", 86400, 1).await.unwrap();
 
     db.insert_request_log("key", "prov", None, "/v1/chat", "POST", None, None, Some(429), None, None, 0, 0, 0, Some(50), false, true, Some("Rate limit exceeded")).await.unwrap();
 
@@ -328,7 +328,7 @@ async fn test_throttled_request_log() {
 async fn test_error_request_log() {
     let db = test_db().await;
     db.create_api_key("key", "Key", "hash", "lgk", None).await.unwrap();
-    db.create_provider("prov", "Provider", "https://p.com", "openai", "api_key", Some("key"), None, None, None, "token", "refreshToken", "Authorization", "Bearer ", 86400, 1).await.unwrap();
+    db.create_provider_simple("prov", "Provider", "https://p.com", "openai", "api_key", Some("key"), None, None, None, "token", "refreshToken", "Authorization", "Bearer ", 86400, 1).await.unwrap();
 
     db.insert_request_log("key", "prov", None, "/v1/chat", "POST", None, None, Some(500), None, None, 0, 0, 0, Some(2000), false, false, Some("Internal server error")).await.unwrap();
 
@@ -341,7 +341,7 @@ async fn test_error_request_log() {
 async fn test_query_logs_with_time_range() {
     let db = test_db().await;
     db.create_api_key("key", "Key", "hash", "lgk", None).await.unwrap();
-    db.create_provider("prov", "Provider", "https://p.com", "openai", "api_key", Some("key"), None, None, None, "token", "refreshToken", "Authorization", "Bearer ", 86400, 1).await.unwrap();
+    db.create_provider_simple("prov", "Provider", "https://p.com", "openai", "api_key", Some("key"), None, None, None, "token", "refreshToken", "Authorization", "Bearer ", 86400, 1).await.unwrap();
 
     db.insert_request_log("key", "prov", None, "/v1/chat", "POST", None, None, Some(200), None, None, 5, 10, 15, Some(100), false, false, None).await.unwrap();
 
@@ -363,7 +363,7 @@ async fn test_query_logs_with_time_range() {
 async fn test_get_stats() {
     let db = test_db().await;
     db.create_api_key("key", "Key", "hash", "lgk", None).await.unwrap();
-    db.create_provider("prov", "Provider", "https://p.com", "openai", "api_key", Some("key"), None, None, None, "token", "refreshToken", "Authorization", "Bearer ", 86400, 1).await.unwrap();
+    db.create_provider_simple("prov", "Provider", "https://p.com", "openai", "api_key", Some("key"), None, None, None, "token", "refreshToken", "Authorization", "Bearer ", 86400, 1).await.unwrap();
 
     db.insert_request_log("key", "prov", Some("gpt-4"), "/v1/chat", "POST", None, None, Some(200), None, None, 100, 200, 300, Some(1500), false, false, None).await.unwrap();
     db.insert_request_log("key", "prov", Some("gpt-4"), "/v1/chat", "POST", None, None, Some(200), None, None, 50, 100, 150, Some(1000), false, false, None).await.unwrap();
@@ -383,7 +383,7 @@ async fn test_get_stats_by_api_key() {
     let db = test_db().await;
     db.create_api_key("key-1", "Key 1", "hash-1", "lgk-1", None).await.unwrap();
     db.create_api_key("key-2", "Key 2", "hash-2", "lgk-2", None).await.unwrap();
-    db.create_provider("prov", "Provider", "https://p.com", "openai", "api_key", Some("key"), None, None, None, "token", "refreshToken", "Authorization", "Bearer ", 86400, 1).await.unwrap();
+    db.create_provider_simple("prov", "Provider", "https://p.com", "openai", "api_key", Some("key"), None, None, None, "token", "refreshToken", "Authorization", "Bearer ", 86400, 1).await.unwrap();
 
     db.insert_request_log("key-1", "prov", None, "/v1/chat", "POST", None, None, Some(200), None, None, 100, 200, 300, Some(1500), false, false, None).await.unwrap();
     db.insert_request_log("key-2", "prov", None, "/v1/chat", "POST", None, None, Some(200), None, None, 50, 100, 150, Some(1000), false, false, None).await.unwrap();
@@ -401,8 +401,8 @@ async fn test_get_stats_by_api_key() {
 async fn test_get_stats_by_provider() {
     let db = test_db().await;
     db.create_api_key("key", "Key", "hash", "lgk", None).await.unwrap();
-    db.create_provider("prov-1", "Provider 1", "https://p1.com", "openai", "api_key", Some("key"), None, None, None, "token", "refreshToken", "Authorization", "Bearer ", 86400, 1).await.unwrap();
-    db.create_provider("prov-2", "Provider 2", "https://p2.com", "openai", "api_key", Some("key"), None, None, None, "token", "refreshToken", "Authorization", "Bearer ", 86400, 1).await.unwrap();
+    db.create_provider_simple("prov-1", "Provider 1", "https://p1.com", "openai", "api_key", Some("key"), None, None, None, "token", "refreshToken", "Authorization", "Bearer ", 86400, 1).await.unwrap();
+    db.create_provider_simple("prov-2", "Provider 2", "https://p2.com", "openai", "api_key", Some("key"), None, None, None, "token", "refreshToken", "Authorization", "Bearer ", 86400, 1).await.unwrap();
 
     db.insert_request_log("key", "prov-1", None, "/v1/chat", "POST", None, None, Some(200), None, None, 100, 200, 300, Some(1500), false, false, None).await.unwrap();
     db.insert_request_log("key", "prov-2", None, "/v1/chat", "POST", None, None, Some(200), None, None, 50, 100, 150, Some(1000), false, false, None).await.unwrap();
@@ -416,7 +416,7 @@ async fn test_get_stats_by_provider() {
 async fn test_get_stats_with_time_range() {
     let db = test_db().await;
     db.create_api_key("key", "Key", "hash", "lgk", None).await.unwrap();
-    db.create_provider("prov", "Provider", "https://p.com", "openai", "api_key", Some("key"), None, None, None, "token", "refreshToken", "Authorization", "Bearer ", 86400, 1).await.unwrap();
+    db.create_provider_simple("prov", "Provider", "https://p.com", "openai", "api_key", Some("key"), None, None, None, "token", "refreshToken", "Authorization", "Bearer ", 86400, 1).await.unwrap();
 
     db.insert_request_log("key", "prov", None, "/v1/chat", "POST", None, None, Some(200), None, None, 100, 200, 300, Some(1500), false, false, None).await.unwrap();
 
@@ -455,7 +455,7 @@ async fn test_insert_and_get_token_rate_snapshots() {
 #[tokio::test]
 async fn test_token_rate_snapshot_by_provider() {
     let db = test_db().await;
-    db.create_provider("prov", "Provider", "https://p.com", "openai", "api_key", Some("key"), None, None, None, "token", "refreshToken", "Authorization", "Bearer ", 86400, 1).await.unwrap();
+    db.create_provider_simple("prov", "Provider", "https://p.com", "openai", "api_key", Some("key"), None, None, None, "token", "refreshToken", "Authorization", "Bearer ", 86400, 1).await.unwrap();
 
     db.insert_token_rate_snapshot(Some("prov"), 100.0, 60, 40, 5).await.unwrap();
     db.insert_token_rate_snapshot(None, 50.0, 30, 20, 3).await.unwrap();
@@ -511,8 +511,8 @@ fn test_sha256_hash_special_characters() {
 #[tokio::test]
 async fn test_proxy_select_provider_round_robin() {
     let db = test_db().await;
-    db.create_provider("p1", "Provider 1", "https://p1.com", "openai", "api_key", Some("key1"), None, None, None, "token", "refreshToken", "Authorization", "Bearer ", 86400, 1).await.unwrap();
-    db.create_provider("p2", "Provider 2", "https://p2.com", "openai", "api_key", Some("key2"), None, None, None, "token", "refreshToken", "Authorization", "Bearer ", 86400, 1).await.unwrap();
+    db.create_provider_simple("p1", "Provider 1", "https://p1.com", "openai", "api_key", Some("key1"), None, None, None, "token", "refreshToken", "Authorization", "Bearer ", 86400, 1).await.unwrap();
+    db.create_provider_simple("p2", "Provider 2", "https://p2.com", "openai", "api_key", Some("key2"), None, None, None, "token", "refreshToken", "Authorization", "Bearer ", 86400, 1).await.unwrap();
 
     let auth_manager = Arc::new(AuthManager::new(db.clone()));
     let proxy = LlmProxy::new(db.clone(), auth_manager);
@@ -533,8 +533,8 @@ async fn test_proxy_select_provider_round_robin() {
 #[tokio::test]
 async fn test_proxy_select_provider_with_allowed_list() {
     let db = test_db().await;
-    db.create_provider("p1", "Provider 1", "https://p1.com", "openai", "api_key", Some("key1"), None, None, None, "token", "refreshToken", "Authorization", "Bearer ", 86400, 1).await.unwrap();
-    db.create_provider("p2", "Provider 2", "https://p2.com", "openai", "api_key", Some("key2"), None, None, None, "token", "refreshToken", "Authorization", "Bearer ", 86400, 1).await.unwrap();
+    db.create_provider_simple("p1", "Provider 1", "https://p1.com", "openai", "api_key", Some("key1"), None, None, None, "token", "refreshToken", "Authorization", "Bearer ", 86400, 1).await.unwrap();
+    db.create_provider_simple("p2", "Provider 2", "https://p2.com", "openai", "api_key", Some("key2"), None, None, None, "token", "refreshToken", "Authorization", "Bearer ", 86400, 1).await.unwrap();
 
     let auth_manager = Arc::new(AuthManager::new(db.clone()));
     let proxy = LlmProxy::new(db.clone(), auth_manager);
@@ -559,7 +559,7 @@ async fn test_proxy_select_provider_no_providers() {
 #[tokio::test]
 async fn test_proxy_select_provider_no_matching() {
     let db = test_db().await;
-    db.create_provider("p1", "Provider 1", "https://p1.com", "openai", "api_key", Some("key1"), None, None, None, "token", "refreshToken", "Authorization", "Bearer ", 86400, 1).await.unwrap();
+    db.create_provider_simple("p1", "Provider 1", "https://p1.com", "openai", "api_key", Some("key1"), None, None, None, "token", "refreshToken", "Authorization", "Bearer ", 86400, 1).await.unwrap();
 
     let auth_manager = Arc::new(AuthManager::new(db.clone()));
     let proxy = LlmProxy::new(db.clone(), auth_manager);
@@ -572,8 +572,8 @@ async fn test_proxy_select_provider_no_matching() {
 #[tokio::test]
 async fn test_proxy_weighted_selection() {
     let db = test_db().await;
-    db.create_provider("p-heavy", "Heavy Provider", "https://ph.com", "openai", "api_key", Some("key1"), None, None, None, "token", "refreshToken", "Authorization", "Bearer ", 86400, 9).await.unwrap();
-    db.create_provider("p-light", "Light Provider", "https://pl.com", "openai", "api_key", Some("key2"), None, None, None, "token", "refreshToken", "Authorization", "Bearer ", 86400, 1).await.unwrap();
+    db.create_provider_simple("p-heavy", "Heavy Provider", "https://ph.com", "openai", "api_key", Some("key1"), None, None, None, "token", "refreshToken", "Authorization", "Bearer ", 86400, 9).await.unwrap();
+    db.create_provider_simple("p-light", "Light Provider", "https://pl.com", "openai", "api_key", Some("key2"), None, None, None, "token", "refreshToken", "Authorization", "Bearer ", 86400, 1).await.unwrap();
 
     let auth_manager = Arc::new(AuthManager::new(db.clone()));
     let proxy = LlmProxy::new(db.clone(), auth_manager);
@@ -594,8 +594,8 @@ async fn test_proxy_weighted_selection() {
 #[tokio::test]
 async fn test_proxy_select_provider_skips_inactive() {
     let db = test_db().await;
-    db.create_provider("p-active", "Active", "https://a.com", "openai", "api_key", Some("key1"), None, None, None, "token", "refreshToken", "Authorization", "Bearer ", 86400, 1).await.unwrap();
-    db.create_provider("p-inactive", "Inactive", "https://i.com", "openai", "api_key", Some("key2"), None, None, None, "token", "refreshToken", "Authorization", "Bearer ", 86400, 1).await.unwrap();
+    db.create_provider_simple("p-active", "Active", "https://a.com", "openai", "api_key", Some("key1"), None, None, None, "token", "refreshToken", "Authorization", "Bearer ", 86400, 1).await.unwrap();
+    db.create_provider_simple("p-inactive", "Inactive", "https://i.com", "openai", "api_key", Some("key2"), None, None, None, "token", "refreshToken", "Authorization", "Bearer ", 86400, 1).await.unwrap();
     db.deactivate_provider("p-inactive").await.unwrap();
 
     let auth_manager = Arc::new(AuthManager::new(db.clone()));
@@ -679,7 +679,7 @@ async fn test_stats_collector_multiple_snapshots() {
 #[tokio::test]
 async fn test_auth_manager_api_key_provider() {
     let db = test_db().await;
-    db.create_provider("p-api", "API Key Provider", "https://api.com", "openai", "api_key", Some("sk-test-key"), None, None, None, "token", "refreshToken", "Authorization", "Bearer ", 86400, 1).await.unwrap();
+    db.create_provider_simple("p-api", "API Key Provider", "https://api.com", "openai", "api_key", Some("sk-test-key"), None, None, None, "token", "refreshToken", "Authorization", "Bearer ", 86400, 1).await.unwrap();
 
     let auth_manager = AuthManager::new(db.clone());
     let provider = db.get_provider("p-api").await.unwrap().unwrap();
@@ -692,7 +692,7 @@ async fn test_auth_manager_api_key_provider() {
 #[tokio::test]
 async fn test_auth_manager_custom_header_provider() {
     let db = test_db().await;
-    db.create_provider("p-custom", "Custom Header Provider", "https://api.com", "openai", "api_key", Some("my-token-123"), None, None, None, "token", "refreshToken", "X-API-Key", "", 86400, 1).await.unwrap();
+    db.create_provider_simple("p-custom", "Custom Header Provider", "https://api.com", "openai", "api_key", Some("my-token-123"), None, None, None, "token", "refreshToken", "X-API-Key", "", 86400, 1).await.unwrap();
 
     let auth_manager = AuthManager::new(db.clone());
     let provider = db.get_provider("p-custom").await.unwrap().unwrap();
@@ -705,7 +705,7 @@ async fn test_auth_manager_custom_header_provider() {
 #[tokio::test]
 async fn test_auth_manager_no_api_key_fails() {
     let db = test_db().await;
-    db.create_provider("p-nokey", "No Key Provider", "https://api.com", "openai", "api_key", None, None, None, None, "token", "refreshToken", "Authorization", "Bearer ", 86400, 1).await.unwrap();
+    db.create_provider_simple("p-nokey", "No Key Provider", "https://api.com", "openai", "api_key", None, None, None, None, "token", "refreshToken", "Authorization", "Bearer ", 86400, 1).await.unwrap();
 
     let auth_manager = AuthManager::new(db.clone());
     let provider = db.get_provider("p-nokey").await.unwrap().unwrap();
@@ -718,7 +718,7 @@ async fn test_auth_manager_no_api_key_fails() {
 async fn test_auth_manager_unknown_auth_type() {
     let db = test_db().await;
     // Manually insert a provider with unknown auth type
-    db.create_provider("p-unknown", "Unknown Auth", "https://api.com", "openai", "api_key", Some("key"), None, None, None, "token", "refreshToken", "Authorization", "Bearer ", 86400, 1).await.unwrap();
+    db.create_provider_simple("p-unknown", "Unknown Auth", "https://api.com", "openai", "api_key", Some("key"), None, None, None, "token", "refreshToken", "Authorization", "Bearer ", 86400, 1).await.unwrap();
     
     // Update auth_type directly via SQL
     sqlx::query("UPDATE providers SET auth_type = 'oauth2' WHERE id = 'p-unknown'")
@@ -741,7 +741,7 @@ async fn test_dashboard_summary() {
     db.create_api_key("key-1", "Key 1", "hash-1", "lgk-1", None).await.unwrap();
     db.create_api_key("key-2", "Key 2", "hash-2", "lgk-2", None).await.unwrap();
     db.deactivate_api_key("key-2").await.unwrap();
-    db.create_provider("prov-1", "Provider 1", "https://p1.com", "openai", "api_key", Some("key"), None, None, None, "token", "refreshToken", "Authorization", "Bearer ", 86400, 1).await.unwrap();
+    db.create_provider_simple("prov-1", "Provider 1", "https://p1.com", "openai", "api_key", Some("key"), None, None, None, "token", "refreshToken", "Authorization", "Bearer ", 86400, 1).await.unwrap();
 
     let summary = db.get_dashboard_summary().await.unwrap();
     assert_eq!(summary.total_api_keys, 2);
@@ -768,7 +768,7 @@ async fn test_dashboard_summary_empty_database() {
 async fn test_time_bucketed_stats() {
     let db = test_db().await;
     db.create_api_key("key", "Key", "hash", "lgk", None).await.unwrap();
-    db.create_provider("prov", "Provider", "https://p.com", "openai", "api_key", Some("key"), None, None, None, "token", "refreshToken", "Authorization", "Bearer ", 86400, 1).await.unwrap();
+    db.create_provider_simple("prov", "Provider", "https://p.com", "openai", "api_key", Some("key"), None, None, None, "token", "refreshToken", "Authorization", "Bearer ", 86400, 1).await.unwrap();
 
     for _ in 0..3 {
         db.insert_request_log("key", "prov", None, "/v1/chat", "POST", None, None, Some(200), None, None, 100, 200, 300, Some(500), false, false, None).await.unwrap();
@@ -788,8 +788,8 @@ async fn test_time_bucketed_stats() {
 async fn test_time_bucketed_stats_by_provider() {
     let db = test_db().await;
     db.create_api_key("key", "Key", "hash", "lgk", None).await.unwrap();
-    db.create_provider("prov-1", "Provider 1", "https://p1.com", "openai", "api_key", Some("key"), None, None, None, "token", "refreshToken", "Authorization", "Bearer ", 86400, 1).await.unwrap();
-    db.create_provider("prov-2", "Provider 2", "https://p2.com", "openai", "api_key", Some("key"), None, None, None, "token", "refreshToken", "Authorization", "Bearer ", 86400, 1).await.unwrap();
+    db.create_provider_simple("prov-1", "Provider 1", "https://p1.com", "openai", "api_key", Some("key"), None, None, None, "token", "refreshToken", "Authorization", "Bearer ", 86400, 1).await.unwrap();
+    db.create_provider_simple("prov-2", "Provider 2", "https://p2.com", "openai", "api_key", Some("key"), None, None, None, "token", "refreshToken", "Authorization", "Bearer ", 86400, 1).await.unwrap();
 
     db.insert_request_log("key", "prov-1", None, "/v1/chat", "POST", None, None, Some(200), None, None, 100, 200, 300, Some(500), false, false, None).await.unwrap();
     db.insert_request_log("key", "prov-2", None, "/v1/chat", "POST", None, None, Some(200), None, None, 50, 100, 150, Some(300), false, false, None).await.unwrap();
@@ -807,7 +807,7 @@ async fn test_time_bucketed_stats_by_provider() {
 async fn test_time_bucketed_stats_with_throttles() {
     let db = test_db().await;
     db.create_api_key("key", "Key", "hash", "lgk", None).await.unwrap();
-    db.create_provider("prov", "Provider", "https://p.com", "openai", "api_key", Some("key"), None, None, None, "token", "refreshToken", "Authorization", "Bearer ", 86400, 1).await.unwrap();
+    db.create_provider_simple("prov", "Provider", "https://p.com", "openai", "api_key", Some("key"), None, None, None, "token", "refreshToken", "Authorization", "Bearer ", 86400, 1).await.unwrap();
 
     db.insert_request_log("key", "prov", None, "/v1/chat", "POST", None, None, Some(200), None, None, 100, 200, 300, Some(500), false, false, None).await.unwrap();
     db.insert_request_log("key", "prov", None, "/v1/chat", "POST", None, None, Some(429), None, None, 0, 0, 0, Some(50), false, true, Some("Rate limited")).await.unwrap();
@@ -827,7 +827,7 @@ async fn test_time_bucketed_stats_with_throttles() {
 async fn test_streaming_request_log() {
     let db = test_db().await;
     db.create_api_key("key", "Key", "hash", "lgk", None).await.unwrap();
-    db.create_provider("prov", "Provider", "https://p.com", "openai", "api_key", Some("key"), None, None, None, "token", "refreshToken", "Authorization", "Bearer ", 86400, 1).await.unwrap();
+    db.create_provider_simple("prov", "Provider", "https://p.com", "openai", "api_key", Some("key"), None, None, None, "token", "refreshToken", "Authorization", "Bearer ", 86400, 1).await.unwrap();
 
     db.insert_request_log(
         "key", "prov", Some("gpt-4"), "/v1/chat/completions", "POST",
@@ -845,7 +845,7 @@ async fn test_streaming_request_log() {
 async fn test_non_streaming_request_log() {
     let db = test_db().await;
     db.create_api_key("key", "Key", "hash", "lgk", None).await.unwrap();
-    db.create_provider("prov", "Provider", "https://p.com", "openai", "api_key", Some("key"), None, None, None, "token", "refreshToken", "Authorization", "Bearer ", 86400, 1).await.unwrap();
+    db.create_provider_simple("prov", "Provider", "https://p.com", "openai", "api_key", Some("key"), None, None, None, "token", "refreshToken", "Authorization", "Bearer ", 86400, 1).await.unwrap();
 
     db.insert_request_log(
         "key", "prov", Some("gpt-4"), "/v1/chat/completions", "POST",
@@ -864,7 +864,7 @@ async fn test_non_streaming_request_log() {
 async fn test_log_pagination() {
     let db = test_db().await;
     db.create_api_key("key", "Key", "hash", "lgk", None).await.unwrap();
-    db.create_provider("prov", "Provider", "https://p.com", "openai", "api_key", Some("key"), None, None, None, "token", "refreshToken", "Authorization", "Bearer ", 86400, 1).await.unwrap();
+    db.create_provider_simple("prov", "Provider", "https://p.com", "openai", "api_key", Some("key"), None, None, None, "token", "refreshToken", "Authorization", "Bearer ", 86400, 1).await.unwrap();
 
     for i in 0..15 {
         db.insert_request_log("key", "prov", None, "/v1/chat", "POST", None, None, Some(200), None, None, i, i*2, i*3, Some(100), false, false, None).await.unwrap();
@@ -956,7 +956,7 @@ fn test_request_log_query_deserialization() {
 async fn test_proxy_log_streaming_request() {
     let db = test_db().await;
     db.create_api_key("key", "Key", "hash", "lgk", None).await.unwrap();
-    db.create_provider("prov", "Provider", "https://p.com", "openai", "api_key", Some("key"), None, None, None, "token", "refreshToken", "Authorization", "Bearer ", 86400, 1).await.unwrap();
+    db.create_provider_simple("prov", "Provider", "https://p.com", "openai", "api_key", Some("key"), None, None, None, "token", "refreshToken", "Authorization", "Bearer ", 86400, 1).await.unwrap();
 
     let auth_manager = Arc::new(AuthManager::new(db.clone()));
     let proxy = LlmProxy::new(db.clone(), auth_manager);
@@ -982,7 +982,7 @@ async fn test_proxy_log_streaming_request() {
 async fn test_proxy_log_streaming_with_throttle() {
     let db = test_db().await;
     db.create_api_key("key", "Key", "hash", "lgk", None).await.unwrap();
-    db.create_provider("prov", "Provider", "https://p.com", "openai", "api_key", Some("key"), None, None, None, "token", "refreshToken", "Authorization", "Bearer ", 86400, 1).await.unwrap();
+    db.create_provider_simple("prov", "Provider", "https://p.com", "openai", "api_key", Some("key"), None, None, None, "token", "refreshToken", "Authorization", "Bearer ", 86400, 1).await.unwrap();
 
     let auth_manager = Arc::new(AuthManager::new(db.clone()));
     let proxy = LlmProxy::new(db.clone(), auth_manager);
@@ -1012,8 +1012,8 @@ async fn test_api_key_with_specific_providers() {
     assert_eq!(allowed, vec!["openai"]);
 
     // Verify proxy respects this
-    db.create_provider("openai", "OpenAI", "https://api.openai.com/v1", "openai", "api_key", Some("sk-key"), None, None, None, "token", "refreshToken", "Authorization", "Bearer ", 86400, 1).await.unwrap();
-    db.create_provider("anthropic", "Anthropic", "https://api.anthropic.com/v1", "openai", "api_key", Some("sk-key2"), None, None, None, "token", "refreshToken", "Authorization", "Bearer ", 86400, 1).await.unwrap();
+    db.create_provider_simple("openai", "OpenAI", "https://api.openai.com/v1", "openai", "api_key", Some("sk-key"), None, None, None, "token", "refreshToken", "Authorization", "Bearer ", 86400, 1).await.unwrap();
+    db.create_provider_simple("anthropic", "Anthropic", "https://api.anthropic.com/v1", "openai", "api_key", Some("sk-key2"), None, None, None, "token", "refreshToken", "Authorization", "Bearer ", 86400, 1).await.unwrap();
 
     let auth_manager = Arc::new(AuthManager::new(db.clone()));
     let proxy = LlmProxy::new(db.clone(), auth_manager);
@@ -1041,7 +1041,7 @@ async fn test_per_api_key_statistics() {
     let db = test_db().await;
     db.create_api_key("user-alice", "Alice", "hash-alice", "lgk-alice", None).await.unwrap();
     db.create_api_key("user-bob", "Bob", "hash-bob", "lgk-bob", None).await.unwrap();
-    db.create_provider("prov", "Provider", "https://p.com", "openai", "api_key", Some("key"), None, None, None, "token", "refreshToken", "Authorization", "Bearer ", 86400, 1).await.unwrap();
+    db.create_provider_simple("prov", "Provider", "https://p.com", "openai", "api_key", Some("key"), None, None, None, "token", "refreshToken", "Authorization", "Bearer ", 86400, 1).await.unwrap();
 
     // Alice makes 3 requests
     for _ in 0..3 {
@@ -1066,8 +1066,8 @@ async fn test_per_api_key_statistics() {
 async fn test_provider_throttle_statistics() {
     let db = test_db().await;
     db.create_api_key("key", "Key", "hash", "lgk", None).await.unwrap();
-    db.create_provider("prov-a", "Provider A", "https://a.com", "openai", "api_key", Some("key"), None, None, None, "token", "refreshToken", "Authorization", "Bearer ", 86400, 1).await.unwrap();
-    db.create_provider("prov-b", "Provider B", "https://b.com", "openai", "api_key", Some("key"), None, None, None, "token", "refreshToken", "Authorization", "Bearer ", 86400, 1).await.unwrap();
+    db.create_provider_simple("prov-a", "Provider A", "https://a.com", "openai", "api_key", Some("key"), None, None, None, "token", "refreshToken", "Authorization", "Bearer ", 86400, 1).await.unwrap();
+    db.create_provider_simple("prov-b", "Provider B", "https://b.com", "openai", "api_key", Some("key"), None, None, None, "token", "refreshToken", "Authorization", "Bearer ", 86400, 1).await.unwrap();
 
     // Provider A: 2 throttles out of 5 requests
     for _ in 0..3 {
@@ -1097,7 +1097,7 @@ async fn test_provider_throttle_statistics() {
 async fn test_time_bucketed_stats_hourly_granularity() {
     let db = test_db().await;
     db.create_api_key("key", "Key", "hash", "lgk", None).await.unwrap();
-    db.create_provider("prov", "Provider", "https://p.com", "openai", "api_key", Some("key"), None, None, None, "token", "refreshToken", "Authorization", "Bearer ", 86400, 1).await.unwrap();
+    db.create_provider_simple("prov", "Provider", "https://p.com", "openai", "api_key", Some("key"), None, None, None, "token", "refreshToken", "Authorization", "Bearer ", 86400, 1).await.unwrap();
 
     db.insert_request_log("key", "prov", None, "/v1/chat", "POST", None, None, Some(200), None, None, 100, 200, 300, Some(500), false, false, None).await.unwrap();
 
@@ -1113,7 +1113,7 @@ async fn test_time_bucketed_stats_hourly_granularity() {
 async fn test_time_bucketed_stats_monthly_granularity() {
     let db = test_db().await;
     db.create_api_key("key", "Key", "hash", "lgk", None).await.unwrap();
-    db.create_provider("prov", "Provider", "https://p.com", "openai", "api_key", Some("key"), None, None, None, "token", "refreshToken", "Authorization", "Bearer ", 86400, 1).await.unwrap();
+    db.create_provider_simple("prov", "Provider", "https://p.com", "openai", "api_key", Some("key"), None, None, None, "token", "refreshToken", "Authorization", "Bearer ", 86400, 1).await.unwrap();
 
     db.insert_request_log("key", "prov", None, "/v1/chat", "POST", None, None, Some(200), None, None, 100, 200, 300, Some(500), false, false, None).await.unwrap();
 

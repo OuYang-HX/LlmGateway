@@ -58,6 +58,11 @@ impl Database {
                 token_url TEXT,
                 token_username TEXT,
                 token_password TEXT,
+                token_request_method TEXT DEFAULT 'POST',
+                token_content_type TEXT DEFAULT 'json',
+                token_username_field TEXT DEFAULT 'username',
+                token_password_field TEXT DEFAULT 'password',
+                token_body_template TEXT,
                 token_field TEXT DEFAULT 'token',
                 refresh_token_field TEXT DEFAULT 'refreshToken',
                 token_header_field TEXT DEFAULT 'Authorization',
@@ -217,6 +222,11 @@ impl Database {
         token_url: Option<&str>,
         token_username: Option<&str>,
         token_password: Option<&str>,
+        token_request_method: Option<&str>,
+        token_content_type: Option<&str>,
+        token_username_field: Option<&str>,
+        token_password_field: Option<&str>,
+        token_body_template: Option<&str>,
         token_field: &str,
         refresh_token_field: &str,
         token_header_field: &str,
@@ -225,8 +235,8 @@ impl Database {
         weight: i32,
     ) -> Result<(), sqlx::Error> {
         sqlx::query(
-            r#"INSERT INTO providers (id, name, base_url, api_type, auth_type, api_key, token_url, token_username, token_password, token_field, refresh_token_field, token_header_field, token_header_prefix, token_expiry_seconds, weight)
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)"#
+            r#"INSERT INTO providers (id, name, base_url, api_type, auth_type, api_key, token_url, token_username, token_password, token_request_method, token_content_type, token_username_field, token_password_field, token_body_template, token_field, refresh_token_field, token_header_field, token_header_prefix, token_expiry_seconds, weight)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)"#
         )
         .bind(id)
         .bind(name)
@@ -237,6 +247,11 @@ impl Database {
         .bind(token_url)
         .bind(token_username)
         .bind(token_password)
+        .bind(token_request_method)
+        .bind(token_content_type)
+        .bind(token_username_field)
+        .bind(token_password_field)
+        .bind(token_body_template)
         .bind(token_field)
         .bind(refresh_token_field)
         .bind(token_header_field)
@@ -247,6 +262,35 @@ impl Database {
         .await?;
 
         Ok(())
+    }
+
+    /// Convenience wrapper for create_provider with default token request settings
+    /// (POST, json, username/password field names, no body template)
+    pub async fn create_provider_simple(
+        &self,
+        id: &str,
+        name: &str,
+        base_url: &str,
+        api_type: &str,
+        auth_type: &str,
+        api_key: Option<&str>,
+        token_url: Option<&str>,
+        token_username: Option<&str>,
+        token_password: Option<&str>,
+        token_field: &str,
+        refresh_token_field: &str,
+        token_header_field: &str,
+        token_header_prefix: &str,
+        token_expiry_seconds: i64,
+        weight: i32,
+    ) -> Result<(), sqlx::Error> {
+        self.create_provider(
+            id, name, base_url, api_type, auth_type,
+            api_key, token_url, token_username, token_password,
+            None, None, None, None, None,
+            token_field, refresh_token_field, token_header_field, token_header_prefix,
+            token_expiry_seconds, weight,
+        ).await
     }
 
     /// Get provider by ID
@@ -645,6 +689,11 @@ pub struct ProviderRow {
     pub token_url: Option<String>,
     pub token_username: Option<String>,
     pub token_password: Option<String>,
+    pub token_request_method: Option<String>,
+    pub token_content_type: Option<String>,
+    pub token_username_field: Option<String>,
+    pub token_password_field: Option<String>,
+    pub token_body_template: Option<String>,
     pub token_field: String,
     pub refresh_token_field: String,
     pub token_header_field: String,

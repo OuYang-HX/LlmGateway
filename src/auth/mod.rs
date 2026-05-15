@@ -80,18 +80,17 @@ impl AuthManager {
     /// Try to refresh using existing refresh token
     async fn try_refresh_with_token(&self, provider: &crate::db::ProviderRow, refresh_token: &str) -> Result<String, AuthError> {
         let token_url = provider.token_url.as_deref().ok_or(AuthError::NoTokenUrl)?;
+        let method = provider.token_request_method.as_deref().unwrap_or("POST");
+        let content_type = provider.token_content_type.as_deref().unwrap_or("json");
 
-        let refresh_field = provider.refresh_token_field.clone();
-        let body = serde_json::json!({
-            refresh_field: refresh_token,
-        });
+        let refresh_field = &provider.refresh_token_field;
+        let body = if content_type == "form" {
+            format!("{}={}", urlencoding::encode(refresh_field), urlencoding::encode(refresh_token))
+        } else {
+            serde_json::json!({ refresh_field: refresh_token }).to_string()
+        };
 
-        let response = self.http_client
-            .post(token_url)
-            .json(&body)
-            .send()
-            .await
-            .map_err(AuthError::RequestFailed)?;
+        let response = self.send_token_request(token_url, method, content_type, &body).await?;
 
         if !response.status().is_success() {
             return Err(AuthError::RefreshFailed(response.status().to_string()));
@@ -100,37 +99,83 @@ impl AuthManager {
         let token_response: serde_json::Value = response
             .json()
             .await
-            .map_err(AuthError::ParseError)?;
+            .map_err(|e| AuthError::ParseError(e.into()))?;
 
         self.extract_and_store_token(provider, &token_response).await
     }
 
     /// Login with username and password to get a new token
+    /// Supports configurable request format:
+    ///   - token_content_type: "json" or "form"
+    ///   - token_username_field: field name for username (default "username")
+    ///   - token_password_field: field name for password (default "password")
+    ///   - token_body_template: optional JSON template with {{username}}/{{password}} placeholders
+    ///   - token_request_method: "POST" or "GET"
     async fn login_with_credentials(&self, provider: &crate::db::ProviderRow, username: &str, password: &str) -> Result<String, AuthError> {
         let token_url = provider.token_url.as_deref().ok_or(AuthError::NoTokenUrl)?;
+        let method = provider.token_request_method.as_deref().unwrap_or("POST");
+        let content_type = provider.token_content_type.as_deref().unwrap_or("json");
+        let username_field = provider.token_username_field.as_deref().unwrap_or("username");
+        let password_field = provider.token_password_field.as_deref().unwrap_or("password");
 
-        let body = serde_json::json!({
-            "username": username,
-            "password": password,
-        });
-
-        let response = self.http_client
-            .post(token_url)
-            .json(&body)
-            .send()
-            .await
-            .map_err(AuthError::RequestFailed)?;
+        let response = if let Some(template) = &provider.token_body_template {
+            // User provided a custom body template with {{username}}/{{password}} placeholders
+            let body = template
+                .replace("{{username}}", username)
+                .replace("{{password}}", password);
+            self.send_token_request(token_url, method, content_type, &body).await?
+        } else {
+            // Build body from field names
+            if content_type == "form" {
+                let body = format!("{}={}&{}={}",
+                    urlencoding::encode(username_field),
+                    urlencoding::encode(username),
+                    urlencoding::encode(password_field),
+                    urlencoding::encode(password));
+                self.send_token_request(token_url, method, "form", &body).await?
+            } else {
+                let body = serde_json::json!({
+                    username_field: username,
+                    password_field: password,
+                });
+                let body_str = serde_json::to_string(&body).map_err(|e| AuthError::ParseError(e.into()))?;
+                self.send_token_request(token_url, method, "json", &body_str).await?
+            }
+        };
 
         if !response.status().is_success() {
-            return Err(AuthError::LoginFailed(response.status().to_string()));
+            let status = response.status().to_string();
+            let body = response.text().await.unwrap_or_default();
+            tracing::error!("Login failed: status={}, body={}", status, body);
+            return Err(AuthError::LoginFailed(status));
         }
 
         let token_response: serde_json::Value = response
             .json()
             .await
-            .map_err(AuthError::ParseError)?;
+            .map_err(|e| AuthError::ParseError(e.into()))?;
 
         self.extract_and_store_token(provider, &token_response).await
+    }
+
+    /// Send a token request with the given body
+    async fn send_token_request(&self, url: &str, method: &str, content_type: &str, body: &str) -> Result<reqwest::Response, AuthError> {
+        let method = match method {
+            "GET" => reqwest::Method::GET,
+            _ => reqwest::Method::POST,
+        };
+
+        let mut req = self.http_client.request(method, url);
+
+        if content_type == "form" {
+            req = req.header("Content-Type", "application/x-www-form-urlencoded");
+        } else {
+            req = req.header("Content-Type", "application/json");
+        }
+
+        req = req.body(body.to_string());
+
+        req.send().await.map_err(AuthError::RequestFailed)
     }
 
     /// Extract token from response and store in database
@@ -178,7 +223,7 @@ pub enum AuthError {
     #[error("Refresh failed: {0}")]
     RefreshFailed(String),
     #[error("Parse error: {0}")]
-    ParseError(reqwest::Error),
+    ParseError(Box<dyn std::error::Error + Send + Sync>),
     #[error("Database error: {0}")]
     DatabaseError(String),
 }
