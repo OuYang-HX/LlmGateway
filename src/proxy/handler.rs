@@ -104,40 +104,43 @@ pub async fn proxy_request(
     }
 
     // If no unified model routing, use traditional provider selection
+    // But first, try to find providers that have the requested model
+    let request_model = request_body.get("model").and_then(|v| v.as_str());
+    
     if provider_for_request.is_none() {
+        // Check if this is a provider model (not a unified model ID)
         let allowed_providers: Option<Vec<String>> = api_key_row.allowed_providers
             .as_ref()
             .and_then(|s| serde_json::from_str(s).ok());
-
-        let provider = state.proxy.select_provider(allowed_providers.as_deref()).await;
-        provider_for_request = match provider {
-            Ok(p) => Some(p),
-            Err(e) => {
-                tracing::error!("Failed to select provider: {}", e);
-                return (StatusCode::SERVICE_UNAVAILABLE, "No provider available").into_response();
+        
+        // If a model is specified but not a unified model, it must have an external ID mapping
+        // Otherwise reject the request
+        if let Some(model_id) = request_model {
+            // Check if this model has a unified model mapping
+            let has_unified_mapping = state.db.get_model_with_mappings(model_id).await
+                .ok()
+                .flatten()
+                .map(|m| m.model.is_active && !m.mappings.is_empty())
+                .unwrap_or(false);
+            
+            if !has_unified_mapping {
+                // No unified model mapping exists, reject the request
+                tracing::warn!("Model '{}' has no unified model mapping, rejecting request", model_id);
+                return (StatusCode::FORBIDDEN, 
+                    format!("Model '{}' has no external ID configured. Please configure an external ID for this model first.", model_id)
+                ).into_response();
             }
-        };
+            
+            // Model has unified mapping, unified_route logic above will handle it
+        }
+        
+        // If no provider selected yet (shouldn't happen with unified model logic), fail
+        if provider_for_request.is_none() {
+            return (StatusCode::SERVICE_UNAVAILABLE, "No available provider for this model").into_response();
+        }
     }
 
     let provider = provider_for_request.unwrap();
-
-    // Validate model against provider's allowed models (if not unified route)
-    let request_model = request_body.get("model").and_then(|v| v.as_str());
-    if unified_route.is_none() {
-        if let Some(model) = request_model {
-            match state.db.is_model_allowed_for_provider(&provider.id, model).await {
-                Ok(false) => {
-                    tracing::warn!("Model '{}' not allowed for provider '{}'", model, provider.id);
-                    return (StatusCode::FORBIDDEN, format!("Model '{}' is not available on provider '{}'", model, provider.id)).into_response();
-                }
-                Err(e) => {
-                    tracing::error!("Failed to check model permission: {}", e);
-                    // Allow on DB error to avoid blocking requests
-                }
-                Ok(true) => {}
-            }
-        }
-    }
 
     // Serialize modified body if unified model routing was applied
     let final_body: axum::body::Bytes = if request_body != serde_json::Value::Null {

@@ -721,6 +721,36 @@ impl Database {
         Ok(())
     }
 
+    /// Find all active providers that have a specific model configured
+    pub async fn find_providers_with_model(
+        &self,
+        model_id: &str,
+    ) -> Result<Vec<ProviderRow>, sqlx::Error> {
+        // Get all providers that have this model active
+        let provider_ids: Vec<String> = sqlx::query_scalar(
+            "SELECT DISTINCT provider_id FROM provider_models WHERE model_id = ? AND is_active = 1"
+        )
+        .bind(model_id)
+        .fetch_all(&self.pool)
+        .await?;
+
+        if provider_ids.is_empty() {
+            return Ok(Vec::new());
+        }
+
+        // Get active providers that have this model
+        let mut providers = Vec::new();
+        for pid in &provider_ids {
+            if let Some(provider) = self.get_provider(pid).await? {
+                if provider.is_active {
+                    providers.push(provider);
+                }
+            }
+        }
+
+        Ok(providers)
+    }
+
     /// Check if a model is allowed for a provider
     pub async fn is_model_allowed_for_provider(
         &self,

@@ -24,20 +24,18 @@ pub struct LlmProxy {
 
 impl LlmProxy {
     pub fn new(db: Arc<Database>, auth_manager: Arc<AuthManager>) -> Self {
-        // Build a client that bypasses proxy
-        let no_proxy_client = reqwest::Client::builder()
+        // Build a client that bypasses proxy with timeout
+        let client = reqwest::Client::builder()
             .no_proxy()
+            .timeout(std::time::Duration::from_secs(120))
             .build()
-            .expect("Failed to build no_proxy client");
+            .expect("Failed to build HTTP client");
 
         Self {
             db,
             auth_manager,
-            http_client: reqwest::Client::builder()
-                .no_proxy()
-                .build()
-                .expect("Failed to build HTTP client"),
-            no_proxy_client,
+            http_client: client.clone(),
+            no_proxy_client: client,
             rr_counter: Arc::new(RwLock::new(HashMap::new())),
         }
     }
