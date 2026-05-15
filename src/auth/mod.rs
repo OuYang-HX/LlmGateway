@@ -147,10 +147,10 @@ impl AuthManager {
                     urlencoding::encode(password));
                 self.send_token_request(token_url, method, "form", &body, provider.token_extra_headers.as_deref()).await?
             } else {
-                let body = serde_json::json!({
-                    username_field: username,
-                    password_field: password,
-                });
+                let mut map = serde_json::Map::new();
+                map.insert(username_field.to_string(), serde_json::Value::String(username.to_string()));
+                map.insert(password_field.to_string(), serde_json::Value::String(password.to_string()));
+                let body = serde_json::Value::Object(map);
                 let body_str = serde_json::to_string(&body).map_err(|e| AuthError::ParseError(e.into()))?;
                 self.send_token_request(token_url, method, "json", &body_str, provider.token_extra_headers.as_deref()).await?
             }
