@@ -193,16 +193,12 @@ impl AuthManager {
 
         let mut req = self.http_client.request(method, url);
 
-        if content_type == "form" {
-            req = req.header("Content-Type", "application/x-www-form-urlencoded");
-        } else {
-            req = req.header("Content-Type", "application/json");
-        }
-
         // Add custom extra headers from provider config
+        // Skip Content-Type to avoid duplicate header conflict
         if let Some(headers_json) = extra_headers {
             if let Ok(headers) = serde_json::from_str::<serde_json::Map<String, serde_json::Value>>(headers_json) {
                 for (key, value) in headers {
+                    if key.eq_ignore_ascii_case("content-type") { continue; }
                     if let Some(v) = value.as_str() {
                         req = req.header(&key, v);
                     }
@@ -210,7 +206,16 @@ impl AuthManager {
             }
         }
 
-        req = req.body(body.to_string());
+        if content_type == "form" {
+            req = req.header("Content-Type", "application/x-www-form-urlencoded")
+                     .body(body.to_string());
+        } else {
+            // For JSON, use reqwest's .json() method which properly encodes the body
+            // Parse the body string as JSON value first
+            let json_body: serde_json::Value = serde_json::from_str(body)
+                .map_err(|e| AuthError::ParseError(e.into()))?;
+            req = req.json(&json_body);
+        }
 
         req.send().await.map_err(AuthError::RequestFailed)
     }
