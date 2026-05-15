@@ -1,7 +1,9 @@
-mod handler;
+pub mod handler;
+pub mod ws_handler;
 
 use crate::db::{Database, ProviderRow};
 use crate::auth::AuthManager;
+use crate::usage;
 use std::sync::Arc;
 use tokio::sync::RwLock;
 use std::collections::HashMap;
@@ -79,8 +81,106 @@ impl LlmProxy {
         Ok(filtered[0].clone())
     }
 
-    /// Forward a request to the selected provider
-    pub async fn forward_request(
+    /// Forward a non-streaming request and extract usage from the response
+    pub async fn forward_and_collect(
+        &self,
+        api_key_id: &str,
+        provider: &ProviderRow,
+        path: &str,
+        method: &str,
+        headers: axum::http::HeaderMap,
+        body: axum::body::Bytes,
+    ) -> Result<ProxyResponse, ProxyError> {
+        let start = std::time::Instant::now();
+
+        // Get auth header
+        let (auth_header_name, auth_header_value) = self.auth_manager.get_auth_header(provider).await
+            .map_err(|e| ProxyError::AuthError(e.to_string()))?;
+
+        // Build the target URL
+        let base_url = provider.base_url.trim_end_matches('/');
+        let target_url = format!("{}{}", base_url, path);
+
+        // Build the forwarded request
+        let mut req_builder = match method {
+            "GET" => self.http_client.get(&target_url),
+            "POST" => self.http_client.post(&target_url),
+            "PUT" => self.http_client.put(&target_url),
+            "DELETE" => self.http_client.delete(&target_url),
+            "PATCH" => self.http_client.patch(&target_url),
+            _ => self.http_client.post(&target_url),
+        };
+
+        // Copy headers, replacing auth
+        for (name, value) in headers.iter() {
+            if name.as_str() != "authorization" && name.as_str() != "host" {
+                if let Ok(v) = value.to_str() {
+                    req_builder = req_builder.header(name.as_str(), v);
+                }
+            }
+        }
+        req_builder = req_builder.header(&auth_header_name, &auth_header_value);
+
+        // Set body
+        if !body.is_empty() {
+            req_builder = req_builder.body(body.clone());
+        }
+
+        // Send request
+        let response = req_builder.send().await
+            .map_err(|e| ProxyError::UpstreamError(e.to_string()))?;
+
+        let status_code = response.status().as_u16() as i32;
+        let is_throttled = status_code == 429;
+        let content_type = response.headers().get("content-type").cloned();
+        let response_body = response.bytes().await.unwrap_or_default();
+
+        let duration_ms = start.elapsed().as_millis() as i64;
+
+        // Extract usage from response body
+        let (prompt_tokens, completion_tokens, total_tokens) = serde_json::from_slice::<serde_json::Value>(&response_body)
+            .map(|v| usage::extract_openai_usage(&v))
+            .unwrap_or((0, 0, 0));
+
+        // Extract model from response
+        let response_model = serde_json::from_slice::<serde_json::Value>(&response_body)
+            .ok()
+            .and_then(|v| usage::extract_model_from_response(&v));
+
+        // Extract model from request body as fallback
+        let model = response_model.or_else(|| self.extract_model_from_body(&body));
+
+        // Log the request
+        let _ = self.db.insert_request_log(
+            api_key_id,
+            &provider.id,
+            model.as_deref(),
+            path,
+            method,
+            None,
+            None,
+            Some(status_code),
+            None,
+            None,
+            prompt_tokens,
+            completion_tokens,
+            total_tokens,
+            Some(duration_ms),
+            false,
+            is_throttled,
+            None,
+        ).await;
+
+        Ok(ProxyResponse {
+            status_code,
+            content_type,
+            body: response_body,
+        })
+    }
+
+    /// Forward a streaming request, returning the upstream response for streaming
+    /// The caller is responsible for calling log_streaming_request after the stream completes
+    pub async fn forward_streaming(
         &self,
         api_key_id: &str,
         provider: &ProviderRow,
@@ -129,15 +229,10 @@ impl LlmProxy {
             .map_err(|e| ProxyError::UpstreamError(e.to_string()))?;
 
         let duration_ms = start.elapsed().as_millis() as i64;
-
-        // Check if throttled (429 status)
         let is_throttled = response.status().as_u16() == 429;
-
-        // Parse token usage from response (best effort)
-        let (prompt_tokens, completion_tokens, total_tokens) = (0i64, 0i64, 0i64);
-
-        // Log the request
         let model = self.extract_model_from_body(&body);
+
+        // Log a preliminary entry (token counts will be updated later)
         let _ = self.db.insert_request_log(
             api_key_id,
             &provider.id,
@@ -149,11 +244,11 @@ impl LlmProxy {
             Some(response.status().as_u16() as i32),
             None,
             None,
-            prompt_tokens,
-            completion_tokens,
-            total_tokens,
+            0, // Will be updated when stream completes
+            0,
+            0,
             Some(duration_ms),
-            false,
+            true,
             is_throttled,
             None,
         ).await;
@@ -205,6 +300,13 @@ impl LlmProxy {
 
         Ok(id)
     }
+}
+
+/// Response from a non-streaming proxy request
+pub struct ProxyResponse {
+    pub status_code: i32,
+    pub content_type: Option<axum::http::HeaderValue>,
+    pub body: bytes::Bytes,
 }
 
 #[derive(Debug, thiserror::Error)]

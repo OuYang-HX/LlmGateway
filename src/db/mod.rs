@@ -1,6 +1,5 @@
 use sqlx::sqlite::{SqlitePoolOptions, SqlitePool};
 use serde::Serialize;
-use std::path::Path;
 
 /// Database connection pool wrapper
 #[derive(Debug, Clone)]

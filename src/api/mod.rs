@@ -5,9 +5,7 @@ use axum::{
     response::IntoResponse,
 };
 use crate::config::*;
-use crate::db::Database;
 use crate::AppState;
-use std::sync::Arc;
 use uuid::Uuid;
 use serde::Deserialize;
 

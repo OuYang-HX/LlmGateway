@@ -3,7 +3,7 @@ use llm_gateway::auth::token_refresh::TokenRefreshTask;
 
 use axum::{
     Router,
-    routing::{get, post, delete},
+    routing::{get, post},
     http::Method,
 };
 use std::sync::Arc;
@@ -77,6 +77,9 @@ async fn main() -> anyhow::Result<()> {
         // Dashboard API
         .route("/api/v1/dashboard/summary", get(api::get_dashboard_summary))
         .route("/api/v1/dashboard/token-rate", get(api::get_token_rate))
+
+        // WebSocket proxy
+        .route("/ws/v1", get(proxy::ws_handler::ws_proxy_handler))
 
         // LLM Proxy (catch-all for /v1/* paths)
         .route("/v1/*path", post(proxy::proxy_request))

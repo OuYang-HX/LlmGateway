@@ -62,22 +62,20 @@ pub async fn proxy_request(
         .and_then(|v| v.get("stream")?.as_bool())
         .unwrap_or(false);
 
-    // Forward the request
-    let response = state.proxy.forward_request(
-        &api_key_row.id,
-        &provider,
-        &path,
-        &method,
-        headers,
-        body_bytes.clone(),
-    ).await;
+    if is_streaming {
+        // Streaming path: forward and stream the response
+        let response = state.proxy.forward_streaming(
+            &api_key_row.id,
+            &provider,
+            &path,
+            &method,
+            headers,
+            body_bytes,
+        ).await;
 
-    match response {
-        Ok(upstream_response) => {
-            let status = upstream_response.status();
-
-            // For streaming responses, we need to handle SSE
-            if is_streaming && status.is_success() {
+        match response {
+            Ok(upstream_response) => {
+                let status = upstream_response.status();
                 let stream = upstream_response.bytes_stream();
                 let (tx, rx) = tokio::sync::mpsc::channel(100);
                 tokio::spawn(async move {
@@ -109,15 +107,30 @@ pub async fn proxy_request(
 
                 return response.into_response();
             }
-
-            // Non-streaming: collect and return
-            let content_type = upstream_response.headers().get("content-type").cloned();
-            let body = upstream_response.bytes().await.unwrap_or_default();
-            let mut response = Response::builder().status(status);
-            if let Some(content_type) = content_type {
-                response = response.header("content-type", content_type);
+            Err(e) => {
+                tracing::error!("Proxy error: {}", e);
+                return (StatusCode::BAD_GATEWAY, format!("Upstream error: {}", e)).into_response();
             }
-            response.body(Body::from(body)).unwrap().into_response()
+        }
+    }
+
+    // Non-streaming path: forward, extract usage, and return
+    let response = state.proxy.forward_and_collect(
+        &api_key_row.id,
+        &provider,
+        &path,
+        &method,
+        headers,
+        body_bytes,
+    ).await;
+
+    match response {
+        Ok(proxy_response) => {
+            let mut builder = Response::builder().status(StatusCode::from_u16(proxy_response.status_code as u16).unwrap_or(StatusCode::INTERNAL_SERVER_ERROR));
+            if let Some(content_type) = proxy_response.content_type {
+                builder = builder.header("content-type", content_type);
+            }
+            builder.body(Body::from(proxy_response.body)).unwrap().into_response()
         }
         Err(e) => {
             tracing::error!("Proxy error: {}", e);

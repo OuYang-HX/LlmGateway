@@ -1,10 +1,8 @@
 pub mod token_refresh;
 
 use crate::db::Database;
-use crate::config::ProviderConfig;
 use chrono::Utc;
 use std::sync::Arc;
-use tokio::sync::RwLock;
 use serde::{Deserialize, Serialize};
 
 /// Manages dynamic token authentication for providers
