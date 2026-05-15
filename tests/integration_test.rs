@@ -1,0 +1,1126 @@
+use llm_gateway::db::Database;
+use llm_gateway::utils;
+use llm_gateway::proxy::LlmProxy;
+use llm_gateway::auth::AuthManager;
+use llm_gateway::stats::StatsCollector;
+use llm_gateway::config::*;
+use std::sync::Arc;
+
+/// Helper to create an in-memory database for testing
+async fn test_db() -> Arc<Database> {
+    Arc::new(Database::new_in_memory().await.expect("Failed to create test DB"))
+}
+
+// ==================== Database Tests ====================
+
+#[tokio::test]
+async fn test_database_creation() {
+    let db = Database::new_in_memory().await;
+    assert!(db.is_ok(), "Database should be created successfully");
+}
+
+#[tokio::test]
+async fn test_create_and_get_api_key() {
+    let db = test_db().await;
+    let id = "test-key-1";
+    let name = "Test Key";
+    let key_hash = utils::sha256_hash("lgk-test-secret-key");
+    let key_prefix = "lgk-test-xxx";
+
+    db.create_api_key(id, name, &key_hash, key_prefix, None).await.unwrap();
+
+    let result = db.get_api_key_by_hash(&key_hash).await;
+    assert!(result.is_ok(), "Should find key by hash");
+    let key_row = result.unwrap().unwrap();
+    assert_eq!(key_row.id, id);
+    assert_eq!(key_row.name, name);
+    assert_eq!(key_row.key_prefix, key_prefix);
+    assert!(key_row.is_active);
+}
+
+#[tokio::test]
+async fn test_create_api_key_with_allowed_providers() {
+    let db = test_db().await;
+    let providers = serde_json::to_string(&vec!["provider-a".to_string(), "provider-b".to_string()]).unwrap();
+
+    db.create_api_key("key-2", "Restricted Key", "hash2", "lgk-rest", Some(&providers)).await.unwrap();
+
+    let key_row = db.get_api_key_by_hash("hash2").await.unwrap().unwrap();
+    assert!(key_row.allowed_providers.is_some());
+    let parsed: Vec<String> = serde_json::from_str(&key_row.allowed_providers.unwrap()).unwrap();
+    assert_eq!(parsed, vec!["provider-a", "provider-b"]);
+}
+
+#[tokio::test]
+async fn test_list_api_keys() {
+    let db = test_db().await;
+    db.create_api_key("key-a", "Key A", "hash-a", "lgk-a", None).await.unwrap();
+    db.create_api_key("key-b", "Key B", "hash-b", "lgk-b", None).await.unwrap();
+
+    let keys = db.list_api_keys().await.unwrap();
+    assert_eq!(keys.len(), 2);
+}
+
+#[tokio::test]
+async fn test_deactivate_api_key() {
+    let db = test_db().await;
+    db.create_api_key("key-c", "Key C", "hash-c", "lgk-c", None).await.unwrap();
+
+    let deactivated = db.deactivate_api_key("key-c").await.unwrap();
+    assert!(deactivated, "Should deactivate existing key");
+
+    // Deactivated key should not be found by hash (active only)
+    let result = db.get_api_key_by_hash("hash-c").await.unwrap();
+    assert!(result.is_none(), "Deactivated key should not be found in active lookup");
+}
+
+#[tokio::test]
+async fn test_delete_api_key() {
+    let db = test_db().await;
+    db.create_api_key("key-d", "Key D", "hash-d", "lgk-d", None).await.unwrap();
+
+    let deleted = db.delete_api_key("key-d").await.unwrap();
+    assert!(deleted, "Should delete existing key");
+
+    let result = db.get_api_key_by_id("key-d").await.unwrap();
+    assert!(result.is_none(), "Deleted key should not be found");
+}
+
+#[tokio::test]
+async fn test_delete_nonexistent_api_key() {
+    let db = test_db().await;
+    let deleted = db.delete_api_key("nonexistent").await.unwrap();
+    assert!(!deleted, "Should return false for nonexistent key");
+}
+
+#[tokio::test]
+async fn test_get_api_key_by_id() {
+    let db = test_db().await;
+    db.create_api_key("key-byid", "Key By ID", "hash-byid", "lgk-byid", None).await.unwrap();
+
+    let result = db.get_api_key_by_id("key-byid").await.unwrap();
+    assert!(result.is_some());
+    assert_eq!(result.unwrap().name, "Key By ID");
+}
+
+#[tokio::test]
+async fn test_get_nonexistent_api_key_by_id() {
+    let db = test_db().await;
+    let result = db.get_api_key_by_id("nonexistent").await.unwrap();
+    assert!(result.is_none());
+}
+
+// ==================== Provider Tests ====================
+
+#[tokio::test]
+async fn test_create_and_get_provider() {
+    let db = test_db().await;
+    db.create_provider(
+        "provider-1",
+        "Test Provider",
+        "https://api.example.com/v1",
+        "openai",
+        "api_key",
+        Some("sk-test-key"),
+        None, None, None,
+        "token", "refreshToken", "Authorization", "Bearer ",
+        86400, 1,
+    ).await.unwrap();
+
+    let provider = db.get_provider("provider-1").await.unwrap().unwrap();
+    assert_eq!(provider.id, "provider-1");
+    assert_eq!(provider.name, "Test Provider");
+    assert_eq!(provider.base_url, "https://api.example.com/v1");
+    assert_eq!(provider.api_type, "openai");
+    assert_eq!(provider.auth_type, "api_key");
+    assert_eq!(provider.api_key, Some("sk-test-key".to_string()));
+    assert!(provider.is_active);
+}
+
+#[tokio::test]
+async fn test_create_provider_with_dynamic_token() {
+    let db = test_db().await;
+    db.create_provider(
+        "provider-dynamic",
+        "Dynamic Token Provider",
+        "https://internal.example.com/v1",
+        "openai",
+        "dynamic_token",
+        None,
+        Some("https://auth.example.com/login"),
+        Some("admin"),
+        Some("password123"),
+        "access_token",
+        "refresh_token",
+        "X-Auth-Token",
+        "",
+        28800, 2,
+    ).await.unwrap();
+
+    let provider = db.get_provider("provider-dynamic").await.unwrap().unwrap();
+    assert_eq!(provider.auth_type, "dynamic_token");
+    assert_eq!(provider.token_url, Some("https://auth.example.com/login".to_string()));
+    assert_eq!(provider.token_username, Some("admin".to_string()));
+    assert_eq!(provider.token_password, Some("password123".to_string()));
+    assert_eq!(provider.token_field, "access_token");
+    assert_eq!(provider.refresh_token_field, "refresh_token");
+    assert_eq!(provider.token_header_field, "X-Auth-Token");
+    assert_eq!(provider.token_header_prefix, "");
+    assert_eq!(provider.token_expiry_seconds, 28800);
+    assert_eq!(provider.weight, 2);
+}
+
+#[tokio::test]
+async fn test_list_providers() {
+    let db = test_db().await;
+    db.create_provider("p1", "Provider 1", "https://p1.com", "openai", "api_key", Some("key1"), None, None, None, "token", "refreshToken", "Authorization", "Bearer ", 86400, 1).await.unwrap();
+    db.create_provider("p2", "Provider 2", "https://p2.com", "openai", "api_key", Some("key2"), None, None, None, "token", "refreshToken", "Authorization", "Bearer ", 86400, 1).await.unwrap();
+
+    let providers = db.list_providers().await.unwrap();
+    assert_eq!(providers.len(), 2);
+}
+
+#[tokio::test]
+async fn test_list_active_providers() {
+    let db = test_db().await;
+    db.create_provider("p1", "Provider 1", "https://p1.com", "openai", "api_key", Some("key1"), None, None, None, "token", "refreshToken", "Authorization", "Bearer ", 86400, 1).await.unwrap();
+    db.create_provider("p2", "Provider 2", "https://p2.com", "openai", "api_key", Some("key2"), None, None, None, "token", "refreshToken", "Authorization", "Bearer ", 86400, 1).await.unwrap();
+
+    db.deactivate_provider("p2").await.unwrap();
+
+    let active = db.list_active_providers().await.unwrap();
+    assert_eq!(active.len(), 1);
+    assert_eq!(active[0].id, "p1");
+}
+
+#[tokio::test]
+async fn test_delete_provider() {
+    let db = test_db().await;
+    db.create_provider("p-del", "To Delete", "https://del.com", "openai", "api_key", Some("key"), None, None, None, "token", "refreshToken", "Authorization", "Bearer ", 86400, 1).await.unwrap();
+
+    let deleted = db.delete_provider("p-del").await.unwrap();
+    assert!(deleted);
+
+    let result = db.get_provider("p-del").await.unwrap();
+    assert!(result.is_none());
+}
+
+#[tokio::test]
+async fn test_update_provider_token() {
+    let db = test_db().await;
+    db.create_provider("p-token", "Token Provider", "https://tp.com", "openai", "dynamic_token", None, Some("https://auth.com"), Some("user"), Some("pass"), "token", "refreshToken", "Authorization", "Bearer ", 86400, 1).await.unwrap();
+
+    db.update_provider_token("p-token", "new-access-token", Some("new-refresh-token"), "2099-12-31 23:59:59").await.unwrap();
+
+    let provider = db.get_provider("p-token").await.unwrap().unwrap();
+    assert_eq!(provider.current_token, Some("new-access-token".to_string()));
+    assert_eq!(provider.current_refresh_token, Some("new-refresh-token".to_string()));
+    assert_eq!(provider.token_expires_at, Some("2099-12-31 23:59:59".to_string()));
+}
+
+#[tokio::test]
+async fn test_update_provider_token_without_refresh() {
+    let db = test_db().await;
+    db.create_provider("p-token2", "Token Provider 2", "https://tp2.com", "openai", "dynamic_token", None, Some("https://auth.com"), Some("user"), Some("pass"), "token", "refreshToken", "Authorization", "Bearer ", 86400, 1).await.unwrap();
+
+    db.update_provider_token("p-token2", "access-only", None, "2099-12-31 23:59:59").await.unwrap();
+
+    let provider = db.get_provider("p-token2").await.unwrap().unwrap();
+    assert_eq!(provider.current_token, Some("access-only".to_string()));
+    assert_eq!(provider.current_refresh_token, None);
+}
+
+#[tokio::test]
+async fn test_delete_nonexistent_provider() {
+    let db = test_db().await;
+    let deleted = db.delete_provider("nonexistent").await.unwrap();
+    assert!(!deleted);
+}
+
+// ==================== Request Log Tests ====================
+
+#[tokio::test]
+async fn test_insert_and_query_request_logs() {
+    let db = test_db().await;
+    db.create_api_key("log-key", "Log Key", "log-hash", "lgk-log", None).await.unwrap();
+    db.create_provider("log-prov", "Log Provider", "https://lp.com", "openai", "api_key", Some("key"), None, None, None, "token", "refreshToken", "Authorization", "Bearer ", 86400, 1).await.unwrap();
+
+    let _log_id = db.insert_request_log(
+        "log-key", "log-prov", Some("gpt-4"),
+        "/v1/chat/completions", "POST",
+        None, Some(r#"{"model":"gpt-4","messages":[{"role":"user","content":"hi"}]}"#),
+        Some(200), None, Some(r#"{"id":"chatcmpl-1"}"#),
+        10, 20, 30,
+        Some(1500), false, false, None,
+    ).await.unwrap();
+
+    let logs = db.query_request_logs(None, None, None, None, 10, 0).await.unwrap();
+    assert_eq!(logs.len(), 1);
+    assert_eq!(logs[0].model, Some("gpt-4".to_string()));
+    assert_eq!(logs[0].prompt_tokens, 10);
+    assert_eq!(logs[0].completion_tokens, 20);
+    assert_eq!(logs[0].total_tokens, 30);
+    assert_eq!(logs[0].duration_ms, Some(1500));
+}
+
+#[tokio::test]
+async fn test_query_logs_by_api_key() {
+    let db = test_db().await;
+    db.create_api_key("key-a", "Key A", "hash-a", "lgk-a", None).await.unwrap();
+    db.create_api_key("key-b", "Key B", "hash-b", "lgk-b", None).await.unwrap();
+    db.create_provider("prov", "Provider", "https://p.com", "openai", "api_key", Some("key"), None, None, None, "token", "refreshToken", "Authorization", "Bearer ", 86400, 1).await.unwrap();
+
+    db.insert_request_log("key-a", "prov", None, "/v1/chat", "POST", None, None, Some(200), None, None, 5, 10, 15, Some(100), false, false, None).await.unwrap();
+    db.insert_request_log("key-b", "prov", None, "/v1/chat", "POST", None, None, Some(200), None, None, 5, 10, 15, Some(100), false, false, None).await.unwrap();
+    db.insert_request_log("key-a", "prov", None, "/v1/chat", "POST", None, None, Some(200), None, None, 5, 10, 15, Some(100), false, false, None).await.unwrap();
+
+    let logs_a = db.query_request_logs(Some("key-a"), None, None, None, 10, 0).await.unwrap();
+    assert_eq!(logs_a.len(), 2);
+
+    let logs_b = db.query_request_logs(Some("key-b"), None, None, None, 10, 0).await.unwrap();
+    assert_eq!(logs_b.len(), 1);
+}
+
+#[tokio::test]
+async fn test_query_logs_by_provider() {
+    let db = test_db().await;
+    db.create_api_key("key", "Key", "hash", "lgk", None).await.unwrap();
+    db.create_provider("prov-1", "Provider 1", "https://p1.com", "openai", "api_key", Some("key"), None, None, None, "token", "refreshToken", "Authorization", "Bearer ", 86400, 1).await.unwrap();
+    db.create_provider("prov-2", "Provider 2", "https://p2.com", "openai", "api_key", Some("key"), None, None, None, "token", "refreshToken", "Authorization", "Bearer ", 86400, 1).await.unwrap();
+
+    db.insert_request_log("key", "prov-1", None, "/v1/chat", "POST", None, None, Some(200), None, None, 5, 10, 15, Some(100), false, false, None).await.unwrap();
+    db.insert_request_log("key", "prov-2", None, "/v1/chat", "POST", None, None, Some(200), None, None, 5, 10, 15, Some(100), false, false, None).await.unwrap();
+
+    let logs_1 = db.query_request_logs(None, Some("prov-1"), None, None, 10, 0).await.unwrap();
+    assert_eq!(logs_1.len(), 1);
+}
+
+#[tokio::test]
+async fn test_count_request_logs() {
+    let db = test_db().await;
+    db.create_api_key("key", "Key", "hash", "lgk", None).await.unwrap();
+    db.create_provider("prov", "Provider", "https://p.com", "openai", "api_key", Some("key"), None, None, None, "token", "refreshToken", "Authorization", "Bearer ", 86400, 1).await.unwrap();
+
+    for _ in 0..5 {
+        db.insert_request_log("key", "prov", None, "/v1/chat", "POST", None, None, Some(200), None, None, 5, 10, 15, Some(100), false, false, None).await.unwrap();
+    }
+
+    let count = db.count_request_logs(None, None, None, None).await.unwrap();
+    assert_eq!(count, 5);
+}
+
+#[tokio::test]
+async fn test_throttled_request_log() {
+    let db = test_db().await;
+    db.create_api_key("key", "Key", "hash", "lgk", None).await.unwrap();
+    db.create_provider("prov", "Provider", "https://p.com", "openai", "api_key", Some("key"), None, None, None, "token", "refreshToken", "Authorization", "Bearer ", 86400, 1).await.unwrap();
+
+    db.insert_request_log("key", "prov", None, "/v1/chat", "POST", None, None, Some(429), None, None, 0, 0, 0, Some(50), false, true, Some("Rate limit exceeded")).await.unwrap();
+
+    let logs = db.query_request_logs(None, None, None, None, 10, 0).await.unwrap();
+    assert_eq!(logs.len(), 1);
+    assert!(logs[0].is_throttled);
+    assert_eq!(logs[0].response_status, Some(429));
+    assert_eq!(logs[0].error_message, Some("Rate limit exceeded".to_string()));
+}
+
+#[tokio::test]
+async fn test_error_request_log() {
+    let db = test_db().await;
+    db.create_api_key("key", "Key", "hash", "lgk", None).await.unwrap();
+    db.create_provider("prov", "Provider", "https://p.com", "openai", "api_key", Some("key"), None, None, None, "token", "refreshToken", "Authorization", "Bearer ", 86400, 1).await.unwrap();
+
+    db.insert_request_log("key", "prov", None, "/v1/chat", "POST", None, None, Some(500), None, None, 0, 0, 0, Some(2000), false, false, Some("Internal server error")).await.unwrap();
+
+    let logs = db.query_request_logs(None, None, None, None, 10, 0).await.unwrap();
+    assert_eq!(logs[0].error_message, Some("Internal server error".to_string()));
+    assert_eq!(logs[0].response_status, Some(500));
+}
+
+#[tokio::test]
+async fn test_query_logs_with_time_range() {
+    let db = test_db().await;
+    db.create_api_key("key", "Key", "hash", "lgk", None).await.unwrap();
+    db.create_provider("prov", "Provider", "https://p.com", "openai", "api_key", Some("key"), None, None, None, "token", "refreshToken", "Authorization", "Bearer ", 86400, 1).await.unwrap();
+
+    db.insert_request_log("key", "prov", None, "/v1/chat", "POST", None, None, Some(200), None, None, 5, 10, 15, Some(100), false, false, None).await.unwrap();
+
+    // Query with past time range - should find the log
+    let past = (chrono::Utc::now() - chrono::Duration::hours(1)).format("%Y-%m-%d %H:%M:%S").to_string();
+    let future = (chrono::Utc::now() + chrono::Duration::hours(1)).format("%Y-%m-%d %H:%M:%S").to_string();
+    let logs = db.query_request_logs(None, None, Some(&past), Some(&future), 10, 0).await.unwrap();
+    assert_eq!(logs.len(), 1);
+
+    // Query with far future start time - should find nothing
+    let far_future = (chrono::Utc::now() + chrono::Duration::days(1)).format("%Y-%m-%d %H:%M:%S").to_string();
+    let logs = db.query_request_logs(None, None, Some(&far_future), None, 10, 0).await.unwrap();
+    assert_eq!(logs.len(), 0);
+}
+
+// ==================== Statistics Tests ====================
+
+#[tokio::test]
+async fn test_get_stats() {
+    let db = test_db().await;
+    db.create_api_key("key", "Key", "hash", "lgk", None).await.unwrap();
+    db.create_provider("prov", "Provider", "https://p.com", "openai", "api_key", Some("key"), None, None, None, "token", "refreshToken", "Authorization", "Bearer ", 86400, 1).await.unwrap();
+
+    db.insert_request_log("key", "prov", Some("gpt-4"), "/v1/chat", "POST", None, None, Some(200), None, None, 100, 200, 300, Some(1500), false, false, None).await.unwrap();
+    db.insert_request_log("key", "prov", Some("gpt-4"), "/v1/chat", "POST", None, None, Some(200), None, None, 50, 100, 150, Some(1000), false, false, None).await.unwrap();
+    db.insert_request_log("key", "prov", Some("gpt-4"), "/v1/chat", "POST", None, None, Some(429), None, None, 0, 0, 0, Some(50), false, true, Some("Rate limited")).await.unwrap();
+
+    let stats = db.get_stats(None, None, None, None).await.unwrap();
+    assert_eq!(stats.total_requests, 3);
+    assert_eq!(stats.total_prompt_tokens, 150);
+    assert_eq!(stats.total_completion_tokens, 300);
+    assert_eq!(stats.total_tokens, 450);
+    assert_eq!(stats.throttle_count, 1);
+    assert_eq!(stats.error_count, 1);
+}
+
+#[tokio::test]
+async fn test_get_stats_by_api_key() {
+    let db = test_db().await;
+    db.create_api_key("key-1", "Key 1", "hash-1", "lgk-1", None).await.unwrap();
+    db.create_api_key("key-2", "Key 2", "hash-2", "lgk-2", None).await.unwrap();
+    db.create_provider("prov", "Provider", "https://p.com", "openai", "api_key", Some("key"), None, None, None, "token", "refreshToken", "Authorization", "Bearer ", 86400, 1).await.unwrap();
+
+    db.insert_request_log("key-1", "prov", None, "/v1/chat", "POST", None, None, Some(200), None, None, 100, 200, 300, Some(1500), false, false, None).await.unwrap();
+    db.insert_request_log("key-2", "prov", None, "/v1/chat", "POST", None, None, Some(200), None, None, 50, 100, 150, Some(1000), false, false, None).await.unwrap();
+
+    let stats_1 = db.get_stats(Some("key-1"), None, None, None).await.unwrap();
+    assert_eq!(stats_1.total_requests, 1);
+    assert_eq!(stats_1.total_tokens, 300);
+
+    let stats_2 = db.get_stats(Some("key-2"), None, None, None).await.unwrap();
+    assert_eq!(stats_2.total_requests, 1);
+    assert_eq!(stats_2.total_tokens, 150);
+}
+
+#[tokio::test]
+async fn test_get_stats_by_provider() {
+    let db = test_db().await;
+    db.create_api_key("key", "Key", "hash", "lgk", None).await.unwrap();
+    db.create_provider("prov-1", "Provider 1", "https://p1.com", "openai", "api_key", Some("key"), None, None, None, "token", "refreshToken", "Authorization", "Bearer ", 86400, 1).await.unwrap();
+    db.create_provider("prov-2", "Provider 2", "https://p2.com", "openai", "api_key", Some("key"), None, None, None, "token", "refreshToken", "Authorization", "Bearer ", 86400, 1).await.unwrap();
+
+    db.insert_request_log("key", "prov-1", None, "/v1/chat", "POST", None, None, Some(200), None, None, 100, 200, 300, Some(1500), false, false, None).await.unwrap();
+    db.insert_request_log("key", "prov-2", None, "/v1/chat", "POST", None, None, Some(200), None, None, 50, 100, 150, Some(1000), false, false, None).await.unwrap();
+
+    let stats_1 = db.get_stats(None, Some("prov-1"), None, None).await.unwrap();
+    assert_eq!(stats_1.total_requests, 1);
+    assert_eq!(stats_1.total_tokens, 300);
+}
+
+#[tokio::test]
+async fn test_get_stats_with_time_range() {
+    let db = test_db().await;
+    db.create_api_key("key", "Key", "hash", "lgk", None).await.unwrap();
+    db.create_provider("prov", "Provider", "https://p.com", "openai", "api_key", Some("key"), None, None, None, "token", "refreshToken", "Authorization", "Bearer ", 86400, 1).await.unwrap();
+
+    db.insert_request_log("key", "prov", None, "/v1/chat", "POST", None, None, Some(200), None, None, 100, 200, 300, Some(1500), false, false, None).await.unwrap();
+
+    let past = (chrono::Utc::now() - chrono::Duration::hours(1)).format("%Y-%m-%d %H:%M:%S").to_string();
+    let future = (chrono::Utc::now() + chrono::Duration::hours(1)).format("%Y-%m-%d %H:%M:%S").to_string();
+
+    let stats = db.get_stats(None, None, Some(&past), Some(&future)).await.unwrap();
+    assert_eq!(stats.total_requests, 1);
+}
+
+#[tokio::test]
+async fn test_get_stats_empty_database() {
+    let db = test_db().await;
+    let stats = db.get_stats(None, None, None, None).await.unwrap();
+    assert_eq!(stats.total_requests, 0);
+    assert_eq!(stats.total_tokens, 0);
+    assert_eq!(stats.throttle_count, 0);
+}
+
+// ==================== Token Rate Tests ====================
+
+#[tokio::test]
+async fn test_insert_and_get_token_rate_snapshots() {
+    let db = test_db().await;
+
+    db.insert_token_rate_snapshot(None, 150.5, 100, 50, 10).await.unwrap();
+    db.insert_token_rate_snapshot(None, 200.0, 130, 70, 12).await.unwrap();
+
+    let now = chrono::Utc::now().format("%Y-%m-%d %H:%M:%S").to_string();
+    let snapshots = db.get_token_rate_snapshots(None, &now, 100).await.unwrap();
+    assert_eq!(snapshots.len(), 2);
+    assert_eq!(snapshots[0].tokens_per_second, 150.5);
+    assert_eq!(snapshots[1].tokens_per_second, 200.0);
+}
+
+#[tokio::test]
+async fn test_token_rate_snapshot_by_provider() {
+    let db = test_db().await;
+    db.create_provider("prov", "Provider", "https://p.com", "openai", "api_key", Some("key"), None, None, None, "token", "refreshToken", "Authorization", "Bearer ", 86400, 1).await.unwrap();
+
+    db.insert_token_rate_snapshot(Some("prov"), 100.0, 60, 40, 5).await.unwrap();
+    db.insert_token_rate_snapshot(None, 50.0, 30, 20, 3).await.unwrap();
+
+    let now = chrono::Utc::now().format("%Y-%m-%d %H:%M:%S").to_string();
+    let prov_snapshots = db.get_token_rate_snapshots(Some("prov"), &now, 100).await.unwrap();
+    assert_eq!(prov_snapshots.len(), 1);
+    assert_eq!(prov_snapshots[0].tokens_per_second, 100.0);
+}
+
+#[tokio::test]
+async fn test_cleanup_old_snapshots() {
+    let db = test_db().await;
+
+    db.insert_token_rate_snapshot(None, 100.0, 50, 50, 5).await.unwrap();
+
+    // Cleanup with a future time should delete the snapshot
+    let future = (chrono::Utc::now() + chrono::Duration::hours(1)).format("%Y-%m-%d %H:%M:%S").to_string();
+    let deleted = db.cleanup_old_snapshots(&future).await.unwrap();
+    assert_eq!(deleted, 1, "Should delete snapshot older than future time");
+}
+
+// ==================== Utility Tests ====================
+
+#[test]
+fn test_sha256_hash() {
+    let hash1 = utils::sha256_hash("test-key");
+    let hash2 = utils::sha256_hash("test-key");
+    let hash3 = utils::sha256_hash("different-key");
+
+    assert_eq!(hash1, hash2, "Same input should produce same hash");
+    assert_ne!(hash1, hash3, "Different inputs should produce different hashes");
+    assert_eq!(hash1.len(), 64, "SHA-256 hex output should be 64 chars");
+}
+
+#[test]
+fn test_sha256_hash_empty_string() {
+    let hash = utils::sha256_hash("");
+    assert_eq!(hash.len(), 64);
+    assert_eq!(hash, "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855");
+}
+
+#[test]
+fn test_sha256_hash_special_characters() {
+    let hash = utils::sha256_hash("lgk-测试-key!@#$%");
+    assert_eq!(hash.len(), 64);
+    // Should be deterministic
+    assert_eq!(hash, utils::sha256_hash("lgk-测试-key!@#$%"));
+}
+
+// ==================== Proxy Tests ====================
+
+#[tokio::test]
+async fn test_proxy_select_provider_round_robin() {
+    let db = test_db().await;
+    db.create_provider("p1", "Provider 1", "https://p1.com", "openai", "api_key", Some("key1"), None, None, None, "token", "refreshToken", "Authorization", "Bearer ", 86400, 1).await.unwrap();
+    db.create_provider("p2", "Provider 2", "https://p2.com", "openai", "api_key", Some("key2"), None, None, None, "token", "refreshToken", "Authorization", "Bearer ", 86400, 1).await.unwrap();
+
+    let auth_manager = Arc::new(AuthManager::new(db.clone()));
+    let proxy = LlmProxy::new(db.clone(), auth_manager);
+
+    let mut p1_count = 0;
+    let mut p2_count = 0;
+    for _ in 0..10 {
+        let provider = proxy.select_provider(None).await.unwrap();
+        match provider.id.as_str() {
+            "p1" => p1_count += 1,
+            "p2" => p2_count += 1,
+            _ => {}
+        }
+    }
+    assert!(p1_count > 0 && p2_count > 0, "Should distribute across providers");
+}
+
+#[tokio::test]
+async fn test_proxy_select_provider_with_allowed_list() {
+    let db = test_db().await;
+    db.create_provider("p1", "Provider 1", "https://p1.com", "openai", "api_key", Some("key1"), None, None, None, "token", "refreshToken", "Authorization", "Bearer ", 86400, 1).await.unwrap();
+    db.create_provider("p2", "Provider 2", "https://p2.com", "openai", "api_key", Some("key2"), None, None, None, "token", "refreshToken", "Authorization", "Bearer ", 86400, 1).await.unwrap();
+
+    let auth_manager = Arc::new(AuthManager::new(db.clone()));
+    let proxy = LlmProxy::new(db.clone(), auth_manager);
+
+    let allowed = vec!["p1".to_string()];
+    for _ in 0..5 {
+        let provider = proxy.select_provider(Some(&allowed)).await.unwrap();
+        assert_eq!(provider.id, "p1", "Should only select allowed provider");
+    }
+}
+
+#[tokio::test]
+async fn test_proxy_select_provider_no_providers() {
+    let db = test_db().await;
+    let auth_manager = Arc::new(AuthManager::new(db.clone()));
+    let proxy = LlmProxy::new(db.clone(), auth_manager);
+
+    let result = proxy.select_provider(None).await;
+    assert!(result.is_err(), "Should fail with no providers");
+}
+
+#[tokio::test]
+async fn test_proxy_select_provider_no_matching() {
+    let db = test_db().await;
+    db.create_provider("p1", "Provider 1", "https://p1.com", "openai", "api_key", Some("key1"), None, None, None, "token", "refreshToken", "Authorization", "Bearer ", 86400, 1).await.unwrap();
+
+    let auth_manager = Arc::new(AuthManager::new(db.clone()));
+    let proxy = LlmProxy::new(db.clone(), auth_manager);
+
+    let allowed = vec!["nonexistent".to_string()];
+    let result = proxy.select_provider(Some(&allowed)).await;
+    assert!(result.is_err(), "Should fail with no matching providers");
+}
+
+#[tokio::test]
+async fn test_proxy_weighted_selection() {
+    let db = test_db().await;
+    db.create_provider("p-heavy", "Heavy Provider", "https://ph.com", "openai", "api_key", Some("key1"), None, None, None, "token", "refreshToken", "Authorization", "Bearer ", 86400, 9).await.unwrap();
+    db.create_provider("p-light", "Light Provider", "https://pl.com", "openai", "api_key", Some("key2"), None, None, None, "token", "refreshToken", "Authorization", "Bearer ", 86400, 1).await.unwrap();
+
+    let auth_manager = Arc::new(AuthManager::new(db.clone()));
+    let proxy = LlmProxy::new(db.clone(), auth_manager);
+
+    let mut heavy_count = 0;
+    let mut light_count = 0;
+    for _ in 0..100 {
+        let provider = proxy.select_provider(None).await.unwrap();
+        match provider.id.as_str() {
+            "p-heavy" => heavy_count += 1,
+            "p-light" => light_count += 1,
+            _ => {}
+        }
+    }
+    assert!(heavy_count > light_count * 3, "Heavy provider should get significantly more requests (got heavy={}, light={})", heavy_count, light_count);
+}
+
+#[tokio::test]
+async fn test_proxy_select_provider_skips_inactive() {
+    let db = test_db().await;
+    db.create_provider("p-active", "Active", "https://a.com", "openai", "api_key", Some("key1"), None, None, None, "token", "refreshToken", "Authorization", "Bearer ", 86400, 1).await.unwrap();
+    db.create_provider("p-inactive", "Inactive", "https://i.com", "openai", "api_key", Some("key2"), None, None, None, "token", "refreshToken", "Authorization", "Bearer ", 86400, 1).await.unwrap();
+    db.deactivate_provider("p-inactive").await.unwrap();
+
+    let auth_manager = Arc::new(AuthManager::new(db.clone()));
+    let proxy = LlmProxy::new(db.clone(), auth_manager);
+
+    for _ in 0..5 {
+        let provider = proxy.select_provider(None).await.unwrap();
+        assert_eq!(provider.id, "p-active", "Should only select active providers");
+    }
+}
+
+#[tokio::test]
+async fn test_proxy_extract_model_from_body() {
+    let db = test_db().await;
+    let auth_manager = Arc::new(AuthManager::new(db.clone()));
+    let proxy = LlmProxy::new(db.clone(), auth_manager);
+
+    let body = r#"{"model":"gpt-4","messages":[{"role":"user","content":"hi"}]}"#;
+    let model = proxy.extract_model_from_body(body.as_bytes());
+    assert_eq!(model, Some("gpt-4".to_string()));
+
+    let empty_body = b"{}";
+    let model = proxy.extract_model_from_body(empty_body);
+    assert_eq!(model, None);
+}
+
+// ==================== Stats Collector Tests ====================
+
+#[tokio::test]
+async fn test_stats_collector_record_usage() {
+    let db = test_db().await;
+    let collector = StatsCollector::new(db.clone());
+
+    collector.record_usage(100, 50).await;
+    collector.record_usage(200, 100).await;
+
+    let window = collector.current_window.read().await;
+    assert_eq!(window.prompt_tokens, 300);
+    assert_eq!(window.completion_tokens, 150);
+    assert_eq!(window.request_count, 2);
+}
+
+#[tokio::test]
+async fn test_stats_collector_take_snapshot() {
+    let db = test_db().await;
+    let collector = StatsCollector::new(db.clone());
+
+    collector.record_usage(1000, 500).await;
+
+    let rate = collector.take_snapshot(None).await.unwrap();
+    assert!(rate > 0.0, "Token rate should be positive");
+
+    let window = collector.current_window.read().await;
+    assert_eq!(window.prompt_tokens, 0);
+    assert_eq!(window.completion_tokens, 0);
+    assert_eq!(window.request_count, 0);
+}
+
+#[tokio::test]
+async fn test_stats_collector_multiple_snapshots() {
+    let db = test_db().await;
+    let collector = StatsCollector::new(db.clone());
+
+    collector.record_usage(100, 50).await;
+    let rate1 = collector.take_snapshot(None).await.unwrap();
+    assert!(rate1 > 0.0);
+
+    // After snapshot, window is reset
+    collector.record_usage(200, 100).await;
+    let rate2 = collector.take_snapshot(None).await.unwrap();
+    assert!(rate2 > 0.0);
+
+    // Verify both snapshots are in the database
+    let now = chrono::Utc::now().format("%Y-%m-%d %H:%M:%S").to_string();
+    let snapshots = db.get_token_rate_snapshots(None, &now, 100).await.unwrap();
+    assert_eq!(snapshots.len(), 2);
+}
+
+// ==================== Auth Manager Tests ====================
+
+#[tokio::test]
+async fn test_auth_manager_api_key_provider() {
+    let db = test_db().await;
+    db.create_provider("p-api", "API Key Provider", "https://api.com", "openai", "api_key", Some("sk-test-key"), None, None, None, "token", "refreshToken", "Authorization", "Bearer ", 86400, 1).await.unwrap();
+
+    let auth_manager = AuthManager::new(db.clone());
+    let provider = db.get_provider("p-api").await.unwrap().unwrap();
+
+    let (header_name, header_value) = auth_manager.get_auth_header(&provider).await.unwrap();
+    assert_eq!(header_name, "Authorization");
+    assert_eq!(header_value, "Bearer sk-test-key");
+}
+
+#[tokio::test]
+async fn test_auth_manager_custom_header_provider() {
+    let db = test_db().await;
+    db.create_provider("p-custom", "Custom Header Provider", "https://api.com", "openai", "api_key", Some("my-token-123"), None, None, None, "token", "refreshToken", "X-API-Key", "", 86400, 1).await.unwrap();
+
+    let auth_manager = AuthManager::new(db.clone());
+    let provider = db.get_provider("p-custom").await.unwrap().unwrap();
+
+    let (header_name, header_value) = auth_manager.get_auth_header(&provider).await.unwrap();
+    assert_eq!(header_name, "X-API-Key");
+    assert_eq!(header_value, "my-token-123");
+}
+
+#[tokio::test]
+async fn test_auth_manager_no_api_key_fails() {
+    let db = test_db().await;
+    db.create_provider("p-nokey", "No Key Provider", "https://api.com", "openai", "api_key", None, None, None, None, "token", "refreshToken", "Authorization", "Bearer ", 86400, 1).await.unwrap();
+
+    let auth_manager = AuthManager::new(db.clone());
+    let provider = db.get_provider("p-nokey").await.unwrap().unwrap();
+
+    let result = auth_manager.get_auth_header(&provider).await;
+    assert!(result.is_err(), "Should fail when no API key configured");
+}
+
+#[tokio::test]
+async fn test_auth_manager_unknown_auth_type() {
+    let db = test_db().await;
+    // Manually insert a provider with unknown auth type
+    db.create_provider("p-unknown", "Unknown Auth", "https://api.com", "openai", "api_key", Some("key"), None, None, None, "token", "refreshToken", "Authorization", "Bearer ", 86400, 1).await.unwrap();
+    
+    // Update auth_type directly via SQL
+    sqlx::query("UPDATE providers SET auth_type = 'oauth2' WHERE id = 'p-unknown'")
+        .execute(&db.pool)
+        .await
+        .unwrap();
+
+    let auth_manager = AuthManager::new(db.clone());
+    let provider = db.get_provider("p-unknown").await.unwrap().unwrap();
+
+    let result = auth_manager.get_auth_header(&provider).await;
+    assert!(result.is_err(), "Should fail for unknown auth type");
+}
+
+// ==================== Dashboard Summary Tests ====================
+
+#[tokio::test]
+async fn test_dashboard_summary() {
+    let db = test_db().await;
+    db.create_api_key("key-1", "Key 1", "hash-1", "lgk-1", None).await.unwrap();
+    db.create_api_key("key-2", "Key 2", "hash-2", "lgk-2", None).await.unwrap();
+    db.deactivate_api_key("key-2").await.unwrap();
+    db.create_provider("prov-1", "Provider 1", "https://p1.com", "openai", "api_key", Some("key"), None, None, None, "token", "refreshToken", "Authorization", "Bearer ", 86400, 1).await.unwrap();
+
+    let summary = db.get_dashboard_summary().await.unwrap();
+    assert_eq!(summary.total_api_keys, 2);
+    assert_eq!(summary.active_api_keys, 1);
+    assert_eq!(summary.total_providers, 1);
+    assert_eq!(summary.active_providers, 1);
+}
+
+#[tokio::test]
+async fn test_dashboard_summary_empty_database() {
+    let db = test_db().await;
+    let summary = db.get_dashboard_summary().await.unwrap();
+    assert_eq!(summary.total_api_keys, 0);
+    assert_eq!(summary.active_api_keys, 0);
+    assert_eq!(summary.total_providers, 0);
+    assert_eq!(summary.active_providers, 0);
+    assert_eq!(summary.total_requests_24h, 0);
+    assert_eq!(summary.total_tokens_24h, 0);
+}
+
+// ==================== Time-bucketed Stats Tests ====================
+
+#[tokio::test]
+async fn test_time_bucketed_stats() {
+    let db = test_db().await;
+    db.create_api_key("key", "Key", "hash", "lgk", None).await.unwrap();
+    db.create_provider("prov", "Provider", "https://p.com", "openai", "api_key", Some("key"), None, None, None, "token", "refreshToken", "Authorization", "Bearer ", 86400, 1).await.unwrap();
+
+    for _ in 0..3 {
+        db.insert_request_log("key", "prov", None, "/v1/chat", "POST", None, None, Some(200), None, None, 100, 200, 300, Some(500), false, false, None).await.unwrap();
+    }
+
+    let now = chrono::Utc::now();
+    let start = (now - chrono::Duration::days(1)).format("%Y-%m-%d %H:%M:%S").to_string();
+    let end = (now + chrono::Duration::days(1)).format("%Y-%m-%d %H:%M:%S").to_string();
+
+    let buckets = db.get_time_bucketed_stats(None, None, &start, &end, "day").await.unwrap();
+    assert!(!buckets.is_empty(), "Should have at least one time bucket");
+    assert_eq!(buckets[0].request_count, 3);
+    assert_eq!(buckets[0].total_tokens, 900);
+}
+
+#[tokio::test]
+async fn test_time_bucketed_stats_by_provider() {
+    let db = test_db().await;
+    db.create_api_key("key", "Key", "hash", "lgk", None).await.unwrap();
+    db.create_provider("prov-1", "Provider 1", "https://p1.com", "openai", "api_key", Some("key"), None, None, None, "token", "refreshToken", "Authorization", "Bearer ", 86400, 1).await.unwrap();
+    db.create_provider("prov-2", "Provider 2", "https://p2.com", "openai", "api_key", Some("key"), None, None, None, "token", "refreshToken", "Authorization", "Bearer ", 86400, 1).await.unwrap();
+
+    db.insert_request_log("key", "prov-1", None, "/v1/chat", "POST", None, None, Some(200), None, None, 100, 200, 300, Some(500), false, false, None).await.unwrap();
+    db.insert_request_log("key", "prov-2", None, "/v1/chat", "POST", None, None, Some(200), None, None, 50, 100, 150, Some(300), false, false, None).await.unwrap();
+
+    let now = chrono::Utc::now();
+    let start = (now - chrono::Duration::days(1)).format("%Y-%m-%d %H:%M:%S").to_string();
+    let end = (now + chrono::Duration::days(1)).format("%Y-%m-%d %H:%M:%S").to_string();
+
+    let buckets = db.get_time_bucketed_stats(None, Some("prov-1"), &start, &end, "day").await.unwrap();
+    assert_eq!(buckets[0].request_count, 1);
+    assert_eq!(buckets[0].total_tokens, 300);
+}
+
+#[tokio::test]
+async fn test_time_bucketed_stats_with_throttles() {
+    let db = test_db().await;
+    db.create_api_key("key", "Key", "hash", "lgk", None).await.unwrap();
+    db.create_provider("prov", "Provider", "https://p.com", "openai", "api_key", Some("key"), None, None, None, "token", "refreshToken", "Authorization", "Bearer ", 86400, 1).await.unwrap();
+
+    db.insert_request_log("key", "prov", None, "/v1/chat", "POST", None, None, Some(200), None, None, 100, 200, 300, Some(500), false, false, None).await.unwrap();
+    db.insert_request_log("key", "prov", None, "/v1/chat", "POST", None, None, Some(429), None, None, 0, 0, 0, Some(50), false, true, Some("Rate limited")).await.unwrap();
+
+    let now = chrono::Utc::now();
+    let start = (now - chrono::Duration::days(1)).format("%Y-%m-%d %H:%M:%S").to_string();
+    let end = (now + chrono::Duration::days(1)).format("%Y-%m-%d %H:%M:%S").to_string();
+
+    let buckets = db.get_time_bucketed_stats(None, None, &start, &end, "day").await.unwrap();
+    assert_eq!(buckets[0].request_count, 2);
+    assert_eq!(buckets[0].throttle_count, 1);
+}
+
+// ==================== Streaming Log Tests ====================
+
+#[tokio::test]
+async fn test_streaming_request_log() {
+    let db = test_db().await;
+    db.create_api_key("key", "Key", "hash", "lgk", None).await.unwrap();
+    db.create_provider("prov", "Provider", "https://p.com", "openai", "api_key", Some("key"), None, None, None, "token", "refreshToken", "Authorization", "Bearer ", 86400, 1).await.unwrap();
+
+    db.insert_request_log(
+        "key", "prov", Some("gpt-4"), "/v1/chat/completions", "POST",
+        None, None, Some(200), None, None,
+        50, 100, 150, Some(2000),
+        true, false, None,
+    ).await.unwrap();
+
+    let logs = db.query_request_logs(None, None, None, None, 10, 0).await.unwrap();
+    assert_eq!(logs.len(), 1);
+    assert!(logs[0].is_streaming);
+}
+
+#[tokio::test]
+async fn test_non_streaming_request_log() {
+    let db = test_db().await;
+    db.create_api_key("key", "Key", "hash", "lgk", None).await.unwrap();
+    db.create_provider("prov", "Provider", "https://p.com", "openai", "api_key", Some("key"), None, None, None, "token", "refreshToken", "Authorization", "Bearer ", 86400, 1).await.unwrap();
+
+    db.insert_request_log(
+        "key", "prov", Some("gpt-4"), "/v1/chat/completions", "POST",
+        None, None, Some(200), None, None,
+        50, 100, 150, Some(500),
+        false, false, None,
+    ).await.unwrap();
+
+    let logs = db.query_request_logs(None, None, None, None, 10, 0).await.unwrap();
+    assert!(!logs[0].is_streaming);
+}
+
+// ==================== Pagination Tests ====================
+
+#[tokio::test]
+async fn test_log_pagination() {
+    let db = test_db().await;
+    db.create_api_key("key", "Key", "hash", "lgk", None).await.unwrap();
+    db.create_provider("prov", "Provider", "https://p.com", "openai", "api_key", Some("key"), None, None, None, "token", "refreshToken", "Authorization", "Bearer ", 86400, 1).await.unwrap();
+
+    for i in 0..15 {
+        db.insert_request_log("key", "prov", None, "/v1/chat", "POST", None, None, Some(200), None, None, i, i*2, i*3, Some(100), false, false, None).await.unwrap();
+    }
+
+    let page1 = db.query_request_logs(None, None, None, None, 5, 0).await.unwrap();
+    assert_eq!(page1.len(), 5);
+
+    let page2 = db.query_request_logs(None, None, None, None, 5, 5).await.unwrap();
+    assert_eq!(page2.len(), 5);
+
+    let page3 = db.query_request_logs(None, None, None, None, 5, 10).await.unwrap();
+    assert_eq!(page3.len(), 5);
+
+    let total = db.count_request_logs(None, None, None, None).await.unwrap();
+    assert_eq!(total, 15);
+}
+
+// ==================== Config Serialization Tests ====================
+
+#[test]
+fn test_provider_config_serialization() {
+    let config = ProviderConfig {
+        id: "test".to_string(),
+        name: "Test".to_string(),
+        base_url: "https://api.com".to_string(),
+        api_type: "openai".to_string(),
+        auth_type: "api_key".to_string(),
+        api_key: Some("sk-test".to_string()),
+        token_url: None,
+        token_username: None,
+        token_password: None,
+        token_field: "token".to_string(),
+        refresh_token_field: "refreshToken".to_string(),
+        token_header_field: "Authorization".to_string(),
+        token_header_prefix: "Bearer ".to_string(),
+        token_expiry_seconds: 86400,
+        weight: 1,
+    };
+
+    let json = serde_json::to_string(&config).unwrap();
+    let deserialized: ProviderConfig = serde_json::from_str(&json).unwrap();
+    assert_eq!(deserialized.id, "test");
+    assert_eq!(deserialized.auth_type, "api_key");
+}
+
+#[test]
+fn test_create_api_key_request_deserialization() {
+    let json = r#"{"name":"My Key","allowed_providers":["prov-1","prov-2"]}"#;
+    let req: CreateApiKeyRequest = serde_json::from_str(json).unwrap();
+    assert_eq!(req.name, "My Key");
+    assert_eq!(req.allowed_providers, Some(vec!["prov-1".to_string(), "prov-2".to_string()]));
+
+    let json_no_providers = r#"{"name":"Open Key"}"#;
+    let req: CreateApiKeyRequest = serde_json::from_str(json_no_providers).unwrap();
+    assert_eq!(req.name, "Open Key");
+    assert_eq!(req.allowed_providers, None);
+}
+
+#[test]
+fn test_llm_request_deserialization() {
+    let json = r#"{"model":"gpt-4","messages":[{"role":"user","content":"Hello"}],"stream":true,"temperature":0.7}"#;
+    let req: LlmRequest = serde_json::from_str(json).unwrap();
+    assert_eq!(req.model, "gpt-4");
+    assert_eq!(req.messages.len(), 1);
+    assert!(req.stream);
+    assert_eq!(req.extra.get("temperature").unwrap().as_f64().unwrap(), 0.7);
+}
+
+#[test]
+fn test_stats_query_deserialization() {
+    let json = r#"{"granularity":"day","provider_id":"prov-1"}"#;
+    let query: StatsQuery = serde_json::from_str(json).unwrap();
+    assert_eq!(query.granularity, Some("day".to_string()));
+    assert_eq!(query.provider_id, Some("prov-1".to_string()));
+}
+
+#[test]
+fn test_request_log_query_deserialization() {
+    let json = r#"{"page":2,"page_size":50,"start_time":"2024-01-01T00:00:00Z"}"#;
+    let query: RequestLogQuery = serde_json::from_str(json).unwrap();
+    assert_eq!(query.page, Some(2));
+    assert_eq!(query.page_size, Some(50));
+}
+
+// ==================== Proxy Log Streaming Tests ====================
+
+#[tokio::test]
+async fn test_proxy_log_streaming_request() {
+    let db = test_db().await;
+    db.create_api_key("key", "Key", "hash", "lgk", None).await.unwrap();
+    db.create_provider("prov", "Provider", "https://p.com", "openai", "api_key", Some("key"), None, None, None, "token", "refreshToken", "Authorization", "Bearer ", 86400, 1).await.unwrap();
+
+    let auth_manager = Arc::new(AuthManager::new(db.clone()));
+    let proxy = LlmProxy::new(db.clone(), auth_manager);
+
+    let log_id = proxy.log_streaming_request(
+        "key", "prov", "/v1/chat/completions",
+        Some("gpt-4"), 200,
+        50, 100, 150, 2000,
+        false, None,
+    ).await.unwrap();
+
+    assert!(log_id > 0);
+
+    let logs = db.query_request_logs(None, None, None, None, 10, 0).await.unwrap();
+    assert_eq!(logs.len(), 1);
+    assert!(logs[0].is_streaming);
+    assert_eq!(logs[0].prompt_tokens, 50);
+    assert_eq!(logs[0].completion_tokens, 100);
+    assert_eq!(logs[0].total_tokens, 150);
+}
+
+#[tokio::test]
+async fn test_proxy_log_streaming_with_throttle() {
+    let db = test_db().await;
+    db.create_api_key("key", "Key", "hash", "lgk", None).await.unwrap();
+    db.create_provider("prov", "Provider", "https://p.com", "openai", "api_key", Some("key"), None, None, None, "token", "refreshToken", "Authorization", "Bearer ", 86400, 1).await.unwrap();
+
+    let auth_manager = Arc::new(AuthManager::new(db.clone()));
+    let proxy = LlmProxy::new(db.clone(), auth_manager);
+
+    let _log_id = proxy.log_streaming_request(
+        "key", "prov", "/v1/chat/completions",
+        Some("gpt-4"), 429,
+        0, 0, 0, 50,
+        true, Some("Rate limit exceeded"),
+    ).await.unwrap();
+
+    let logs = db.query_request_logs(None, None, None, None, 10, 0).await.unwrap();
+    assert!(logs[0].is_throttled);
+    assert_eq!(logs[0].error_message, Some("Rate limit exceeded".to_string()));
+}
+
+// ==================== Multiple API Key Provider Mapping Tests ====================
+
+#[tokio::test]
+async fn test_api_key_with_specific_providers() {
+    let db = test_db().await;
+    let providers = serde_json::to_string(&vec!["openai".to_string()]).unwrap();
+    db.create_api_key("key-openai-only", "OpenAI Only", "hash-openai", "lgk-oi", Some(&providers)).await.unwrap();
+
+    let key = db.get_api_key_by_hash("hash-openai").await.unwrap().unwrap();
+    let allowed: Vec<String> = serde_json::from_str(&key.allowed_providers.unwrap()).unwrap();
+    assert_eq!(allowed, vec!["openai"]);
+
+    // Verify proxy respects this
+    db.create_provider("openai", "OpenAI", "https://api.openai.com/v1", "openai", "api_key", Some("sk-key"), None, None, None, "token", "refreshToken", "Authorization", "Bearer ", 86400, 1).await.unwrap();
+    db.create_provider("anthropic", "Anthropic", "https://api.anthropic.com/v1", "openai", "api_key", Some("sk-key2"), None, None, None, "token", "refreshToken", "Authorization", "Bearer ", 86400, 1).await.unwrap();
+
+    let auth_manager = Arc::new(AuthManager::new(db.clone()));
+    let proxy = LlmProxy::new(db.clone(), auth_manager);
+
+    let allowed_providers = serde_json::from_str::<Vec<String>>(&serde_json::to_string(&vec!["openai".to_string()]).unwrap()).unwrap();
+    for _ in 0..5 {
+        let provider = proxy.select_provider(Some(&allowed_providers)).await.unwrap();
+        assert_eq!(provider.id, "openai", "Should only select OpenAI");
+    }
+}
+
+#[tokio::test]
+async fn test_api_key_with_all_providers() {
+    let db = test_db().await;
+    db.create_api_key("key-all", "All Providers", "hash-all", "lgk-all", None).await.unwrap();
+
+    let key = db.get_api_key_by_hash("hash-all").await.unwrap().unwrap();
+    assert!(key.allowed_providers.is_none(), "No provider restriction means all providers allowed");
+}
+
+// ==================== Per-API-Key Statistics Tests ====================
+
+#[tokio::test]
+async fn test_per_api_key_statistics() {
+    let db = test_db().await;
+    db.create_api_key("user-alice", "Alice", "hash-alice", "lgk-alice", None).await.unwrap();
+    db.create_api_key("user-bob", "Bob", "hash-bob", "lgk-bob", None).await.unwrap();
+    db.create_provider("prov", "Provider", "https://p.com", "openai", "api_key", Some("key"), None, None, None, "token", "refreshToken", "Authorization", "Bearer ", 86400, 1).await.unwrap();
+
+    // Alice makes 3 requests
+    for _ in 0..3 {
+        db.insert_request_log("user-alice", "prov", Some("gpt-4"), "/v1/chat", "POST", None, None, Some(200), None, None, 100, 200, 300, Some(500), false, false, None).await.unwrap();
+    }
+
+    // Bob makes 1 request
+    db.insert_request_log("user-bob", "prov", Some("gpt-4"), "/v1/chat", "POST", None, None, Some(200), None, None, 50, 100, 150, Some(300), false, false, None).await.unwrap();
+
+    let alice_stats = db.get_stats(Some("user-alice"), None, None, None).await.unwrap();
+    assert_eq!(alice_stats.total_requests, 3);
+    assert_eq!(alice_stats.total_tokens, 900);
+
+    let bob_stats = db.get_stats(Some("user-bob"), None, None, None).await.unwrap();
+    assert_eq!(bob_stats.total_requests, 1);
+    assert_eq!(bob_stats.total_tokens, 150);
+}
+
+// ==================== Provider Throttle Statistics Tests ====================
+
+#[tokio::test]
+async fn test_provider_throttle_statistics() {
+    let db = test_db().await;
+    db.create_api_key("key", "Key", "hash", "lgk", None).await.unwrap();
+    db.create_provider("prov-a", "Provider A", "https://a.com", "openai", "api_key", Some("key"), None, None, None, "token", "refreshToken", "Authorization", "Bearer ", 86400, 1).await.unwrap();
+    db.create_provider("prov-b", "Provider B", "https://b.com", "openai", "api_key", Some("key"), None, None, None, "token", "refreshToken", "Authorization", "Bearer ", 86400, 1).await.unwrap();
+
+    // Provider A: 2 throttles out of 5 requests
+    for _ in 0..3 {
+        db.insert_request_log("key", "prov-a", None, "/v1/chat", "POST", None, None, Some(200), None, None, 100, 200, 300, Some(500), false, false, None).await.unwrap();
+    }
+    for _ in 0..2 {
+        db.insert_request_log("key", "prov-a", None, "/v1/chat", "POST", None, None, Some(429), None, None, 0, 0, 0, Some(50), false, true, Some("Rate limited")).await.unwrap();
+    }
+
+    // Provider B: 0 throttles out of 2 requests
+    for _ in 0..2 {
+        db.insert_request_log("key", "prov-b", None, "/v1/chat", "POST", None, None, Some(200), None, None, 100, 200, 300, Some(500), false, false, None).await.unwrap();
+    }
+
+    let stats_a = db.get_stats(None, Some("prov-a"), None, None).await.unwrap();
+    assert_eq!(stats_a.total_requests, 5);
+    assert_eq!(stats_a.throttle_count, 2);
+
+    let stats_b = db.get_stats(None, Some("prov-b"), None, None).await.unwrap();
+    assert_eq!(stats_b.total_requests, 2);
+    assert_eq!(stats_b.throttle_count, 0);
+}
+
+// ==================== Granularity Tests ====================
+
+#[tokio::test]
+async fn test_time_bucketed_stats_hourly_granularity() {
+    let db = test_db().await;
+    db.create_api_key("key", "Key", "hash", "lgk", None).await.unwrap();
+    db.create_provider("prov", "Provider", "https://p.com", "openai", "api_key", Some("key"), None, None, None, "token", "refreshToken", "Authorization", "Bearer ", 86400, 1).await.unwrap();
+
+    db.insert_request_log("key", "prov", None, "/v1/chat", "POST", None, None, Some(200), None, None, 100, 200, 300, Some(500), false, false, None).await.unwrap();
+
+    let now = chrono::Utc::now();
+    let start = (now - chrono::Duration::days(1)).format("%Y-%m-%d %H:%M:%S").to_string();
+    let end = (now + chrono::Duration::days(1)).format("%Y-%m-%d %H:%M:%S").to_string();
+
+    let buckets = db.get_time_bucketed_stats(None, None, &start, &end, "5h").await.unwrap();
+    assert!(!buckets.is_empty());
+}
+
+#[tokio::test]
+async fn test_time_bucketed_stats_monthly_granularity() {
+    let db = test_db().await;
+    db.create_api_key("key", "Key", "hash", "lgk", None).await.unwrap();
+    db.create_provider("prov", "Provider", "https://p.com", "openai", "api_key", Some("key"), None, None, None, "token", "refreshToken", "Authorization", "Bearer ", 86400, 1).await.unwrap();
+
+    db.insert_request_log("key", "prov", None, "/v1/chat", "POST", None, None, Some(200), None, None, 100, 200, 300, Some(500), false, false, None).await.unwrap();
+
+    let now = chrono::Utc::now();
+    let start = (now - chrono::Duration::days(365)).format("%Y-%m-%d %H:%M:%S").to_string();
+    let end = (now + chrono::Duration::days(1)).format("%Y-%m-%d %H:%M:%S").to_string();
+
+    let buckets = db.get_time_bucketed_stats(None, None, &start, &end, "month").await.unwrap();
+    assert!(!buckets.is_empty());
+}

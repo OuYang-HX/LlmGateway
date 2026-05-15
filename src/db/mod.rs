@@ -1,0 +1,728 @@
+use sqlx::sqlite::{SqlitePoolOptions, SqlitePool};
+use serde::Serialize;
+
+/// Database connection pool wrapper
+#[derive(Debug, Clone)]
+pub struct Database {
+    pub pool: SqlitePool,
+}
+
+impl Database {
+    /// Create a new database connection with migrations
+    pub async fn new(database_url: &str) -> Result<Self, sqlx::Error> {
+        let pool = SqlitePoolOptions::new()
+            .max_connections(5)
+            .connect(database_url)
+            .await?;
+
+        let db = Self { pool };
+        db.run_migrations().await?;
+        Ok(db)
+    }
+
+    /// Create an in-memory database for testing
+    pub async fn new_in_memory() -> Result<Self, sqlx::Error> {
+        let pool = SqlitePoolOptions::new()
+            .max_connections(1)
+            .connect("sqlite::memory:")
+            .await?;
+
+        let db = Self { pool };
+        db.run_migrations().await?;
+        Ok(db)
+    }
+
+    /// Run database migrations
+    async fn run_migrations(&self) -> Result<(), sqlx::Error> {
+        // Create tables inline (sqlx migrate requires specific directory structure)
+        sqlx::query(
+            r#"
+            CREATE TABLE IF NOT EXISTS api_keys (
+                id TEXT PRIMARY KEY,
+                name TEXT NOT NULL,
+                key_hash TEXT NOT NULL UNIQUE,
+                key_prefix TEXT NOT NULL,
+                allowed_providers TEXT,
+                is_active BOOLEAN NOT NULL DEFAULT 1,
+                created_at TEXT NOT NULL DEFAULT (datetime('now')),
+                updated_at TEXT NOT NULL DEFAULT (datetime('now'))
+            );
+
+            CREATE TABLE IF NOT EXISTS providers (
+                id TEXT PRIMARY KEY,
+                name TEXT NOT NULL,
+                base_url TEXT NOT NULL,
+                api_type TEXT NOT NULL DEFAULT 'openai',
+                auth_type TEXT NOT NULL DEFAULT 'api_key',
+                api_key TEXT,
+                token_url TEXT,
+                token_username TEXT,
+                token_password TEXT,
+                token_field TEXT DEFAULT 'token',
+                refresh_token_field TEXT DEFAULT 'refreshToken',
+                token_header_field TEXT DEFAULT 'Authorization',
+                token_header_prefix TEXT DEFAULT 'Bearer ',
+                token_expiry_seconds INTEGER DEFAULT 86400,
+                current_token TEXT,
+                current_refresh_token TEXT,
+                token_expires_at TEXT,
+                is_active BOOLEAN NOT NULL DEFAULT 1,
+                weight INTEGER NOT NULL DEFAULT 1,
+                created_at TEXT NOT NULL DEFAULT (datetime('now')),
+                updated_at TEXT NOT NULL DEFAULT (datetime('now'))
+            );
+
+            CREATE TABLE IF NOT EXISTS request_logs (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                api_key_id TEXT NOT NULL,
+                provider_id TEXT NOT NULL,
+                model TEXT,
+                request_path TEXT NOT NULL,
+                request_method TEXT NOT NULL DEFAULT 'POST',
+                request_headers TEXT,
+                request_body TEXT,
+                response_status INTEGER,
+                response_headers TEXT,
+                response_body TEXT,
+                prompt_tokens INTEGER DEFAULT 0,
+                completion_tokens INTEGER DEFAULT 0,
+                total_tokens INTEGER DEFAULT 0,
+                duration_ms INTEGER,
+                is_streaming BOOLEAN DEFAULT 0,
+                is_throttled BOOLEAN DEFAULT 0,
+                error_message TEXT,
+                created_at TEXT NOT NULL DEFAULT (datetime('now')),
+                FOREIGN KEY (api_key_id) REFERENCES api_keys(id),
+                FOREIGN KEY (provider_id) REFERENCES providers(id)
+            );
+
+            CREATE TABLE IF NOT EXISTS token_rate_snapshots (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                provider_id TEXT,
+                tokens_per_second REAL NOT NULL,
+                prompt_tokens INTEGER DEFAULT 0,
+                completion_tokens INTEGER DEFAULT 0,
+                request_count INTEGER DEFAULT 0,
+                snapshot_time TEXT NOT NULL DEFAULT (datetime('now')),
+                FOREIGN KEY (provider_id) REFERENCES providers(id)
+            );
+
+            CREATE INDEX IF NOT EXISTS idx_request_logs_api_key ON request_logs(api_key_id);
+            CREATE INDEX IF NOT EXISTS idx_request_logs_provider ON request_logs(provider_id);
+            CREATE INDEX IF NOT EXISTS idx_request_logs_created_at ON request_logs(created_at);
+            CREATE INDEX IF NOT EXISTS idx_request_logs_api_key_created ON request_logs(api_key_id, created_at);
+            CREATE INDEX IF NOT EXISTS idx_token_rate_snapshots_time ON token_rate_snapshots(snapshot_time);
+            CREATE INDEX IF NOT EXISTS idx_token_rate_snapshots_provider_time ON token_rate_snapshots(provider_id, snapshot_time);
+            "#
+        )
+        .execute(&self.pool)
+        .await?;
+
+        Ok(())
+    }
+
+    // ========== API Key operations ==========
+
+    /// Create a new API key
+    pub async fn create_api_key(
+        &self,
+        id: &str,
+        name: &str,
+        key_hash: &str,
+        key_prefix: &str,
+        allowed_providers: Option<&str>,
+    ) -> Result<(), sqlx::Error> {
+        sqlx::query(
+            "INSERT INTO api_keys (id, name, key_hash, key_prefix, allowed_providers) VALUES (?, ?, ?, ?, ?)"
+        )
+        .bind(id)
+        .bind(name)
+        .bind(key_hash)
+        .bind(key_prefix)
+        .bind(allowed_providers)
+        .execute(&self.pool)
+        .await?;
+
+        Ok(())
+    }
+
+    /// Get API key by hash (for authentication)
+    pub async fn get_api_key_by_hash(&self, key_hash: &str) -> Result<Option<ApiKeyRow>, sqlx::Error> {
+        let row = sqlx::query_as::<_, ApiKeyRow>(
+            "SELECT id, name, key_hash, key_prefix, allowed_providers, is_active, created_at, updated_at FROM api_keys WHERE key_hash = ? AND is_active = 1"
+        )
+        .bind(key_hash)
+        .fetch_optional(&self.pool)
+        .await?;
+
+        Ok(row)
+    }
+
+    /// Get API key by ID
+    pub async fn get_api_key_by_id(&self, id: &str) -> Result<Option<ApiKeyRow>, sqlx::Error> {
+        let row = sqlx::query_as::<_, ApiKeyRow>(
+            "SELECT id, name, key_hash, key_prefix, allowed_providers, is_active, created_at, updated_at FROM api_keys WHERE id = ?"
+        )
+        .bind(id)
+        .fetch_optional(&self.pool)
+        .await?;
+
+        Ok(row)
+    }
+
+    /// List all API keys
+    pub async fn list_api_keys(&self) -> Result<Vec<ApiKeyRow>, sqlx::Error> {
+        let rows = sqlx::query_as::<_, ApiKeyRow>(
+            "SELECT id, name, key_hash, key_prefix, allowed_providers, is_active, created_at, updated_at FROM api_keys ORDER BY created_at DESC"
+        )
+        .fetch_all(&self.pool)
+        .await?;
+
+        Ok(rows)
+    }
+
+    /// Deactivate an API key
+    pub async fn deactivate_api_key(&self, id: &str) -> Result<bool, sqlx::Error> {
+        let result = sqlx::query(
+            "UPDATE api_keys SET is_active = 0, updated_at = datetime('now') WHERE id = ?"
+        )
+        .bind(id)
+        .execute(&self.pool)
+        .await?;
+
+        Ok(result.rows_affected() > 0)
+    }
+
+    /// Delete an API key
+    pub async fn delete_api_key(&self, id: &str) -> Result<bool, sqlx::Error> {
+        let result = sqlx::query("DELETE FROM api_keys WHERE id = ?")
+            .bind(id)
+            .execute(&self.pool)
+            .await?;
+
+        Ok(result.rows_affected() > 0)
+    }
+
+    // ========== Provider operations ==========
+
+    /// Create a new provider
+    pub async fn create_provider(
+        &self,
+        id: &str,
+        name: &str,
+        base_url: &str,
+        api_type: &str,
+        auth_type: &str,
+        api_key: Option<&str>,
+        token_url: Option<&str>,
+        token_username: Option<&str>,
+        token_password: Option<&str>,
+        token_field: &str,
+        refresh_token_field: &str,
+        token_header_field: &str,
+        token_header_prefix: &str,
+        token_expiry_seconds: i64,
+        weight: i32,
+    ) -> Result<(), sqlx::Error> {
+        sqlx::query(
+            r#"INSERT INTO providers (id, name, base_url, api_type, auth_type, api_key, token_url, token_username, token_password, token_field, refresh_token_field, token_header_field, token_header_prefix, token_expiry_seconds, weight)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)"#
+        )
+        .bind(id)
+        .bind(name)
+        .bind(base_url)
+        .bind(api_type)
+        .bind(auth_type)
+        .bind(api_key)
+        .bind(token_url)
+        .bind(token_username)
+        .bind(token_password)
+        .bind(token_field)
+        .bind(refresh_token_field)
+        .bind(token_header_field)
+        .bind(token_header_prefix)
+        .bind(token_expiry_seconds)
+        .bind(weight)
+        .execute(&self.pool)
+        .await?;
+
+        Ok(())
+    }
+
+    /// Get provider by ID
+    pub async fn get_provider(&self, id: &str) -> Result<Option<ProviderRow>, sqlx::Error> {
+        let row = sqlx::query_as::<_, ProviderRow>(
+            "SELECT * FROM providers WHERE id = ?"
+        )
+        .bind(id)
+        .fetch_optional(&self.pool)
+        .await?;
+
+        Ok(row)
+    }
+
+    /// List all providers
+    pub async fn list_providers(&self) -> Result<Vec<ProviderRow>, sqlx::Error> {
+        let rows = sqlx::query_as::<_, ProviderRow>(
+            "SELECT * FROM providers ORDER BY name"
+        )
+        .fetch_all(&self.pool)
+        .await?;
+
+        Ok(rows)
+    }
+
+    /// List active providers
+    pub async fn list_active_providers(&self) -> Result<Vec<ProviderRow>, sqlx::Error> {
+        let rows = sqlx::query_as::<_, ProviderRow>(
+            "SELECT * FROM providers WHERE is_active = 1 ORDER BY weight DESC, name"
+        )
+        .fetch_all(&self.pool)
+        .await?;
+
+        Ok(rows)
+    }
+
+    /// Update provider's dynamic token
+    pub async fn update_provider_token(
+        &self,
+        id: &str,
+        token: &str,
+        refresh_token: Option<&str>,
+        expires_at: &str,
+    ) -> Result<(), sqlx::Error> {
+        if let Some(rt) = refresh_token {
+            sqlx::query(
+                "UPDATE providers SET current_token = ?, current_refresh_token = ?, token_expires_at = ?, updated_at = datetime('now') WHERE id = ?"
+            )
+            .bind(token)
+            .bind(rt)
+            .bind(expires_at)
+            .bind(id)
+            .execute(&self.pool)
+            .await?;
+        } else {
+            sqlx::query(
+                "UPDATE providers SET current_token = ?, token_expires_at = ?, updated_at = datetime('now') WHERE id = ?"
+            )
+            .bind(token)
+            .bind(expires_at)
+            .bind(id)
+            .execute(&self.pool)
+            .await?;
+        }
+
+        Ok(())
+    }
+
+    /// Deactivate a provider
+    pub async fn deactivate_provider(&self, id: &str) -> Result<bool, sqlx::Error> {
+        let result = sqlx::query(
+            "UPDATE providers SET is_active = 0, updated_at = datetime('now') WHERE id = ?"
+        )
+        .bind(id)
+        .execute(&self.pool)
+        .await?;
+
+        Ok(result.rows_affected() > 0)
+    }
+
+    /// Delete a provider
+    pub async fn delete_provider(&self, id: &str) -> Result<bool, sqlx::Error> {
+        let result = sqlx::query("DELETE FROM providers WHERE id = ?")
+            .bind(id)
+            .execute(&self.pool)
+            .await?;
+
+        Ok(result.rows_affected() > 0)
+    }
+
+    // ========== Request log operations ==========
+
+    /// Insert a request log entry
+    pub async fn insert_request_log(
+        &self,
+        api_key_id: &str,
+        provider_id: &str,
+        model: Option<&str>,
+        request_path: &str,
+        request_method: &str,
+        request_headers: Option<&str>,
+        request_body: Option<&str>,
+        response_status: Option<i32>,
+        response_headers: Option<&str>,
+        response_body: Option<&str>,
+        prompt_tokens: i64,
+        completion_tokens: i64,
+        total_tokens: i64,
+        duration_ms: Option<i64>,
+        is_streaming: bool,
+        is_throttled: bool,
+        error_message: Option<&str>,
+    ) -> Result<i64, sqlx::Error> {
+        let result = sqlx::query(
+            r#"INSERT INTO request_logs (api_key_id, provider_id, model, request_path, request_method, request_headers, request_body, response_status, response_headers, response_body, prompt_tokens, completion_tokens, total_tokens, duration_ms, is_streaming, is_throttled, error_message)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)"#
+        )
+        .bind(api_key_id)
+        .bind(provider_id)
+        .bind(model)
+        .bind(request_path)
+        .bind(request_method)
+        .bind(request_headers)
+        .bind(request_body)
+        .bind(response_status)
+        .bind(response_headers)
+        .bind(response_body)
+        .bind(prompt_tokens)
+        .bind(completion_tokens)
+        .bind(total_tokens)
+        .bind(duration_ms)
+        .bind(is_streaming)
+        .bind(is_throttled)
+        .bind(error_message)
+        .execute(&self.pool)
+        .await?;
+
+        Ok(result.last_insert_rowid())
+    }
+
+    /// Query request logs with filters
+    pub async fn query_request_logs(
+        &self,
+        api_key_id: Option<&str>,
+        provider_id: Option<&str>,
+        start_time: Option<&str>,
+        end_time: Option<&str>,
+        limit: i64,
+        offset: i64,
+    ) -> Result<Vec<RequestLogRow>, sqlx::Error> {
+        let mut query = String::from(
+            "SELECT * FROM request_logs WHERE 1=1"
+        );
+        if api_key_id.is_some() { query.push_str(" AND api_key_id = ?"); }
+        if provider_id.is_some() { query.push_str(" AND provider_id = ?"); }
+        if start_time.is_some() { query.push_str(" AND created_at >= ?"); }
+        if end_time.is_some() { query.push_str(" AND created_at <= ?"); }
+        query.push_str(" ORDER BY created_at DESC LIMIT ? OFFSET ?");
+
+        let mut q = sqlx::query_as::<_, RequestLogRow>(&query);
+        if let Some(v) = api_key_id { q = q.bind(v); }
+        if let Some(v) = provider_id { q = q.bind(v); }
+        if let Some(v) = start_time { q = q.bind(v); }
+        if let Some(v) = end_time { q = q.bind(v); }
+        q = q.bind(limit).bind(offset);
+
+        let rows = q.fetch_all(&self.pool).await?;
+        Ok(rows)
+    }
+
+    /// Count request logs with filters
+    pub async fn count_request_logs(
+        &self,
+        api_key_id: Option<&str>,
+        provider_id: Option<&str>,
+        start_time: Option<&str>,
+        end_time: Option<&str>,
+    ) -> Result<i64, sqlx::Error> {
+        let mut query = String::from("SELECT COUNT(*) as count FROM request_logs WHERE 1=1");
+        if api_key_id.is_some() { query.push_str(" AND api_key_id = ?"); }
+        if provider_id.is_some() { query.push_str(" AND provider_id = ?"); }
+        if start_time.is_some() { query.push_str(" AND created_at >= ?"); }
+        if end_time.is_some() { query.push_str(" AND created_at <= ?"); }
+
+        let mut q = sqlx::query_scalar::<_, i64>(&query);
+        if let Some(v) = api_key_id { q = q.bind(v); }
+        if let Some(v) = provider_id { q = q.bind(v); }
+        if let Some(v) = start_time { q = q.bind(v); }
+        if let Some(v) = end_time { q = q.bind(v); }
+
+        let count = q.fetch_one(&self.pool).await?;
+        Ok(count)
+    }
+
+    // ========== Statistics operations ==========
+
+    /// Get aggregate statistics
+    pub async fn get_stats(
+        &self,
+        api_key_id: Option<&str>,
+        provider_id: Option<&str>,
+        start_time: Option<&str>,
+        end_time: Option<&str>,
+    ) -> Result<AggregateStats, sqlx::Error> {
+        let mut query = String::from(
+            r#"SELECT
+                COUNT(*) as total_requests,
+                COALESCE(SUM(prompt_tokens), 0) as total_prompt_tokens,
+                COALESCE(SUM(completion_tokens), 0) as total_completion_tokens,
+                COALESCE(SUM(total_tokens), 0) as total_tokens,
+                COALESCE(AVG(duration_ms), 0.0) as avg_duration_ms,
+                SUM(CASE WHEN is_throttled = 1 THEN 1 ELSE 0 END) as throttle_count,
+                SUM(CASE WHEN error_message IS NOT NULL THEN 1 ELSE 0 END) as error_count
+            FROM request_logs WHERE 1=1"#
+        );
+        if api_key_id.is_some() { query.push_str(" AND api_key_id = ?"); }
+        if provider_id.is_some() { query.push_str(" AND provider_id = ?"); }
+        if start_time.is_some() { query.push_str(" AND created_at >= ?"); }
+        if end_time.is_some() { query.push_str(" AND created_at <= ?"); }
+
+        let mut q = sqlx::query_as::<_, AggregateStats>(&query);
+        if let Some(v) = api_key_id { q = q.bind(v); }
+        if let Some(v) = provider_id { q = q.bind(v); }
+        if let Some(v) = start_time { q = q.bind(v); }
+        if let Some(v) = end_time { q = q.bind(v); }
+
+        let stats = q.fetch_one(&self.pool).await?;
+        Ok(stats)
+    }
+
+    /// Get time-bucketed statistics
+    pub async fn get_time_bucketed_stats(
+        &self,
+        api_key_id: Option<&str>,
+        provider_id: Option<&str>,
+        start_time: &str,
+        end_time: &str,
+        granularity: &str, // "5h", "day", "week", "month"
+    ) -> Result<Vec<TimeBucketStats>, sqlx::Error> {
+        let strftime_format = match granularity {
+            "5h" => "%Y-%m-%d %H",      // Group by hour, then aggregate every 5
+            "day" => "%Y-%m-%d",
+            "week" => "%Y-W%W",
+            "month" => "%Y-%m",
+            _ => "%Y-%m-%d",
+        };
+
+        let mut query = format!(
+            r#"SELECT
+                strftime('{}', created_at) as period,
+                COUNT(*) as request_count,
+                COALESCE(SUM(prompt_tokens), 0) as prompt_tokens,
+                COALESCE(SUM(completion_tokens), 0) as completion_tokens,
+                COALESCE(SUM(total_tokens), 0) as total_tokens,
+                SUM(CASE WHEN is_throttled = 1 THEN 1 ELSE 0 END) as throttle_count,
+                SUM(CASE WHEN error_message IS NOT NULL THEN 1 ELSE 0 END) as error_count
+            FROM request_logs WHERE created_at >= ? AND created_at <= ?"#
+        , strftime_format);
+
+        if api_key_id.is_some() { query.push_str(" AND api_key_id = ?"); }
+        if provider_id.is_some() { query.push_str(" AND provider_id = ?"); }
+        query.push_str(" GROUP BY period ORDER BY period");
+
+        let mut q = sqlx::query_as::<_, TimeBucketStats>(&query);
+        q = q.bind(start_time).bind(end_time);
+        if let Some(v) = api_key_id { q = q.bind(v); }
+        if let Some(v) = provider_id { q = q.bind(v); }
+
+        let rows = q.fetch_all(&self.pool).await?;
+        Ok(rows)
+    }
+
+    // ========== Token rate operations ==========
+
+    /// Insert a token rate snapshot
+    pub async fn insert_token_rate_snapshot(
+        &self,
+        provider_id: Option<&str>,
+        tokens_per_second: f64,
+        prompt_tokens: i64,
+        completion_tokens: i64,
+        request_count: i64,
+    ) -> Result<(), sqlx::Error> {
+        sqlx::query(
+            "INSERT INTO token_rate_snapshots (provider_id, tokens_per_second, prompt_tokens, completion_tokens, request_count) VALUES (?, ?, ?, ?, ?)"
+        )
+        .bind(provider_id)
+        .bind(tokens_per_second)
+        .bind(prompt_tokens)
+        .bind(completion_tokens)
+        .bind(request_count)
+        .execute(&self.pool)
+        .await?;
+
+        Ok(())
+    }
+
+    /// Get token rate snapshots for a time range
+    pub async fn get_token_rate_snapshots(
+        &self,
+        provider_id: Option<&str>,
+        start_time: &str,
+        limit: i64,
+    ) -> Result<Vec<TokenRateRow>, sqlx::Error> {
+        let mut query = String::from(
+            "SELECT * FROM token_rate_snapshots WHERE snapshot_time >= ?"
+        );
+        if provider_id.is_some() { query.push_str(" AND provider_id = ?"); }
+        query.push_str(" ORDER BY snapshot_time ASC LIMIT ?");
+
+        let mut q = sqlx::query_as::<_, TokenRateRow>(&query);
+        q = q.bind(start_time);
+        if let Some(v) = provider_id { q = q.bind(v); }
+        q = q.bind(limit);
+
+        let rows = q.fetch_all(&self.pool).await?;
+        Ok(rows)
+    }
+
+    /// Clean up old token rate snapshots (older than 1 hour)
+    pub async fn cleanup_old_snapshots(&self, before_time: &str) -> Result<u64, sqlx::Error> {
+        let result = sqlx::query(
+            "DELETE FROM token_rate_snapshots WHERE snapshot_time < ?"
+        )
+        .bind(before_time)
+        .execute(&self.pool)
+        .await?;
+
+        Ok(result.rows_affected())
+    }
+
+    /// Get dashboard summary
+    pub async fn get_dashboard_summary(&self) -> Result<DashboardSummaryData, sqlx::Error> {
+        let total_api_keys: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM api_keys")
+            .fetch_one(&self.pool)
+            .await?;
+        let active_api_keys: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM api_keys WHERE is_active = 1")
+            .fetch_one(&self.pool)
+            .await?;
+        let total_providers: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM providers")
+            .fetch_one(&self.pool)
+            .await?;
+        let active_providers: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM providers WHERE is_active = 1")
+            .fetch_one(&self.pool)
+            .await?;
+
+        let now = chrono::Utc::now();
+        let yesterday = now - chrono::Duration::hours(24);
+        let yesterday_str = yesterday.format("%Y-%m-%d %H:%M:%S").to_string();
+
+        let stats_24h = self.get_stats(None, None, Some(&yesterday_str), None).await?;
+
+        // Get latest token rate
+        let latest_rate: f64 = sqlx::query_scalar(
+            "SELECT COALESCE(AVG(tokens_per_second), 0.0) FROM token_rate_snapshots WHERE snapshot_time >= ?"
+        )
+        .bind(&yesterday_str)
+        .fetch_one(&self.pool)
+        .await?;
+
+        Ok(DashboardSummaryData {
+            total_api_keys,
+            active_api_keys,
+            total_providers,
+            active_providers,
+            total_requests_24h: stats_24h.total_requests,
+            total_tokens_24h: stats_24h.total_tokens,
+            avg_tokens_per_second: latest_rate,
+            throttle_count_24h: stats_24h.throttle_count,
+        })
+    }
+}
+
+// ========== Row types ==========
+
+#[derive(Debug, Clone, Serialize, sqlx::FromRow)]
+pub struct ApiKeyRow {
+    pub id: String,
+    pub name: String,
+    pub key_hash: String,
+    pub key_prefix: String,
+    pub allowed_providers: Option<String>,
+    pub is_active: bool,
+    pub created_at: String,
+    pub updated_at: String,
+}
+
+#[derive(Debug, Clone, Serialize, sqlx::FromRow)]
+pub struct ProviderRow {
+    pub id: String,
+    pub name: String,
+    pub base_url: String,
+    pub api_type: String,
+    pub auth_type: String,
+    pub api_key: Option<String>,
+    pub token_url: Option<String>,
+    pub token_username: Option<String>,
+    pub token_password: Option<String>,
+    pub token_field: String,
+    pub refresh_token_field: String,
+    pub token_header_field: String,
+    pub token_header_prefix: String,
+    pub token_expiry_seconds: i64,
+    pub current_token: Option<String>,
+    pub current_refresh_token: Option<String>,
+    pub token_expires_at: Option<String>,
+    pub is_active: bool,
+    pub weight: i32,
+    pub created_at: String,
+    pub updated_at: String,
+}
+
+#[derive(Debug, Clone, Serialize, sqlx::FromRow)]
+pub struct RequestLogRow {
+    pub id: i64,
+    pub api_key_id: String,
+    pub provider_id: String,
+    pub model: Option<String>,
+    pub request_path: String,
+    pub request_method: String,
+    pub request_headers: Option<String>,
+    pub request_body: Option<String>,
+    pub response_status: Option<i32>,
+    pub response_headers: Option<String>,
+    pub response_body: Option<String>,
+    pub prompt_tokens: i64,
+    pub completion_tokens: i64,
+    pub total_tokens: i64,
+    pub duration_ms: Option<i64>,
+    pub is_streaming: bool,
+    pub is_throttled: bool,
+    pub error_message: Option<String>,
+    pub created_at: String,
+}
+
+#[derive(Debug, Clone, Serialize, sqlx::FromRow)]
+pub struct TokenRateRow {
+    pub id: i64,
+    pub provider_id: Option<String>,
+    pub tokens_per_second: f64,
+    pub prompt_tokens: i64,
+    pub completion_tokens: i64,
+    pub request_count: i64,
+    pub snapshot_time: String,
+}
+
+#[derive(Debug, Clone, Serialize, sqlx::FromRow)]
+pub struct AggregateStats {
+    pub total_requests: i64,
+    pub total_prompt_tokens: i64,
+    pub total_completion_tokens: i64,
+    pub total_tokens: i64,
+    pub avg_duration_ms: f64,
+    pub throttle_count: i64,
+    pub error_count: i64,
+}
+
+#[derive(Debug, Clone, Serialize, sqlx::FromRow)]
+pub struct TimeBucketStats {
+    pub period: String,
+    pub request_count: i64,
+    pub prompt_tokens: i64,
+    pub completion_tokens: i64,
+    pub total_tokens: i64,
+    pub throttle_count: i64,
+    pub error_count: i64,
+}
+
+#[derive(Debug, Clone, Serialize)]
+pub struct DashboardSummaryData {
+    pub total_api_keys: i64,
+    pub active_api_keys: i64,
+    pub total_providers: i64,
+    pub active_providers: i64,
+    pub total_requests_24h: i64,
+    pub total_tokens_24h: i64,
+    pub avg_tokens_per_second: f64,
+    pub throttle_count_24h: i64,
+}

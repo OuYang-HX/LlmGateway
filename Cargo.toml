@@ -1,0 +1,75 @@
+[package]
+name = "llm-gateway"
+version = "0.1.0"
+edition = "2021"
+
+[dependencies]
+# Web framework
+axum = { version = "0.7", features = ["ws", "macros"] }
+tokio = { version = "1", features = ["full"] }
+tower = "0.5"
+tower-http = { version = "0.6", features = ["cors", "trace", "compression-gzip"] }
+
+# HTTP client for proxying
+reqwest = { version = "0.12", features = ["stream", "json"] }
+
+# Serialization
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+
+# Database
+sqlx = { version = "0.8", features = ["runtime-tokio", "sqlite", "migrate"] }
+
+# Async stream for SSE
+async-stream = "0.3"
+futures = "0.3"
+tokio-stream = "0.1"
+
+# Logging
+tracing = "0.1"
+tracing-subscriber = { version = "0.3", features = ["env-filter", "json"] }
+
+# Auth & security
+uuid = { version = "1", features = ["v4"] }
+bcrypt = "0.16"
+jsonwebtoken = "9"
+
+# Time
+chrono = { version = "0.4", features = ["serde"] }
+
+# Config
+config-crate = { version = "0.14", package = "config" }
+dotenvy = "0.15"
+
+# Error handling
+thiserror = "2"
+anyhow = "1"
+
+# Dashboard static files
+include_dir = "0.7"
+
+# Metrics
+prometheus = "0.13"
+lazy_static = "1"
+
+# URL parsing
+url = "2"
+
+# SHA-256 for API key hashing
+sha2 = "0.10"
+hex = "0.4"
+
+# Bytes
+bytes = "1"
+
+[lib]
+name = "llm_gateway"
+path = "src/lib.rs"
+
+[[bin]]
+name = "llm-gateway"
+path = "src/main.rs"
+
+[dev-dependencies]
+axum-test = "16"
+tempfile = "3"

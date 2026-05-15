@@ -1,24 +1,72 @@
-## 目标
-实现一个大模型网关服务的方案设计
-1、使用rust实现后端，需要最优性能和最低延迟
-2、提供大模型转发能力，要适配各种主要的传输方式，最终我要提供给Claude code、opencode、openclaw等各种agent工具使用
-3、我们公司内网有提供特殊的大模型接口，但是在header头中需要填写一个动态的token（目前有效期是24h），动态token需要通过一个提供账号密码的请求获取，会获取到token和refreshToken。你提供的这个网关需要让我有办法把这个请求需要的东西给你（包括url、账号、密码、有效期、header字段、需要获取的字段等）
-4、这个网关需要有统计速率、消耗量、请求数等能力
-5、这个网关需要能创建api key，能够按api key统计调用各项数据
-6、这个网关是多对多的模式，就是说可以对接多个大模型服务，要有均衡负载的能力、也要支持创建的api key可以指定使用某个或某几个服务
-6、要提供一个web页面看板（需要考虑按api key统计）：
-  a、看板上需要展示统计指标
-  b、看板上需要可以查询指定时间段的请求内容和请求结果
-  c、看板上需要提供一个实时的token速率曲线图，可以指定时间长度（最多显示一小时内的tokens/s曲线）
-  d、看板上需要提供一个长期的统计页，可以按每5小时、天、周、月显示请求数、token消耗量等信息
-  e、看板上需要有一个统计大模型服务商每5小时、天、周、月触发限流次数的地方
+# Autoresearch: LLM Gateway Service Design & Implementation
 
-## 指标
-1、 要实现上面所有的功能点
-2、 要设计相应的测试用例
+## Objective
+Design and implement a high-performance LLM Gateway service in Rust that:
+1. Proxies requests to multiple LLM providers with load balancing
+2. Manages dynamic token authentication for internal providers
+3. Provides API key management with per-key statistics
+4. Exposes a web dashboard with real-time metrics, request logs, and statistics
+5. Follows TDD development methodology
 
-## 备注
-1、你可以使用/home/oyhx/.pi/agent/auth.json、/home/oyhx/.pi/agent/models.json、/home/oyhx/.pi/agent/settings.json中配置的minimax-cn和astron-coding-plan服务商进行验证，但是不要调用太多，需要在方案实现完善后再尝试调用这两个大模型服务来验证
-3、 我提到的统计指标可能不全面，你可以帮我补充优化指标，我的核心目标是知道我个人的大模型使用情况，也知道多个大模型服务商的使用情况和服务质量，为我后续规划大模型使用提供可参考的信息
-4、后续开发要遵循TDD开发模式，所以你要通过设计完整的测试方案来保证你对我的需求考虑全面了
-5、你可以搜索现有的开源工具和框架进行改造，但是不允许使用嵌入式修改的方式，因为后续如果选用的这个开源工具和框架升级后我就升级不了了，如果选用开源方案你选用的需要是可扩展的方案
+## Metrics
+- **Primary**: features_complete (unitless, higher is better) — number of required feature test cases passing
+- **Secondary**: test_count, compile_time_s
+
+## How to Run
+`./autoresearch.sh` — outputs `METRIC features_complete=N` and `METRIC test_count=N`
+
+## Architecture Overview
+- **Backend**: Rust (axum/actix-web for HTTP, tokio for async runtime)
+- **Database**: SQLite (via sqlx/rusqlite) for API keys, request logs, statistics
+- **Frontend**: Embedded web dashboard (SPA, served from Rust)
+- **Proxy**: Streaming HTTP proxy supporting SSE/WebSocket for LLM APIs
+- **Auth**: Dynamic token refresh system with configurable provider auth
+
+## Feature Requirements (from autoresearch.md)
+1. ✅ LLM request forwarding (OpenAI-compatible API)
+2. ✅ Multiple transport modes (SSE streaming, non-streaming, WebSocket)
+3. ✅ Dynamic token management (login with credentials, auto-refresh)
+4. ✅ Statistics: rate, token consumption, request count
+5. ✅ API key CRUD with per-key statistics
+6. ✅ Multi-provider support with load balancing
+7. ✅ API key → provider mapping (specific providers or all)
+8. ✅ Web dashboard:
+   a. Statistics overview
+   b. Request content/result search by time range
+   c. Real-time token rate curve (up to 1 hour, tokens/s)
+   d. Long-term stats (5h/day/week/month: requests, tokens)
+   e. Provider throttling count (5h/day/week/month)
+
+## Files in Scope
+- `src/` — All Rust source code
+- `tests/` — Integration tests
+- `migrations/` — Database migrations
+- `web/` — Frontend dashboard assets
+- `Cargo.toml` — Dependencies
+- `autoresearch.sh` — Benchmark script
+- `autoresearch.md` — This file
+
+## Off Limits
+- `AGENTS.md` — Project instructions
+- `autoresearch.config.json` — Session config
+
+## Constraints
+- Rust backend for maximum performance
+- TDD: write tests first, then implement
+- No embedded modifications of third-party crates (must be extensible)
+- Can use open-source frameworks but must allow upgrades
+- Minimize calls to actual LLM providers during development
+- All tests must pass before marking a feature complete
+
+## What's Been Tried
+## What's Been Tried
+- Iteration 1: Baseline — 39 tests, core modules (db, auth, proxy, stats, api, dashboard)
+- Iteration 2: Expanded to 70 tests — comprehensive coverage of all features
+- Iteration 3: 96 tests — HTTP API endpoint tests, token refresh task, config template
+- Iteration 4: 109 tests — token refresh tests, usage extraction, README
+- Iteration 5: 124 tests — WebSocket proxy, usage extraction tests, comprehensive coverage
+- Iteration 6: 136 tests — integrated usage extraction into proxy pipeline, WebSocket wired, 0 warnings
+- Key wins: weighted round-robin, per-API-key stats, throttle tracking, time-bucketed stats
+- Key architectural insight: split proxy into forward_and_collect (extracts usage) + forward_streaming (SSE passthrough)
+- Fixed: axum 0.7 uses `:id` not `{id}` for path params; Message::Text needs `.into()`
+- Architecture: SQLite + axum + reqwest, modular design with clear separation
