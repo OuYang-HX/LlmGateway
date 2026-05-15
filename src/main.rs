@@ -3,7 +3,7 @@ use llm_gateway::auth::token_refresh::TokenRefreshTask;
 
 use axum::{
     Router,
-    routing::{get, post},
+    routing::{get, post, delete},
     http::Method,
 };
 use std::sync::Arc;
