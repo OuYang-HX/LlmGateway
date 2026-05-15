@@ -153,8 +153,8 @@
         <h4>🔑 API Key 认证</h4>
         <div class="form-group"><label>API Key</label><input id="prov-api-key" placeholder="sk-..."></div>
         <div class="form-row">
-            <div class="form-group"><label>Header 字段名</label><input id="prov-token-header-field" value="Authorization"></div>
-            <div class="form-group"><label>Header 前缀</label><input id="prov-token-header-prefix" value="Bearer "></div>
+            <div class="form-group"><label>发送请求时的 Header 字段名</label><input id="prov-token-header-field" value="Authorization"><small style="color:#64748b">API Key 放在哪个请求头发给服务商，如 Authorization、X-Api-Key</small></div>
+            <div class="form-group"><label>Header 值前缀</label><input id="prov-token-header-prefix" value="Bearer "><small style="color:#64748b">如 "Bearer "、""（无前缀）</small></div>
         </div>
     </div>
 
@@ -181,8 +181,8 @@
             <div class="form-group"><label>Refresh Token 字段名</label><input id="prov-refresh-token-field" value="refreshToken"><small style="color:#64748b">如 refreshToken、result.refreshToken</small></div>
         </div>
         <div class="form-row">
-            <div class="form-group"><label>Header 字段名</label><input id="prov-dyn-header-field" value="Authorization"></div>
-            <div class="form-group"><label>Header 前缀</label><input id="prov-dyn-header-prefix" value="Bearer "></div>
+            <div class="form-group"><label>发送请求时的 Header 字段名</label><input id="prov-dyn-header-field" value="Authorization"><small style="color:#64748b">获取到动态 Token 后，放在哪个请求头发给服务商，如 Authorization、X-Token、token</small></div>
+            <div class="form-group"><label>Header 值前缀</label><input id="prov-dyn-header-prefix" value="Bearer "><small style="color:#64748b">如 "Bearer "、""（无前缀）、"Basic " 等</small></div>
         </div>
         <div class="form-group"><label>Token 有效期（秒）</label><input id="prov-token-expiry" type="number" value="86400"></div>
     </div>
