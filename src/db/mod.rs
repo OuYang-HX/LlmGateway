@@ -53,8 +53,8 @@ impl Database {
                 key_prefix TEXT NOT NULL,
                 allowed_providers TEXT,
                 is_active BOOLEAN NOT NULL DEFAULT 1,
-                created_at TEXT NOT NULL DEFAULT (datetime('now', '+8 hours')),
-                updated_at TEXT NOT NULL DEFAULT (datetime('now', '+8 hours'))
+                created_at TEXT NOT NULL DEFAULT (datetime('now')),
+                updated_at TEXT NOT NULL DEFAULT (datetime('now'))
             );
 
             CREATE TABLE IF NOT EXISTS providers (
@@ -85,8 +85,8 @@ impl Database {
                 is_active BOOLEAN NOT NULL DEFAULT 1,
                 weight INTEGER NOT NULL DEFAULT 1,
                 bypass_proxy BOOLEAN NOT NULL DEFAULT 0,
-                created_at TEXT NOT NULL DEFAULT (datetime('now', '+8 hours')),
-                updated_at TEXT NOT NULL DEFAULT (datetime('now', '+8 hours'))
+                created_at TEXT NOT NULL DEFAULT (datetime('now')),
+                updated_at TEXT NOT NULL DEFAULT (datetime('now'))
             );
 
             CREATE TABLE IF NOT EXISTS request_logs (
@@ -108,7 +108,7 @@ impl Database {
                 is_streaming BOOLEAN DEFAULT 0,
                 is_throttled BOOLEAN DEFAULT 0,
                 error_message TEXT,
-                created_at TEXT NOT NULL DEFAULT (datetime('now', '+8 hours')),
+                created_at TEXT NOT NULL DEFAULT (datetime('now')),
                 FOREIGN KEY (api_key_id) REFERENCES api_keys(id),
                 FOREIGN KEY (provider_id) REFERENCES providers(id)
             );
@@ -120,7 +120,7 @@ impl Database {
                 prompt_tokens INTEGER DEFAULT 0,
                 completion_tokens INTEGER DEFAULT 0,
                 request_count INTEGER DEFAULT 0,
-                snapshot_time TEXT NOT NULL DEFAULT (datetime('now', '+8 hours')),
+                snapshot_time TEXT NOT NULL DEFAULT (datetime('now')),
                 FOREIGN KEY (provider_id) REFERENCES providers(id)
             );
 
@@ -132,8 +132,8 @@ impl Database {
                 last_test_status TEXT,
                 last_test_message TEXT,
                 last_tested_at TEXT,
-                created_at TEXT NOT NULL DEFAULT (datetime('now', '+8 hours')),
-                updated_at TEXT NOT NULL DEFAULT (datetime('now', '+8 hours')),
+                created_at TEXT NOT NULL DEFAULT (datetime('now')),
+                updated_at TEXT NOT NULL DEFAULT (datetime('now')),
                 FOREIGN KEY (provider_id) REFERENCES providers(id) ON DELETE CASCADE,
                 UNIQUE(provider_id, model_id)
             );
@@ -217,7 +217,7 @@ impl Database {
     /// Deactivate an API key
     pub async fn deactivate_api_key(&self, id: &str) -> Result<bool, sqlx::Error> {
         let result = sqlx::query(
-            "UPDATE api_keys SET is_active = 0, updated_at = datetime('now', '+8 hours') WHERE id = ?"
+            "UPDATE api_keys SET is_active = 0, updated_at = datetime('now') WHERE id = ?"
         )
         .bind(id)
         .execute(&self.pool)
@@ -239,7 +239,7 @@ impl Database {
     /// Regenerate an API key - updates the key and prefix, returns the new raw key
     pub async fn regenerate_api_key(&self, id: &str, new_api_key: &str, new_key_prefix: &str) -> Result<bool, sqlx::Error> {
         let result = sqlx::query(
-            "UPDATE api_keys SET api_key = ?, key_prefix = ?, updated_at = datetime('now', '+8 hours') WHERE id = ?"
+            "UPDATE api_keys SET api_key = ?, key_prefix = ?, updated_at = datetime('now') WHERE id = ?"
         )
         .bind(new_api_key)
         .bind(new_key_prefix)
@@ -422,7 +422,7 @@ impl Database {
     ) -> Result<(), sqlx::Error> {
         if let Some(rt) = refresh_token {
             sqlx::query(
-                "UPDATE providers SET current_token = ?, current_refresh_token = ?, token_expires_at = ?, updated_at = datetime('now', '+8 hours') WHERE id = ?"
+                "UPDATE providers SET current_token = ?, current_refresh_token = ?, token_expires_at = ?, updated_at = datetime('now') WHERE id = ?"
             )
             .bind(token)
             .bind(rt)
@@ -432,7 +432,7 @@ impl Database {
             .await?;
         } else {
             sqlx::query(
-                "UPDATE providers SET current_token = ?, token_expires_at = ?, updated_at = datetime('now', '+8 hours') WHERE id = ?"
+                "UPDATE providers SET current_token = ?, token_expires_at = ?, updated_at = datetime('now') WHERE id = ?"
             )
             .bind(token)
             .bind(expires_at)
@@ -447,7 +447,7 @@ impl Database {
     /// Update provider cookies (from Set-Cookie in auth response)
     pub async fn update_provider_cookies(&self, id: &str, cookies: &str) -> Result<(), sqlx::Error> {
         sqlx::query(
-            "UPDATE providers SET token_cookies = ?, updated_at = datetime('now', '+8 hours') WHERE id = ?"
+            "UPDATE providers SET token_cookies = ?, updated_at = datetime('now') WHERE id = ?"
         )
         .bind(cookies)
         .bind(id)
@@ -498,7 +498,7 @@ impl Database {
                 token_header_field = ?, token_header_prefix = ?,
                 token_expiry_seconds = ?, weight = ?, is_active = ?,
                 bypass_proxy = ?,
-                updated_at = datetime('now', '+8 hours')
+                updated_at = datetime('now')
                 WHERE id = ?"#
         )
         .bind(name)
@@ -534,7 +534,7 @@ impl Database {
     /// Deactivate a provider
     pub async fn deactivate_provider(&self, id: &str) -> Result<bool, sqlx::Error> {
         let result = sqlx::query(
-            "UPDATE providers SET is_active = 0, updated_at = datetime('now', '+8 hours') WHERE id = ?"
+            "UPDATE providers SET is_active = 0, updated_at = datetime('now') WHERE id = ?"
         )
         .bind(id)
         .execute(&self.pool)
@@ -650,8 +650,8 @@ impl Database {
                 last_test_status = ?,
                 last_test_message = ?,
                 is_active = ?,
-                last_tested_at = datetime('now', '+8 hours'),
-                updated_at = datetime('now', '+8 hours')
+                last_tested_at = datetime('now'),
+                updated_at = datetime('now')
                 WHERE provider_id = ? AND model_id = ?"#
         )
         .bind(status)

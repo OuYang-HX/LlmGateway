@@ -455,7 +455,7 @@ async function loadApiKeysManage(){
             <td>${k.name}</td><td style="font-family:monospace;font-size:12px">${k.key}</td>
             <td>${k.allowed_providers?k.allowed_providers.join(', '):'全部'}</td>
             <td><span class="badge ${k.is_active?'badge-green':'badge-red'}">${k.is_active?'活跃':'停用'}</span></td>
-            <td>${new Date(k.created_at).toLocaleString()}</td>
+            <td>${formatCST(k.created_at)}</td>
             <td><button class="btn btn-sm" onclick='copyKey("${k.key}")' title='复制 Key'>📋</button> <button class="btn btn-sm btn-danger" onclick='deleteApiKey("${k.id}")'>删除</button></td>
         </tr>`).join('');
     }catch(e){console.error(e)}
@@ -531,7 +531,7 @@ async function loadLogs(){
         if(end)params.set('end_time',new Date(end).toISOString());
         const data=await(await fetch(API+'/logs?'+params)).json();
         document.querySelector('#logs-table tbody').innerHTML=(data.logs||[]).map(l=>`<tr>
-            <td>${new Date(l.created_at).toLocaleString()}</td><td>${l.api_key_id.slice(0,8)}...</td>
+            <td>${formatCST(l.created_at)}</td><td>${l.api_key_id.slice(0,8)}...</td>
             <td>${l.provider_id}</td><td>${l.model||'-'}</td><td>${l.response_status||'-'}</td>
             <td>${l.total_tokens}</td><td>${l.duration_ms?l.duration_ms+'ms':'-'}</td>
             <td>${l.is_streaming?'✅':'❌'}</td><td>${l.is_throttled?'⚠️':'✅'}</td>
@@ -593,7 +593,7 @@ async function loadModels() {
                 : m.last_test_status === 'failed'
                     ? '<span class="badge badge-red">❌ ' + (m.last_test_message || '失败') + '</span>'
                     : '<span class="badge badge-yellow">未测试</span>';
-            const testTime = m.last_tested_at ? new Date(m.last_tested_at.replace(' ', 'T')).toLocaleString() : '-';
+            const testTime = m.last_tested_at ? formatCST(m.last_tested_at) : '-';
             return `<tr>
                 <td style="font-family:monospace">${m.model_id}</td>
                 <td>${statusBadge}</td>
@@ -680,6 +680,18 @@ async function testAllModels() {
         btn.disabled = false;
         btn.textContent = '🧪 全部测试连接';
     }
+}
+
+// ========== 工具函数 ==========
+// 格式化 CST 时间（将 UTC 时间字符串 +8h 再显示）
+function formatCST(utcStr) {
+    if (!utcStr) return '-';
+    // Parse as UTC, add 8 hours for CST, format as YYYY/M/D HH:mm:ss
+    const d = new Date(utcStr.replace(' ', 'T') + 'Z');
+    d.setHours(d.getHours() + 8);
+    const pad = n => String(n).padStart(2, '0');
+    return `${d.getFullYear()}/${d.getMonth()+1}/${d.getDate()} ` +
+           `${pad(d.getHours())}:${pad(d.getMinutes())}:${pad(d.getSeconds())}`;
 }
 
 // ========== 初始化 ==========
