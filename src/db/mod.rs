@@ -15,6 +15,11 @@ impl Database {
             .connect(database_url)
             .await?;
 
+        // Disable strict type checking for SQLite
+        sqlx::query("PRAGMA strict = OFF")
+            .execute(&pool)
+            .await.ok();
+
         let db = Self { pool };
         db.run_migrations().await?;
         Ok(db)
@@ -26,6 +31,10 @@ impl Database {
             .max_connections(1)
             .connect("sqlite::memory:")
             .await?;
+
+        sqlx::query("PRAGMA strict = OFF")
+            .execute(&pool)
+            .await.ok();
 
         let db = Self { pool };
         db.run_migrations().await?;
@@ -64,6 +73,7 @@ impl Database {
                 token_password_field TEXT DEFAULT 'password',
                 token_body_template TEXT,
                 token_extra_headers TEXT,
+                token_cookies TEXT,
                 token_field TEXT DEFAULT 'token',
                 refresh_token_field TEXT DEFAULT 'refreshToken',
                 token_header_field TEXT DEFAULT 'Authorization',
@@ -243,16 +253,17 @@ impl Database {
         token_password_field: Option<&str>,
         token_body_template: Option<&str>,
         token_extra_headers: Option<&str>,
+        token_cookies: Option<&str>,
         token_field: &str,
         refresh_token_field: &str,
         token_header_field: &str,
         token_header_prefix: &str,
         token_expiry_seconds: i64,
-        weight: i32,
+        weight: i64,
     ) -> Result<(), sqlx::Error> {
         sqlx::query(
-            r#"INSERT INTO providers (id, name, base_url, api_type, auth_type, api_key, token_url, token_username, token_password, token_request_method, token_content_type, token_username_field, token_password_field, token_body_template, token_extra_headers, token_field, refresh_token_field, token_header_field, token_header_prefix, token_expiry_seconds, weight)
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)"#
+            r#"INSERT INTO providers (id, name, base_url, api_type, auth_type, api_key, token_url, token_username, token_password, token_request_method, token_content_type, token_username_field, token_password_field, token_body_template, token_extra_headers, token_cookies, token_field, refresh_token_field, token_header_field, token_header_prefix, token_expiry_seconds, weight)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)"#
         )
         .bind(id)
         .bind(name)
@@ -269,6 +280,7 @@ impl Database {
         .bind(token_password_field)
         .bind(token_body_template)
         .bind(token_extra_headers)
+        .bind(token_cookies)
         .bind(token_field)
         .bind(refresh_token_field)
         .bind(token_header_field)
@@ -299,12 +311,12 @@ impl Database {
         token_header_field: &str,
         token_header_prefix: &str,
         token_expiry_seconds: i64,
-        weight: i32,
+        weight: i64,
     ) -> Result<(), sqlx::Error> {
         self.create_provider(
             id, name, base_url, api_type, auth_type,
             api_key, token_url, token_username, token_password,
-            None, None, None, None, None, None,
+            None, None, None, None, None, None, None,
             token_field, refresh_token_field, token_header_field, token_header_prefix,
             token_expiry_seconds, weight,
         ).await
@@ -312,36 +324,72 @@ impl Database {
 
     /// Get provider by ID
     pub async fn get_provider(&self, id: &str) -> Result<Option<ProviderRow>, sqlx::Error> {
-        let row = sqlx::query_as::<_, ProviderRow>(
-            "SELECT * FROM providers WHERE id = ?"
-        )
-        .bind(id)
-        .fetch_optional(&self.pool)
-        .await?;
+        use sqlx::Row;
+        let row = sqlx::query("SELECT * FROM providers WHERE id = ?")
+            .bind(id)
+            .fetch_optional(&self.pool)
+            .await?;
 
-        Ok(row)
+        Ok(row.map(|r| Self::row_to_provider(&r)))
     }
 
     /// List all providers
     pub async fn list_providers(&self) -> Result<Vec<ProviderRow>, sqlx::Error> {
-        let rows = sqlx::query_as::<_, ProviderRow>(
-            "SELECT * FROM providers ORDER BY name"
-        )
-        .fetch_all(&self.pool)
-        .await?;
+        use sqlx::Row;
+        let rows = sqlx::query("SELECT * FROM providers ORDER BY name")
+            .fetch_all(&self.pool)
+            .await?;
 
-        Ok(rows)
+        Ok(rows.iter().map(Self::row_to_provider).collect())
     }
 
     /// List active providers
     pub async fn list_active_providers(&self) -> Result<Vec<ProviderRow>, sqlx::Error> {
-        let rows = sqlx::query_as::<_, ProviderRow>(
-            "SELECT * FROM providers WHERE is_active = 1 ORDER BY weight DESC, name"
-        )
-        .fetch_all(&self.pool)
-        .await?;
+        use sqlx::Row;
+        let rows = sqlx::query("SELECT * FROM providers WHERE is_active = 1 ORDER BY weight DESC, name")
+            .fetch_all(&self.pool)
+            .await?;
 
-        Ok(rows)
+        Ok(rows.iter().map(Self::row_to_provider).collect())
+    }
+
+    /// Convert a sqlx Row to ProviderRow
+    fn row_to_provider(r: &sqlx::sqlite::SqliteRow) -> ProviderRow {
+        use sqlx::Row;
+        fn opt_str(r: &sqlx::sqlite::SqliteRow, col: &str) -> Option<String> {
+            let v: Option<String> = r.try_get(col).ok();
+            v.filter(|s| !s.is_empty())
+        }
+        ProviderRow {
+            id: r.try_get("id").unwrap_or_default(),
+            name: r.try_get("name").unwrap_or_default(),
+            base_url: r.try_get("base_url").unwrap_or_default(),
+            api_type: r.try_get("api_type").unwrap_or_default(),
+            auth_type: r.try_get("auth_type").unwrap_or_default(),
+            api_key: opt_str(r, "api_key"),
+            token_url: opt_str(r, "token_url"),
+            token_username: opt_str(r, "token_username"),
+            token_password: opt_str(r, "token_password"),
+            token_request_method: opt_str(r, "token_request_method"),
+            token_content_type: opt_str(r, "token_content_type"),
+            token_username_field: opt_str(r, "token_username_field"),
+            token_password_field: opt_str(r, "token_password_field"),
+            token_body_template: opt_str(r, "token_body_template"),
+            token_extra_headers: opt_str(r, "token_extra_headers"),
+            token_cookies: opt_str(r, "token_cookies"),
+            token_field: r.try_get("token_field").unwrap_or_default(),
+            refresh_token_field: r.try_get("refresh_token_field").unwrap_or_default(),
+            token_header_field: r.try_get("token_header_field").unwrap_or_default(),
+            token_header_prefix: r.try_get("token_header_prefix").unwrap_or_default(),
+            token_expiry_seconds: r.try_get::<i64, _>("token_expiry_seconds").unwrap_or(86400),
+            current_token: opt_str(r, "current_token"),
+            current_refresh_token: opt_str(r, "current_refresh_token"),
+            token_expires_at: opt_str(r, "token_expires_at"),
+            is_active: r.try_get::<i64, _>("is_active").unwrap_or(1) != 0,
+            weight: r.try_get::<i64, _>("weight").unwrap_or(1),
+            created_at: r.try_get("created_at").unwrap_or_default(),
+            updated_at: r.try_get("updated_at").unwrap_or_default(),
+        }
     }
 
     /// Update provider's dynamic token
@@ -376,6 +424,19 @@ impl Database {
         Ok(())
     }
 
+    /// Update provider cookies (from Set-Cookie in auth response)
+    pub async fn update_provider_cookies(&self, id: &str, cookies: &str) -> Result<(), sqlx::Error> {
+        sqlx::query(
+            "UPDATE providers SET token_cookies = ?, updated_at = datetime('now') WHERE id = ?"
+        )
+        .bind(cookies)
+        .bind(id)
+        .execute(&self.pool)
+        .await?;
+
+        Ok(())
+    }
+
     /// Update provider fields using SQL UPDATE (no delete/recreate)
     /// This avoids FOREIGN KEY constraint failures with request_logs
     pub async fn update_provider(
@@ -395,12 +456,13 @@ impl Database {
         token_password_field: Option<&str>,
         token_body_template: Option<&str>,
         token_extra_headers: Option<&str>,
+        token_cookies: Option<&str>,
         token_field: &str,
         refresh_token_field: &str,
         token_header_field: &str,
         token_header_prefix: &str,
         token_expiry_seconds: i64,
-        weight: i32,
+        weight: i64,
         is_active: bool,
     ) -> Result<(), sqlx::Error> {
         sqlx::query(
@@ -410,6 +472,7 @@ impl Database {
                 token_request_method = ?, token_content_type = ?,
                 token_username_field = ?, token_password_field = ?,
                 token_body_template = ?, token_extra_headers = ?,
+                token_cookies = ?,
                 token_field = ?, refresh_token_field = ?,
                 token_header_field = ?, token_header_prefix = ?,
                 token_expiry_seconds = ?, weight = ?, is_active = ?,
@@ -430,6 +493,7 @@ impl Database {
         .bind(token_password_field)
         .bind(token_body_template)
         .bind(token_extra_headers)
+        .bind(token_cookies)
         .bind(token_field)
         .bind(refresh_token_field)
         .bind(token_header_field)
@@ -763,7 +827,7 @@ pub struct ApiKeyRow {
     pub updated_at: String,
 }
 
-#[derive(Debug, Clone, Serialize, sqlx::FromRow)]
+#[derive(Debug, Clone, Serialize)]
 pub struct ProviderRow {
     pub id: String,
     pub name: String,
@@ -780,6 +844,7 @@ pub struct ProviderRow {
     pub token_password_field: Option<String>,
     pub token_body_template: Option<String>,
     pub token_extra_headers: Option<String>,
+    pub token_cookies: Option<String>,
     pub token_field: String,
     pub refresh_token_field: String,
     pub token_header_field: String,
@@ -789,7 +854,7 @@ pub struct ProviderRow {
     pub current_refresh_token: Option<String>,
     pub token_expires_at: Option<String>,
     pub is_active: bool,
-    pub weight: i32,
+    pub weight: i64,
     pub created_at: String,
     pub updated_at: String,
 }

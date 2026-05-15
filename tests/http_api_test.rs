@@ -616,6 +616,9 @@ async fn test_http_provider_crud_full_cycle() {
 
     // Read
     let get = server.get("/api/v1/providers/crud-prov").await;
+    if get.status_code() != StatusCode::OK {
+        eprintln!("GET failed: status={}, body={}", get.status_code(), get.text());
+    }
     assert_eq!(get.status_code(), StatusCode::OK);
     let got: serde_json::Value = get.json();
     assert_eq!(got["name"], "CRUD Provider");
@@ -702,6 +705,9 @@ async fn test_http_update_provider_name() {
     let resp = server.put("/api/v1/providers/upd-prov")
         .json(&serde_json::json!({"name": "Updated Name"}))
         .await;
+    if resp.status_code() != StatusCode::OK {
+        eprintln!("Update failed: status={}, body={}", resp.status_code(), resp.text());
+    }
     assert_eq!(resp.status_code(), StatusCode::OK);
 
     let get_resp = server.get("/api/v1/providers/upd-prov").await;

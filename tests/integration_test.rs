@@ -1227,7 +1227,7 @@ fn test_provider_extra_headers_stored() {
             "prov-eh", "ExtraHeaders", "https://p.com", "openai", "dynamic",
             None, Some("https://auth.com/login"), Some("user"), Some("pass"),
             Some("POST"), Some("json"), Some("username"), Some("password"),
-            None, Some(r#"{"X-App-Id":"myapp","X-Api-Version":"v2"}"#),
+            None, Some(r#"{"X-App-Id":"myapp","X-Api-Version":"v2"}"#), None,
             "token", "refreshToken", "Authorization", "Bearer ", 86400, 1,
         ).await.unwrap();
 
@@ -1263,7 +1263,8 @@ fn test_provider_update_extra_headers() {
             "prov-eh2", "ExtraHeaders2", "https://p.com", "openai", "dynamic",
             None, Some("https://auth.com/login"), Some("user"), Some("pass"),
             Some("POST"), Some("json"), Some("username"), Some("password"),
-            None, Some(r#"{"X-Custom":"val1"}"#),
+            None,
+ Some(r#"{"X-Custom":"val1"}"#), None,
             "token", "refreshToken", "Authorization", "Bearer ", 86400, 1,
         ).await.unwrap();
 
@@ -1273,7 +1274,8 @@ fn test_provider_update_extra_headers() {
             "prov-eh2", "ExtraHeaders2", "https://p.com", "openai", "dynamic",
             None, Some("https://auth.com/login"), Some("user"), Some("pass"),
             Some("POST"), Some("json"), Some("username"), Some("password"),
-            None, Some(r#"{"X-Custom":"val2","X-New":"header"}"#),
+
+            None, Some(r#"{"X-Custom":"val2","X-New":"header"}"#), None,
             "token", "refreshToken", "Authorization", "Bearer ", 86400, 1,
         ).await.unwrap();
 
@@ -1302,3 +1304,6 @@ fn test_extra_headers_empty_object() {
     let parsed: serde_json::Map<String, serde_json::Value> = serde_json::from_str(headers_json).unwrap();
     assert_eq!(parsed.len(), 0);
 }
+
+
+#[test]

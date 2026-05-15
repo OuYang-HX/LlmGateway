@@ -185,6 +185,7 @@ pub struct CreateProviderRequest {
     pub token_body_template: Option<String>,
     #[serde(default)]
     pub token_extra_headers: Option<String>,
+    pub token_cookies: Option<String>,
     #[serde(default = "default_token_field")]
     pub token_field: String,
     #[serde(default = "default_refresh_token_field")]
@@ -196,7 +197,7 @@ pub struct CreateProviderRequest {
     #[serde(default = "default_token_expiry")]
     pub token_expiry_seconds: i64,
     #[serde(default = "default_weight")]
-    pub weight: i32,
+    pub weight: i64,
 }
 
 fn default_api_type() -> String { "openai".to_string() }
@@ -206,7 +207,7 @@ fn default_refresh_token_field() -> String { "refreshToken".to_string() }
 fn default_token_header_field() -> String { "Authorization".to_string() }
 fn default_token_header_prefix() -> String { "Bearer ".to_string() }
 fn default_token_expiry() -> i64 { 86400 }
-fn default_weight() -> i32 { 1 }
+fn default_weight() -> i64 { 1 }
 fn default_post() -> String { "POST".to_string() }
 fn default_json() -> String { "json".to_string() }
 fn default_username_field() -> String { "username".to_string() }
@@ -233,6 +234,7 @@ pub async fn create_provider(
         Some(req.token_password_field.as_str()),
         req.token_body_template.as_deref(),
         req.token_extra_headers.as_deref(),
+        req.token_cookies.as_deref(),
         &req.token_field,
         &req.refresh_token_field,
         &req.token_header_field,
@@ -308,12 +310,13 @@ pub struct UpdateProviderRequest {
     pub token_password_field: Option<String>,
     pub token_body_template: Option<String>,
     pub token_extra_headers: Option<String>,
+    pub token_cookies: Option<String>,
     pub token_field: Option<String>,
     pub refresh_token_field: Option<String>,
     pub token_header_field: Option<String>,
     pub token_header_prefix: Option<String>,
     pub token_expiry_seconds: Option<i64>,
-    pub weight: Option<i32>,
+    pub weight: Option<i64>,
     pub is_active: Option<bool>,
 }
 
@@ -356,6 +359,8 @@ pub async fn update_provider(
         .or(existing.token_body_template.as_deref());
     let token_extra_headers = req.token_extra_headers.as_deref()
         .or(existing.token_extra_headers.as_deref());
+    let token_cookies = req.token_cookies.as_deref()
+        .or(existing.token_cookies.as_deref());
     let token_field = req.token_field.as_deref().unwrap_or(&existing.token_field);
     let refresh_token_field = req.refresh_token_field.as_deref().unwrap_or(&existing.refresh_token_field);
     let token_header_field = req.token_header_field.as_deref().unwrap_or(&existing.token_header_field);
@@ -371,6 +376,7 @@ pub async fn update_provider(
         Some(token_username_field), Some(token_password_field),
         token_body_template,
         token_extra_headers,
+        token_cookies,
         token_field, refresh_token_field, token_header_field, token_header_prefix,
         token_expiry_seconds, weight, is_active,
     ).await {

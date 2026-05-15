@@ -96,6 +96,19 @@ impl AuthManager {
             return Err(AuthError::RefreshFailed(response.status().to_string()));
         }
 
+        // Extract Set-Cookie headers and store them
+        let cookies: Vec<String> = response.headers()
+            .get_all("set-cookie")
+            .iter()
+            .filter_map(|v| v.to_str().ok())
+            .map(|s| s.to_string())
+            .collect();
+        if !cookies.is_empty() {
+            let cookie_str = cookies.join("; ");
+            tracing::info!("Storing cookies for provider {}: {}", provider.id, cookie_str);
+            let _ = self.db.update_provider_cookies(&provider.id, &cookie_str).await;
+        }
+
         let token_response: serde_json::Value = response
             .json()
             .await
@@ -148,6 +161,19 @@ impl AuthManager {
             let body = response.text().await.unwrap_or_default();
             tracing::error!("Login failed: status={}, body={}", status, body);
             return Err(AuthError::LoginFailed(status));
+        }
+
+        // Extract Set-Cookie headers and store them
+        let cookies: Vec<String> = response.headers()
+            .get_all("set-cookie")
+            .iter()
+            .filter_map(|v| v.to_str().ok())
+            .map(|s| s.to_string())
+            .collect();
+        if !cookies.is_empty() {
+            let cookie_str = cookies.join("; ");
+            tracing::info!("Storing cookies for provider {}: {}", provider.id, cookie_str);
+            let _ = self.db.update_provider_cookies(&provider.id, &cookie_str).await;
         }
 
         let token_response: serde_json::Value = response

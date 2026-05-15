@@ -58,7 +58,7 @@ impl LlmProxy {
         }
 
         // Weighted round-robin selection
-        let total_weight: i32 = filtered.iter().map(|p| p.weight).sum();
+        let total_weight: i64 = filtered.iter().map(|p| p.weight).sum();
         if total_weight == 0 {
             return Err(ProxyError::NoProvidersAvailable);
         }
@@ -120,6 +120,13 @@ impl LlmProxy {
             }
         }
         req_builder = req_builder.header(&auth_header_name, &auth_header_value);
+
+        // Add stored cookies from auth response
+        if let Some(cookies) = &provider.token_cookies {
+            if !cookies.is_empty() {
+                req_builder = req_builder.header("Cookie", cookies.as_str());
+            }
+        }
 
         // Set body
         if !body.is_empty() {
@@ -218,6 +225,13 @@ impl LlmProxy {
             }
         }
         req_builder = req_builder.header(&auth_header_name, &auth_header_value);
+
+        // Add stored cookies from auth response
+        if let Some(cookies) = &provider.token_cookies {
+            if !cookies.is_empty() {
+                req_builder = req_builder.header("Cookie", cookies.as_str());
+            }
+        }
 
         // Set body
         if !body.is_empty() {
