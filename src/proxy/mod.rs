@@ -140,9 +140,9 @@ impl LlmProxy {
             _ => client.post(&target_url),
         };
 
-        // Copy headers, replacing auth
+        // Copy headers, replacing auth and skipping content-length (reqwest auto-sets it)
         for (name, value) in headers.iter() {
-            if name.as_str() != "authorization" && name.as_str() != "host" {
+            if name.as_str() != "authorization" && name.as_str() != "host" && name.as_str() != "content-length" {
                 if let Ok(v) = value.to_str() {
                     req_builder = req_builder.header(name.as_str(), v);
                 }
@@ -261,9 +261,9 @@ impl LlmProxy {
             _ => client.post(&target_url),
         };
 
-        // Copy headers, replacing auth
+        // Copy headers, replacing auth and skipping content-length (reqwest auto-sets it)
         for (name, value) in headers.iter() {
-            if name.as_str() != "authorization" && name.as_str() != "host" {
+            if name.as_str() != "authorization" && name.as_str() != "host" && name.as_str() != "content-length" {
                 if let Ok(v) = value.to_str() {
                     req_builder = req_builder.header(name.as_str(), v);
                 }

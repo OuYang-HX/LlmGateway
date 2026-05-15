@@ -55,22 +55,60 @@ pub async fn proxy_request(
         .await
         .unwrap_or_default();
 
-    // Extract model from request body and validate against provider's allowed models
+    // Extract model from request body
     let request_model = serde_json::from_slice::<serde_json::Value>(&body_bytes)
         .ok()
         .and_then(|v| v.get("model")?.as_str().map(|s| s.to_string()));
 
-    if let Some(ref model) = request_model {
-        match state.db.is_model_allowed_for_provider(&provider.id, model).await {
-            Ok(false) => {
-                tracing::warn!("Model '{}' not allowed for provider '{}'", model, provider.id);
-                return (StatusCode::FORBIDDEN, format!("Model '{}' is not available on provider '{}'", model, provider.id)).into_response();
+    // Try unified model routing: if model has mappings, replace model name and select mapped provider
+    let mut final_body = body_bytes.clone();
+    let mut final_provider = provider;
+    
+    if let Some(ref model_id) = request_model {
+        // Check if this model has active mappings in model_mappings table
+        // Use a timeout to avoid blocking
+        let mappings_result = tokio::time::timeout(
+            std::time::Duration::from_secs(5),
+            state.db.list_active_model_mappings(model_id)
+        ).await;
+        
+        if let Ok(Ok(mappings)) = mappings_result {
+            if !mappings.is_empty() {
+                // Filter by allowed providers
+                let valid_mappings: Vec<_> = mappings.into_iter()
+                    .filter(|m| {
+                        let provider_allowed = allowed_providers.as_ref()
+                            .map(|ap| ap.is_empty() || ap.contains(&m.provider_id))
+                            .unwrap_or(true);
+                        m.is_active && provider_allowed
+                    })
+                    .collect();
+
+                if !valid_mappings.is_empty() {
+                    // Use the first valid mapping (simple selection)
+                    let selected = &valid_mappings[0];
+                    
+                    // Get the mapped provider
+                    let provider_result = tokio::time::timeout(
+                        std::time::Duration::from_secs(5),
+                        state.db.get_provider(&selected.provider_id)
+                    ).await;
+                    
+                    if let Ok(Ok(Some(mapped_provider))) = provider_result {
+                        if mapped_provider.is_active {
+                            // Replace model name in body
+                            if let Ok(mut body_json) = serde_json::from_slice::<serde_json::Value>(&body_bytes) {
+                                if let Some(obj) = body_json.as_object_mut() {
+                                    obj.insert("model".to_string(), serde_json::Value::String(selected.provider_model_id.clone()));
+                                    let new_body_str = serde_json::to_string(&body_json).unwrap_or_default();
+                                    final_body = axum::body::Bytes::from(new_body_str);
+                                }
+                            }
+                            final_provider = mapped_provider;
+                        }
+                    }
+                }
             }
-            Err(e) => {
-                tracing::error!("Failed to check model permission: {}", e);
-                // Allow on DB error to avoid blocking requests
-            }
-            Ok(true) => {}
         }
     }
 
@@ -84,11 +122,11 @@ pub async fn proxy_request(
         // Streaming path: forward and stream the response
         let response = state.proxy.forward_streaming(
             &api_key_row.id,
-            &provider,
+            &final_provider,
             &path,
             &method,
             headers,
-            body_bytes,
+            final_body,
         ).await;
 
         match response {
@@ -135,11 +173,11 @@ pub async fn proxy_request(
     // Non-streaming path: forward, extract usage, and return
     let response = state.proxy.forward_and_collect(
         &api_key_row.id,
-        &provider,
+        &final_provider,
         &path,
         &method,
         headers,
-        body_bytes,
+        final_body,
     ).await;
 
     match response {
