@@ -332,12 +332,6 @@ pub async fn update_provider(
         }
     };
 
-    // Delete and recreate with updated fields
-    if let Err(e) = state.db.delete_provider(&id).await {
-        tracing::error!("Failed to delete provider for update: {}", e);
-        return (StatusCode::INTERNAL_SERVER_ERROR, Json(serde_json::json!({"error": e.to_string()}))).into_response();
-    }
-
     let name = req.name.as_deref().unwrap_or(&existing.name);
     let base_url = req.base_url.as_deref().unwrap_or(&existing.base_url);
     let api_type = req.api_type.as_deref().unwrap_or(&existing.api_type);
@@ -368,8 +362,9 @@ pub async fn update_provider(
     let token_header_prefix = req.token_header_prefix.as_deref().unwrap_or(&existing.token_header_prefix);
     let token_expiry_seconds = req.token_expiry_seconds.unwrap_or(existing.token_expiry_seconds);
     let weight = req.weight.unwrap_or(existing.weight);
+    let is_active = req.is_active.unwrap_or(existing.is_active);
 
-    match state.db.create_provider(
+    match state.db.update_provider(
         &id, name, base_url, api_type, auth_type,
         api_key, token_url, token_username, token_password,
         Some(token_request_method), Some(token_content_type),
@@ -377,26 +372,11 @@ pub async fn update_provider(
         token_body_template,
         token_extra_headers,
         token_field, refresh_token_field, token_header_field, token_header_prefix,
-        token_expiry_seconds, weight,
+        token_expiry_seconds, weight, is_active,
     ).await {
-        Ok(()) => {
-            // If is_active was set to false, deactivate
-            if req.is_active == Some(false) {
-                let _ = state.db.deactivate_provider(&id).await;
-            }
-            // Restore token if it existed
-            if existing.current_token.is_some() {
-                let _ = state.db.update_provider_token(
-                    &id,
-                    existing.current_token.as_deref().unwrap_or(""),
-                    existing.current_refresh_token.as_deref(),
-                    existing.token_expires_at.as_deref().unwrap_or(""),
-                ).await;
-            }
-            (StatusCode::OK, Json(serde_json::json!({"id": id}))).into_response()
-        }
+        Ok(()) => (StatusCode::OK, Json(serde_json::json!({"id": id}))).into_response(),
         Err(e) => {
-            tracing::error!("Failed to recreate provider: {}", e);
+            tracing::error!("Failed to update provider: {}", e);
             (StatusCode::INTERNAL_SERVER_ERROR, Json(serde_json::json!({"error": e.to_string()}))).into_response()
         }
     }

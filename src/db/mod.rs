@@ -376,6 +376,74 @@ impl Database {
         Ok(())
     }
 
+    /// Update provider fields using SQL UPDATE (no delete/recreate)
+    /// This avoids FOREIGN KEY constraint failures with request_logs
+    pub async fn update_provider(
+        &self,
+        id: &str,
+        name: &str,
+        base_url: &str,
+        api_type: &str,
+        auth_type: &str,
+        api_key: Option<&str>,
+        token_url: Option<&str>,
+        token_username: Option<&str>,
+        token_password: Option<&str>,
+        token_request_method: Option<&str>,
+        token_content_type: Option<&str>,
+        token_username_field: Option<&str>,
+        token_password_field: Option<&str>,
+        token_body_template: Option<&str>,
+        token_extra_headers: Option<&str>,
+        token_field: &str,
+        refresh_token_field: &str,
+        token_header_field: &str,
+        token_header_prefix: &str,
+        token_expiry_seconds: i64,
+        weight: i32,
+        is_active: bool,
+    ) -> Result<(), sqlx::Error> {
+        sqlx::query(
+            r#"UPDATE providers SET
+                name = ?, base_url = ?, api_type = ?, auth_type = ?,
+                api_key = ?, token_url = ?, token_username = ?, token_password = ?,
+                token_request_method = ?, token_content_type = ?,
+                token_username_field = ?, token_password_field = ?,
+                token_body_template = ?, token_extra_headers = ?,
+                token_field = ?, refresh_token_field = ?,
+                token_header_field = ?, token_header_prefix = ?,
+                token_expiry_seconds = ?, weight = ?, is_active = ?,
+                updated_at = datetime('now')
+                WHERE id = ?"#
+        )
+        .bind(name)
+        .bind(base_url)
+        .bind(api_type)
+        .bind(auth_type)
+        .bind(api_key)
+        .bind(token_url)
+        .bind(token_username)
+        .bind(token_password)
+        .bind(token_request_method)
+        .bind(token_content_type)
+        .bind(token_username_field)
+        .bind(token_password_field)
+        .bind(token_body_template)
+        .bind(token_extra_headers)
+        .bind(token_field)
+        .bind(refresh_token_field)
+        .bind(token_header_field)
+        .bind(token_header_prefix)
+        .bind(token_expiry_seconds)
+        .bind(weight)
+        .bind(is_active)
+        .bind(id)
+        .execute(&self.pool)
+        .await?;
+
+        Ok(())
+    }
+
     /// Deactivate a provider
     pub async fn deactivate_provider(&self, id: &str) -> Result<bool, sqlx::Error> {
         let result = sqlx::query(
