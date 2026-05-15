@@ -283,7 +283,7 @@ function renderProvidersTable(){
         return`<tr>
             <td>${p.id}</td><td>${p.name}</td><td style="font-size:11px;word-break:break-all">${p.base_url}</td>
             <td>${authBadge}</td><td>${p.weight}</td><td>${statusBadge}</td><td>${tokenStatus}</td>
-            <td><button class="btn btn-sm" onclick='editProvider("${p.id}")'>编辑</button> <button class="btn btn-sm btn-danger" onclick='deleteProvider("${p.id}")'>删除</button></td>
+            <td><button class="btn btn-sm" onclick='editProvider("${p.id}")'>编辑</button> ${p.auth_type==='dynamic_token'?'<button class="btn btn-sm btn-success" onclick=\'refreshToken("'+p.id+'\")\'>🔄 刷新Token</button>':''} <button class="btn btn-sm btn-danger" onclick='deleteProvider("${p.id}")'>删除</button></td>
         </tr>`;
     }).join('');
 }
@@ -401,6 +401,20 @@ async function saveProvider(){
         }else{
             const err=await resp.json();
             alert('保存失败: '+(err.error||resp.statusText));
+        }
+    }catch(e){alert('网络错误: '+e.message)}
+}
+
+async function refreshToken(id){
+    if(!confirm('确定要刷新此服务商的 Token 吗？'))return;
+    try{
+        const resp=await fetch(API+'/providers/'+id+'/refresh-token',{method:'POST'});
+        const data=await resp.json();
+        if(resp.ok){
+            alert('Token 刷新成功！\n'+(data.cookies_updated?'Cookie 已更新':'')+'\n过期时间: '+data.expires_at);
+            loadProvidersManage();
+        }else{
+            alert('刷新失败: '+data.error);
         }
     }catch(e){alert('网络错误: '+e.message)}
 }

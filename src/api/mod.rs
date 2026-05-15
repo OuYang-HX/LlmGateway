@@ -293,6 +293,42 @@ pub async fn delete_provider(
     }
 }
 
+/// Manually refresh a provider's token
+pub async fn refresh_provider_token(
+    State(state): State<AppState>,
+    Path(id): Path<String>,
+) -> impl IntoResponse {
+    let provider = match state.db.get_provider(&id).await {
+        Ok(Some(p)) => p,
+        Ok(None) => return (StatusCode::NOT_FOUND, Json(serde_json::json!({"error": "Provider not found"}))).into_response(),
+        Err(e) => {
+            tracing::error!("Failed to get provider: {}", e);
+            return (StatusCode::INTERNAL_SERVER_ERROR, Json(serde_json::json!({"error": e.to_string()}))).into_response();
+        }
+    };
+
+    match state.auth_manager.get_auth_header(&provider).await {
+        Ok((header_name, header_value)) => {
+            // Re-fetch to get updated token/cookies
+            let updated = state.db.get_provider(&id).await.ok().flatten();
+            let token = updated.as_ref().and_then(|p| p.current_token.as_deref()).unwrap_or("");
+            let cookies = updated.as_ref().and_then(|p| p.token_cookies.as_deref()).unwrap_or("");
+            let expires = updated.as_ref().and_then(|p| p.token_expires_at.as_deref()).unwrap_or("");
+            (StatusCode::OK, Json(serde_json::json!({
+                "message": "Token refreshed",
+                "token_preview": format!("{}...{}", &token[..token.len().min(8)], if token.len() > 8 { &token[token.len()-4..] } else { "" }),
+                "cookies_updated": !cookies.is_empty(),
+                "expires_at": expires,
+                "header_name": header_name,
+            }))).into_response()
+        }
+        Err(e) => {
+            tracing::error!("Failed to refresh token for provider {}: {}", id, e);
+            (StatusCode::BAD_REQUEST, Json(serde_json::json!({"error": format!("Token refresh failed: {}", e)}))).into_response()
+        }
+    }
+}
+
 /// Update a provider
 #[derive(Debug, Deserialize)]
 pub struct UpdateProviderRequest {
