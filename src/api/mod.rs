@@ -231,6 +231,91 @@ pub async fn delete_provider(
     }
 }
 
+/// Update a provider
+#[derive(Debug, Deserialize)]
+pub struct UpdateProviderRequest {
+    pub name: Option<String>,
+    pub base_url: Option<String>,
+    pub api_type: Option<String>,
+    pub auth_type: Option<String>,
+    pub api_key: Option<String>,
+    pub token_url: Option<String>,
+    pub token_username: Option<String>,
+    pub token_password: Option<String>,
+    pub token_field: Option<String>,
+    pub refresh_token_field: Option<String>,
+    pub token_header_field: Option<String>,
+    pub token_header_prefix: Option<String>,
+    pub token_expiry_seconds: Option<i64>,
+    pub weight: Option<i32>,
+    pub is_active: Option<bool>,
+}
+
+pub async fn update_provider(
+    State(state): State<AppState>,
+    Path(id): Path<String>,
+    Json(req): Json<UpdateProviderRequest>,
+) -> impl IntoResponse {
+    // First get the existing provider
+    let existing = match state.db.get_provider(&id).await {
+        Ok(Some(p)) => p,
+        Ok(None) => return (StatusCode::NOT_FOUND, Json(serde_json::json!({"error": "Provider not found"}))).into_response(),
+        Err(e) => {
+            tracing::error!("Failed to get provider: {}", e);
+            return (StatusCode::INTERNAL_SERVER_ERROR, Json(serde_json::json!({"error": e.to_string()}))).into_response();
+        }
+    };
+
+    // Delete and recreate with updated fields
+    if let Err(e) = state.db.delete_provider(&id).await {
+        tracing::error!("Failed to delete provider for update: {}", e);
+        return (StatusCode::INTERNAL_SERVER_ERROR, Json(serde_json::json!({"error": e.to_string()}))).into_response();
+    }
+
+    let name = req.name.as_deref().unwrap_or(&existing.name);
+    let base_url = req.base_url.as_deref().unwrap_or(&existing.base_url);
+    let api_type = req.api_type.as_deref().unwrap_or(&existing.api_type);
+    let auth_type = req.auth_type.as_deref().unwrap_or(&existing.auth_type);
+    let api_key = req.api_key.as_deref().or(existing.api_key.as_deref());
+    let token_url = req.token_url.as_deref().or(existing.token_url.as_deref());
+    let token_username = req.token_username.as_deref().or(existing.token_username.as_deref());
+    let token_password = req.token_password.as_deref().or(existing.token_password.as_deref());
+    let token_field = req.token_field.as_deref().unwrap_or(&existing.token_field);
+    let refresh_token_field = req.refresh_token_field.as_deref().unwrap_or(&existing.refresh_token_field);
+    let token_header_field = req.token_header_field.as_deref().unwrap_or(&existing.token_header_field);
+    let token_header_prefix = req.token_header_prefix.as_deref().unwrap_or(&existing.token_header_prefix);
+    let token_expiry_seconds = req.token_expiry_seconds.unwrap_or(existing.token_expiry_seconds);
+    let weight = req.weight.unwrap_or(existing.weight);
+
+    match state.db.create_provider(
+        &id, name, base_url, api_type, auth_type,
+        api_key, token_url, token_username, token_password,
+        token_field, refresh_token_field, token_header_field, token_header_prefix,
+        token_expiry_seconds, weight,
+    ).await {
+        Ok(()) => {
+            // If is_active was set to false, deactivate
+            if req.is_active == Some(false) {
+                let _ = state.db.deactivate_provider(&id).await;
+            }
+            // Restore token if it existed
+            if existing.current_token.is_some() {
+                let _ = state.db.update_provider_token(
+                    &id,
+                    existing.current_token.as_deref().unwrap_or(""),
+                    existing.current_refresh_token.as_deref(),
+                    existing.token_expires_at.as_deref().unwrap_or(""),
+                ).await;
+            }
+            (StatusCode::OK, Json(serde_json::json!({"id": id}))).into_response()
+        }
+        Err(e) => {
+            tracing::error!("Failed to recreate provider: {}", e);
+            (StatusCode::INTERNAL_SERVER_ERROR, Json(serde_json::json!({"error": e.to_string()}))).into_response()
+        }
+    }
+}
+
 // ========== Statistics handlers ==========
 
 #[derive(Debug, Deserialize)]

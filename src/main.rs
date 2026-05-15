@@ -65,7 +65,7 @@ async fn main() -> anyhow::Result<()> {
 
         // Provider management
         .route("/api/v1/providers", post(api::create_provider).get(api::list_providers))
-        .route("/api/v1/providers/:id", get(api::get_provider).delete(api::delete_provider))
+        .route("/api/v1/providers/:id", get(api::get_provider).delete(api::delete_provider).put(api::update_provider))
 
         // Statistics
         .route("/api/v1/stats", get(api::get_stats))

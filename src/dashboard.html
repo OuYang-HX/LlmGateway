@@ -1,0 +1,511 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>LLM Gateway Dashboard</title>
+    <style>
+        *{margin:0;padding:0;box-sizing:border-box}
+        body{font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,sans-serif;background:#0f172a;color:#e2e8f0}
+        .container{max-width:1400px;margin:0 auto;padding:20px}
+        h1{text-align:center;margin:20px 0;font-size:2em;background:linear-gradient(135deg,#60a5fa,#a78bfa);-webkit-background-clip:text;-webkit-text-fill-color:transparent}
+        .tabs{display:flex;gap:4px;margin-bottom:20px;background:#1e293b;border-radius:8px;padding:4px;flex-wrap:wrap}
+        .tab{padding:10px 20px;border:none;background:transparent;color:#94a3b8;cursor:pointer;border-radius:6px;font-size:14px}
+        .tab.active{background:#3b82f6;color:#fff}
+        .tab:hover{background:#334155}
+        .tab.active:hover{background:#3b82f6}
+        .stats-grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(200px,1fr));gap:16px;margin-bottom:24px}
+        .stat-card{background:#1e293b;border-radius:12px;padding:20px;border:1px solid #334155}
+        .stat-card .label{font-size:12px;color:#94a3b8;text-transform:uppercase;letter-spacing:.05em}
+        .stat-card .value{font-size:28px;font-weight:700;margin-top:4px}
+        .stat-card .value.blue{color:#60a5fa}
+        .stat-card .value.green{color:#34d399}
+        .stat-card .value.yellow{color:#fbbf24}
+        .stat-card .value.red{color:#f87171}
+        .panel{background:#1e293b;border-radius:12px;padding:20px;border:1px solid #334155;margin-bottom:24px}
+        .panel h2{font-size:16px;margin-bottom:16px;color:#e2e8f0}
+        table{width:100%;border-collapse:collapse}
+        th,td{padding:10px 12px;text-align:left;border-bottom:1px solid #334155;font-size:13px}
+        th{color:#94a3b8;font-weight:600}
+        .controls{display:flex;gap:12px;margin-bottom:16px;flex-wrap:wrap;align-items:center}
+        .controls label{font-size:13px;color:#94a3b8}
+        .controls select,.controls input{background:#0f172a;border:1px solid #334155;color:#e2e8f0;padding:6px 10px;border-radius:6px;font-size:13px}
+        .controls button,.btn{background:#3b82f6;color:#fff;border:none;padding:6px 16px;border-radius:6px;cursor:pointer;font-size:13px}
+        .controls button:hover,.btn:hover{background:#2563eb}
+        .btn-danger{background:#ef4444}.btn-danger:hover{background:#dc2626}
+        .btn-sm{padding:4px 10px;font-size:12px}
+        .btn-success{background:#22c55e}.btn-success:hover{background:#16a34a}
+        .hidden{display:none!important}
+
+        /* Modal */
+        .modal-overlay{position:fixed;top:0;left:0;width:100%;height:100%;background:rgba(0,0,0,.6);display:flex;align-items:center;justify-content:center;z-index:1000}
+        .modal{background:#1e293b;border-radius:12px;padding:24px;width:90%;max-width:640px;max-height:90vh;overflow-y:auto;border:1px solid #334155}
+        .modal h3{margin-bottom:16px;font-size:18px;color:#e2e8f0}
+        .form-group{margin-bottom:14px}
+        .form-group label{display:block;font-size:13px;color:#94a3b8;margin-bottom:4px}
+        .form-group input,.form-group select{width:100%;background:#0f172a;border:1px solid #334155;color:#e2e8f0;padding:8px 12px;border-radius:6px;font-size:14px}
+        .form-group input:focus,.form-group select:focus{outline:none;border-color:#3b82f6}
+        .form-row{display:grid;grid-template-columns:1fr 1fr;gap:12px}
+        .form-actions{display:flex;gap:12px;justify-content:flex-end;margin-top:20px}
+        .auth-section{border-top:1px solid #334155;padding-top:14px;margin-top:14px}
+        .auth-section h4{font-size:14px;color:#94a3b8;margin-bottom:12px}
+        .badge{display:inline-block;padding:2px 8px;border-radius:4px;font-size:11px;font-weight:600}
+        .badge-green{background:#166534;color:#86efac}
+        .badge-yellow{background:#854d0e;color:#fde047}
+        .badge-red{background:#991b1b;color:#fca5a5}
+        .badge-blue{background:#1e40af;color:#93c5fd}
+        .empty-state{text-align:center;padding:40px;color:#64748b}
+        .empty-state p{margin-bottom:12px}
+    </style>
+</head>
+<body>
+<div class="container">
+    <h1>🚀 LLM Gateway Dashboard</h1>
+
+    <div class="tabs">
+        <button class="tab active" onclick="showTab('overview')">概览</button>
+        <button class="tab" onclick="showTab('providers')">服务商管理</button>
+        <button class="tab" onclick="showTab('apikeys')">API Key 管理</button>
+        <button class="tab" onclick="showTab('logs')">请求日志</button>
+        <button class="tab" onclick="showTab('stats')">统计分析</button>
+    </div>
+
+    <!-- ====== 概览 ====== -->
+    <div id="tab-overview">
+        <div class="stats-grid" id="summary-stats"></div>
+        <div class="panel"><h2>服务商状态</h2><table id="overview-provider-table"><thead><tr><th>ID</th><th>名称</th><th>认证方式</th><th>状态</th></tr></thead><tbody></tbody></table></div>
+        <div class="panel"><h2>API Keys</h2><table id="overview-apikey-table"><thead><tr><th>名称</th><th>前缀</th><th>允许服务商</th><th>状态</th></tr></thead><tbody></tbody></table></div>
+    </div>
+
+    <!-- ====== 服务商管理 ====== -->
+    <div id="tab-providers" class="hidden">
+        <div class="controls">
+            <button class="btn btn-success" onclick="openProviderModal()">+ 添加服务商</button>
+        </div>
+        <div class="panel">
+            <h2>大模型服务商</h2>
+            <table id="provider-manage-table">
+                <thead><tr><th>ID</th><th>名称</th><th>Base URL</th><th>认证方式</th><th>权重</th><th>状态</th><th>Token</th><th>操作</th></tr></thead>
+                <tbody></tbody>
+            </table>
+        </div>
+    </div>
+
+    <!-- ====== API Key 管理 ====== -->
+    <div id="tab-apikeys" class="hidden">
+        <div class="controls">
+            <button class="btn btn-success" onclick="openApiKeyModal()">+ 创建 API Key</button>
+        </div>
+        <div class="panel">
+            <h2>API Keys</h2>
+            <table id="apikey-manage-table">
+                <thead><tr><th>名称</th><th>Key</th><th>允许服务商</th><th>状态</th><th>创建时间</th><th>操作</th></tr></thead>
+                <tbody></tbody>
+            </table>
+        </div>
+    </div>
+
+    <!-- ====== 请求日志 ====== -->
+    <div id="tab-logs" class="hidden">
+        <div class="controls">
+            <label>服务商:</label><select id="log-provider"><option value="">全部</option></select>
+            <label>从:</label><input type="datetime-local" id="log-start">
+            <label>到:</label><input type="datetime-local" id="log-end">
+            <button onclick="loadLogs()">搜索</button>
+        </div>
+        <div class="panel">
+            <table id="logs-table"><thead><tr><th>时间</th><th>API Key</th><th>服务商</th><th>模型</th><th>状态码</th><th>Tokens</th><th>耗时</th><th>流式</th><th>限流</th></tr></thead><tbody></tbody></table>
+        </div>
+    </div>
+
+    <!-- ====== 统计分析 ====== -->
+    <div id="tab-stats" class="hidden">
+        <div class="controls">
+            <label>粒度:</label>
+            <select id="st-granularity"><option value="5h">5小时</option><option value="day" selected>天</option><option value="week">周</option><option value="month">月</option></select>
+            <label>服务商:</label><select id="st-provider"><option value="">全部</option></select>
+            <button onclick="loadStats()">加载</button>
+        </div>
+        <div class="panel"><h2>请求统计</h2><table id="stats-table"><thead><tr><th>时段</th><th>请求数</th><th>Prompt Tokens</th><th>Completion Tokens</th><th>总 Tokens</th><th>限流次数</th></tr></thead><tbody></tbody></table></div>
+    </div>
+</div>
+
+<!-- ====== 服务商编辑 Modal ====== -->
+<div id="provider-modal" class="modal-overlay hidden">
+<div class="modal">
+    <h3 id="provider-modal-title">添加服务商</h3>
+    <input type="hidden" id="prov-edit-id">
+    <div class="form-row">
+        <div class="form-group"><label>ID（唯一标识）</label><input id="prov-id" placeholder="如 openai、internal-llm"></div>
+        <div class="form-group"><label>名称</label><input id="prov-name" placeholder="如 OpenAI、公司内网大模型"></div>
+    </div>
+    <div class="form-row">
+        <div class="form-group"><label>Base URL</label><input id="prov-base-url" placeholder="https://api.openai.com/v1"></div>
+        <div class="form-group"><label>API 类型</label><select id="prov-api-type"><option value="openai">OpenAI 兼容</option><option value="anthropic">Anthropic</option></select></div>
+    </div>
+    <div class="form-row">
+        <div class="form-group"><label>认证方式</label><select id="prov-auth-type" onchange="toggleAuthFields()"><option value="api_key">静态 API Key</option><option value="dynamic_token">动态 Token（账号密码）</option></select></div>
+        <div class="form-group"><label>权重（负载均衡）</label><input id="prov-weight" type="number" value="1" min="1"></div>
+    </div>
+
+    <!-- 静态 API Key 区域 -->
+    <div id="auth-apikey-section" class="auth-section">
+        <h4>🔑 API Key 认证</h4>
+        <div class="form-group"><label>API Key</label><input id="prov-api-key" placeholder="sk-..."></div>
+        <div class="form-row">
+            <div class="form-group"><label>Header 字段名</label><input id="prov-token-header-field" value="Authorization"></div>
+            <div class="form-group"><label>Header 前缀</label><input id="prov-token-header-prefix" value="Bearer "></div>
+        </div>
+    </div>
+
+    <!-- 动态 Token 区域 -->
+    <div id="auth-dynamic-section" class="auth-section hidden">
+        <h4>🔄 动态 Token 认证</h4>
+        <div class="form-group"><label>获取 Token 的 URL</label><input id="prov-token-url" placeholder="https://auth.company.com/api/login"></div>
+        <div class="form-row">
+            <div class="form-group"><label>账号</label><input id="prov-token-username" placeholder="username"></div>
+            <div class="form-group"><label>密码</label><input id="prov-token-password" type="password" placeholder="password"></div>
+        </div>
+        <div class="form-row">
+            <div class="form-group"><label>Token 字段名</label><input id="prov-token-field" value="token"><small style="color:#64748b">登录接口返回 JSON 中 token 的字段名</small></div>
+            <div class="form-group"><label>Refresh Token 字段名</label><input id="prov-refresh-token-field" value="refreshToken"></div>
+        </div>
+        <div class="form-row">
+            <div class="form-group"><label>Header 字段名</label><input id="prov-dyn-header-field" value="Authorization"></div>
+            <div class="form-group"><label>Header 前缀</label><input id="prov-dyn-header-prefix" value="Bearer "></div>
+        </div>
+        <div class="form-group"><label>Token 有效期（秒）</label><input id="prov-token-expiry" type="number" value="86400"></div>
+    </div>
+
+    <div class="form-actions">
+        <button class="btn" onclick="closeProviderModal()">取消</button>
+        <button class="btn btn-success" onclick="saveProvider()">保存</button>
+    </div>
+</div>
+</div>
+
+<!-- ====== API Key 创建 Modal ====== -->
+<div id="apikey-modal" class="modal-overlay hidden">
+<div class="modal">
+    <h3>创建 API Key</h3>
+    <div class="form-group"><label>名称</label><input id="ak-name" placeholder="如 my-app-key"></div>
+    <div class="form-group"><label>允许的服务商（留空=全部）</label><div id="ak-providers-checks"></div></div>
+    <div class="form-actions">
+        <button class="btn" onclick="closeApiKeyModal()">取消</button>
+        <button class="btn btn-success" onclick="createApiKey()">创建</button>
+    </div>
+</div>
+</div>
+
+<!-- ====== API Key 显示 Modal ====== -->
+<div id="apikey-show-modal" class="modal-overlay hidden">
+<div class="modal">
+    <h3>🔑 API Key 已创建</h3>
+    <p style="color:#fbbf24;margin-bottom:12px">⚠️ 请立即复制保存，此 Key 只显示一次！</p>
+    <div class="form-group"><input id="ak-show-key" readonly style="font-family:monospace;font-size:16px"></div>
+    <div class="form-actions"><button class="btn" onclick="copyApiKey()">📋 复制</button><button class="btn" onclick="closeApiKeyShowModal()">关闭</button></div>
+</div>
+</div>
+
+<script>
+const API='/api/v1';
+
+function showTab(name){
+    document.querySelectorAll('[id^="tab-"]').forEach(el=>el.classList.add('hidden'));
+    document.getElementById('tab-'+name).classList.remove('hidden');
+    document.querySelectorAll('.tab').forEach(el=>el.classList.remove('active'));
+    event.target.classList.add('active');
+    if(name==='providers') loadProvidersManage();
+    if(name==='apikeys') loadApiKeysManage();
+    if(name==='overview'){loadSummary();loadOverviewProviders();loadOverviewApiKeys();}
+    if(name==='logs') loadLogProviderOptions();
+    if(name==='stats') loadStatsProviderOptions();
+}
+
+// ========== 概览 ==========
+async function loadSummary(){
+    try{
+        const d=await(await fetch(API+'/dashboard/summary')).json();
+        document.getElementById('summary-stats').innerHTML=`
+            <div class="stat-card"><div class="label">活跃 API Keys</div><div class="value blue">${d.active_api_keys}</div></div>
+            <div class="stat-card"><div class="label">活跃服务商</div><div class="value green">${d.active_providers}</div></div>
+            <div class="stat-card"><div class="label">24h 请求数</div><div class="value blue">${d.total_requests_24h}</div></div>
+            <div class="stat-card"><div class="label">24h Tokens</div><div class="value green">${d.total_tokens_24h.toLocaleString()}</div></div>
+            <div class="stat-card"><div class="label">Avg Tokens/s</div><div class="value yellow">${d.avg_tokens_per_second.toFixed(1)}</div></div>
+            <div class="stat-card"><div class="label">24h 限流</div><div class="value red">${d.throttle_count_24h}</div></div>`;
+    }catch(e){console.error(e)}
+}
+async function loadOverviewProviders(){
+    try{
+        const ps=await(await fetch(API+'/providers')).json();
+        document.querySelector('#overview-provider-table tbody').innerHTML=ps.map(p=>`<tr><td>${p.id}</td><td>${p.name}</td><td><span class="badge ${p.auth_type==='api_key'?'badge-blue':'badge-yellow'}">${p.auth_type==='api_key'?'API Key':'动态Token'}</span></td><td><span class="badge ${p.is_active?'badge-green':'badge-red'}">${p.is_active?'活跃':'停用'}</span></td></tr>`).join('')||'<tr><td colspan="4" class="empty-state">暂无服务商</td></tr>';
+    }catch(e){console.error(e)}
+}
+async function loadOverviewApiKeys(){
+    try{
+        const ks=await(await fetch(API+'/api-keys')).json();
+        document.querySelector('#overview-apikey-table tbody').innerHTML=ks.map(k=>`<tr><td>${k.name}</td><td>${k.key_prefix}...</td><td>${k.allowed_providers?k.allowed_providers.join(', '):'全部'}</td><td><span class="badge ${k.is_active?'badge-green':'badge-red'}">${k.is_active?'活跃':'停用'}</span></td></tr>`).join('')||'<tr><td colspan="4" class="empty-state">暂无 API Key</td></tr>';
+    }catch(e){console.error(e)}
+}
+
+// ========== 服务商管理 ==========
+let allProviders=[];
+
+async function loadProvidersManage(){
+    try{
+        allProviders=await(await fetch(API+'/providers')).json();
+        renderProvidersTable();
+    }catch(e){console.error(e)}
+}
+
+function renderProvidersTable(){
+    const tb=document.querySelector('#provider-manage-table tbody');
+    if(!allProviders.length){tb.innerHTML='<tr><td colspan="8" class="empty-state"><p>暂无服务商，点击上方按钮添加</p></td></tr>';return;}
+    tb.innerHTML=allProviders.map(p=>{
+        const authBadge=p.auth_type==='api_key'?'<span class="badge badge-blue">API Key</span>':'<span class="badge badge-yellow">动态Token</span>';
+        const statusBadge=p.is_active?'<span class="badge badge-green">活跃</span>':'<span class="badge badge-red">停用</span>';
+        let tokenStatus='';
+        if(p.auth_type==='dynamic_token'){
+            tokenStatus=p.current_token?'<span class="badge badge-green">有效</span>':'<span class="badge badge-red">未获取</span>';
+        }else{
+            tokenStatus='<span class="badge badge-green">-</span>';
+        }
+        return`<tr>
+            <td>${p.id}</td><td>${p.name}</td><td style="font-size:11px;word-break:break-all">${p.base_url}</td>
+            <td>${authBadge}</td><td>${p.weight}</td><td>${statusBadge}</td><td>${tokenStatus}</td>
+            <td><button class="btn btn-sm" onclick='editProvider("${p.id}")'>编辑</button> <button class="btn btn-sm btn-danger" onclick='deleteProvider("${p.id}")'>删除</button></td>
+        </tr>`;
+    }).join('');
+}
+
+function toggleAuthFields(){
+    const t=document.getElementById('prov-auth-type').value;
+    document.getElementById('auth-apikey-section').classList.toggle('hidden',t!=='api_key');
+    document.getElementById('auth-dynamic-section').classList.toggle('hidden',t!=='dynamic_token');
+}
+
+function openProviderModal(isEdit){
+    document.getElementById('provider-modal-title').textContent=isEdit?'编辑服务商':'添加服务商';
+    document.getElementById('prov-edit-id').value='';
+    document.getElementById('prov-id').value='';
+    document.getElementById('prov-id').disabled=false;
+    document.getElementById('prov-name').value='';
+    document.getElementById('prov-base-url').value='';
+    document.getElementById('prov-api-type').value='openai';
+    document.getElementById('prov-auth-type').value='api_key';
+    document.getElementById('prov-weight').value='1';
+    document.getElementById('prov-api-key').value='';
+    document.getElementById('prov-token-header-field').value='Authorization';
+    document.getElementById('prov-token-header-prefix').value='Bearer ';
+    document.getElementById('prov-token-url').value='';
+    document.getElementById('prov-token-username').value='';
+    document.getElementById('prov-token-password').value='';
+    document.getElementById('prov-token-field').value='token';
+    document.getElementById('prov-refresh-token-field').value='refreshToken';
+    document.getElementById('prov-dyn-header-field').value='Authorization';
+    document.getElementById('prov-dyn-header-prefix').value='Bearer ';
+    document.getElementById('prov-token-expiry').value='86400';
+    toggleAuthFields();
+    document.getElementById('provider-modal').classList.remove('hidden');
+}
+
+function closeProviderModal(){document.getElementById('provider-modal').classList.add('hidden')}
+
+function editProvider(id){
+    const p=allProviders.find(x=>x.id===id);if(!p)return;
+    openProviderModal(true);
+    document.getElementById('prov-edit-id').value=p.id;
+    document.getElementById('prov-id').value=p.id;
+    document.getElementById('prov-id').disabled=true;
+    document.getElementById('prov-name').value=p.name;
+    document.getElementById('prov-base-url').value=p.base_url;
+    document.getElementById('prov-api-type').value=p.api_type;
+    document.getElementById('prov-auth-type').value=p.auth_type;
+    document.getElementById('prov-weight').value=p.weight;
+    if(p.auth_type==='api_key'){
+        document.getElementById('prov-api-key').value=p.api_key||'';
+        document.getElementById('prov-token-header-field').value=p.token_header_field;
+        document.getElementById('prov-token-header-prefix').value=p.token_header_prefix;
+    }else{
+        document.getElementById('prov-token-url').value=p.token_url||'';
+        document.getElementById('prov-token-username').value=p.token_username||'';
+        document.getElementById('prov-token-password').value=p.token_password||'';
+        document.getElementById('prov-token-field').value=p.token_field;
+        document.getElementById('prov-refresh-token-field').value=p.refresh_token_field;
+        document.getElementById('prov-dyn-header-field').value=p.token_header_field;
+        document.getElementById('prov-dyn-header-prefix').value=p.token_header_prefix;
+        document.getElementById('prov-token-expiry').value=p.token_expiry_seconds;
+    }
+    toggleAuthFields();
+}
+
+async function saveProvider(){
+    const editId=document.getElementById('prov-edit-id').value;
+    const authType=document.getElementById('prov-auth-type').value;
+    const body={
+        id:document.getElementById('prov-id').value.trim(),
+        name:document.getElementById('prov-name').value.trim(),
+        base_url:document.getElementById('prov-base-url').value.trim(),
+        api_type:document.getElementById('prov-api-type').value,
+        auth_type:authType,
+        weight:parseInt(document.getElementById('prov-weight').value)||1,
+    };
+    if(authType==='api_key'){
+        body.api_key=document.getElementById('prov-api-key').value;
+        body.token_header_field=document.getElementById('prov-token-header-field').value;
+        body.token_header_prefix=document.getElementById('prov-token-header-prefix').value;
+    }else{
+        body.token_url=document.getElementById('prov-token-url').value;
+        body.token_username=document.getElementById('prov-token-username').value;
+        body.token_password=document.getElementById('prov-token-password').value;
+        body.token_field=document.getElementById('prov-token-field').value;
+        body.refresh_token_field=document.getElementById('prov-refresh-token-field').value;
+        body.token_header_field=document.getElementById('prov-dyn-header-field').value;
+        body.token_header_prefix=document.getElementById('prov-dyn-header-prefix').value;
+        body.token_expiry_seconds=parseInt(document.getElementById('prov-token-expiry').value)||86400;
+    }
+
+    try{
+        let resp;
+        if(editId){
+            // Update: use PUT with only changed fields
+            resp=await fetch(API+'/providers/'+editId,{method:'PUT',headers:{'Content-Type':'application/json'},body:JSON.stringify(body)});
+        }else{
+            resp=await fetch(API+'/providers',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(body)});
+        }
+        if(resp.ok){
+            closeProviderModal();
+            loadProvidersManage();
+        }else{
+            const err=await resp.json();
+            alert('保存失败: '+(err.error||resp.statusText));
+        }
+    }catch(e){alert('网络错误: '+e.message)}
+}
+
+async function deleteProvider(id){
+    if(!confirm('确定要删除服务商 "'+id+'" 吗？'))return;
+    try{
+        const resp=await fetch(API+'/providers/'+id,{method:'DELETE'});
+        if(resp.ok) loadProvidersManage();
+        else{const err=await resp.json();alert('删除失败: '+(err.error||resp.statusText));}
+    }catch(e){alert('网络错误: '+e.message)}
+}
+
+// ========== API Key 管理 ==========
+async function loadApiKeysManage(){
+    try{
+        const ks=await(await fetch(API+'/api-keys')).json();
+        const tb=document.querySelector('#apikey-manage-table tbody');
+        if(!ks.length){tb.innerHTML='<tr><td colspan="6" class="empty-state"><p>暂无 API Key，点击上方按钮创建</p></td></tr>';return;}
+        tb.innerHTML=ks.map(k=>`<tr>
+            <td>${k.name}</td><td style="font-family:monospace">${k.key_prefix}***</td>
+            <td>${k.allowed_providers?k.allowed_providers.join(', '):'全部'}</td>
+            <td><span class="badge ${k.is_active?'badge-green':'badge-red'}">${k.is_active?'活跃':'停用'}</span></td>
+            <td>${new Date(k.created_at).toLocaleString()}</td>
+            <td><button class="btn btn-sm btn-danger" onclick='deleteApiKey("${k.id}")'>删除</button></td>
+        </tr>`).join('');
+    }catch(e){console.error(e)}
+}
+
+async function openApiKeyModal(){
+    document.getElementById('ak-name').value='';
+    try{
+        const ps=await(await fetch(API+'/providers')).json();
+        document.getElementById('ak-providers-checks').innerHTML=ps.map(p=>`<label style="display:inline-block;margin-right:12px;font-size:13px;color:#e2e8f0"><input type="checkbox" value="${p.id}" class="ak-prov-cb"> ${p.name} (${p.id})</label>`).join('')||'<span style="color:#64748b">暂无服务商</span>';
+    }catch(e){document.getElementById('ak-providers-checks').innerHTML='<span style="color:#64748b">加载失败</span>';}
+    document.getElementById('apikey-modal').classList.remove('hidden');
+}
+function closeApiKeyModal(){document.getElementById('apikey-modal').classList.add('hidden')}
+
+async function createApiKey(){
+    const name=document.getElementById('ak-name').value.trim();
+    if(!name){alert('请输入名称');return;}
+    const allowed=[...document.querySelectorAll('.ak-prov-cb:checked')].map(cb=>cb.value);
+    const body={name};
+    if(allowed.length)body.allowed_providers=allowed;
+    try{
+        const resp=await fetch(API+'/api-keys',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(body)});
+        if(resp.ok){
+            const data=await resp.json();
+            closeApiKeyModal();
+            document.getElementById('ak-show-key').value=data.key;
+            document.getElementById('apikey-show-modal').classList.remove('hidden');
+            loadApiKeysManage();
+        }else{
+            const err=await resp.json();alert('创建失败: '+(err.error||resp.statusText));
+        }
+    }catch(e){alert('网络错误: '+e.message)}
+}
+function copyApiKey(){
+    const inp=document.getElementById('ak-show-key');
+    inp.select();document.execCommand('copy');
+}
+function closeApiKeyShowModal(){document.getElementById('apikey-show-modal').classList.add('hidden')}
+async function deleteApiKey(id){
+    if(!confirm('确定要删除此 API Key 吗？'))return;
+    try{
+        const resp=await fetch(API+'/api-keys/'+id,{method:'DELETE'});
+        if(resp.ok) loadApiKeysManage();
+        else{const err=await resp.json();alert('删除失败: '+(err.error||resp.statusText));}
+    }catch(e){alert('网络错误: '+e.message)}
+}
+
+// ========== 请求日志 ==========
+async function loadLogProviderOptions(){
+    try{
+        const ps=await(await fetch(API+'/providers')).json();
+        const sel=document.getElementById('log-provider');
+        sel.innerHTML='<option value="">全部</option>'+ps.map(p=>`<option value="${p.id}">${p.name}</option>`).join('');
+    }catch(e){console.error(e)}
+}
+async function loadLogs(){
+    try{
+        const params=new URLSearchParams();
+        const prov=document.getElementById('log-provider').value;
+        const start=document.getElementById('log-start').value;
+        const end=document.getElementById('log-end').value;
+        if(prov)params.set('provider_id',prov);
+        if(start)params.set('start_time',new Date(start).toISOString());
+        if(end)params.set('end_time',new Date(end).toISOString());
+        const data=await(await fetch(API+'/logs?'+params)).json();
+        document.querySelector('#logs-table tbody').innerHTML=(data.logs||[]).map(l=>`<tr>
+            <td>${new Date(l.created_at).toLocaleString()}</td><td>${l.api_key_id.slice(0,8)}...</td>
+            <td>${l.provider_id}</td><td>${l.model||'-'}</td><td>${l.response_status||'-'}</td>
+            <td>${l.total_tokens}</td><td>${l.duration_ms?l.duration_ms+'ms':'-'}</td>
+            <td>${l.is_streaming?'✅':'❌'}</td><td>${l.is_throttled?'⚠️':'✅'}</td>
+        </tr>`).join('')||'<tr><td colspan="9" class="empty-state">暂无日志</td></tr>';
+    }catch(e){console.error(e)}
+}
+
+// ========== 统计分析 ==========
+async function loadStatsProviderOptions(){
+    try{
+        const ps=await(await fetch(API+'/providers')).json();
+        const sel=document.getElementById('st-provider');
+        sel.innerHTML='<option value="">全部</option>'+ps.map(p=>`<option value="${p.id}">${p.name}</option>`).join('');
+    }catch(e){console.error(e)}
+}
+async function loadStats(){
+    try{
+        const g=document.getElementById('st-granularity').value;
+        const p=document.getElementById('st-provider').value;
+        const now=new Date();
+        const start=new Date(now-365*86400000).toISOString();
+        const end=now.toISOString();
+        let url=API+'/stats/bucketed?granularity='+g+'&start_time='+start+'&end_time='+end;
+        if(p)url+='&provider_id='+p;
+        const data=await(await fetch(url)).json();
+        document.querySelector('#stats-table tbody').innerHTML=data.map(b=>`<tr>
+            <td>${b.period}</td><td>${b.request_count}</td><td>${b.prompt_tokens}</td>
+            <td>${b.completion_tokens}</td><td>${b.total_tokens}</td><td>${b.throttle_count}</td>
+        </tr>`).join('')||'<tr><td colspan="6" class="empty-state">暂无数据</td></tr>';
+    }catch(e){console.error(e)}
+}
+
+// ========== 初始化 ==========
+loadSummary();loadOverviewProviders();loadOverviewApiKeys();
+setInterval(loadSummary,30000);
+</script>
+</body>
+</html>

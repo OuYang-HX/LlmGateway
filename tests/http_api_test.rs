@@ -55,9 +55,9 @@ async fn test_dashboard_page_returns_html() {
     assert_eq!(response.status_code(), StatusCode::OK);
     let body = response.text();
     assert!(body.contains("LLM Gateway Dashboard"));
-    assert!(body.contains("Overview"));
-    assert!(body.contains("Real-time Rate"));
-    assert!(body.contains("Request Logs"));
+    assert!(body.contains("服务商管理"));
+    assert!(body.contains("概览"));
+    assert!(body.contains("请求日志"));
 }
 
 #[tokio::test]
@@ -67,6 +67,7 @@ async fn test_dashboard_page_explicit_path() {
     assert_eq!(response.status_code(), StatusCode::OK);
     let body = response.text();
     assert!(body.contains("LLM Gateway Dashboard"));
+    assert!(body.contains("服务商管理"));
 }
 
 // ==================== API Key HTTP Tests ====================
