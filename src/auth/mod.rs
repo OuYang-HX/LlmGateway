@@ -134,13 +134,14 @@ impl AuthManager {
     }
 
     /// Extract token from response and store in database
+    /// Supports dot-notation paths like "result.token", "result.newToken"
     async fn extract_and_store_token(&self, provider: &crate::db::ProviderRow, response: &serde_json::Value) -> Result<String, AuthError> {
-        let token = response.get(&provider.token_field)
+        let token = extract_json_path(response, &provider.token_field)
             .and_then(|v| v.as_str())
             .ok_or_else(|| AuthError::TokenFieldNotFound(provider.token_field.clone()))?
             .to_string();
 
-        let refresh_token = response.get(&provider.refresh_token_field)
+        let refresh_token = extract_json_path(response, &provider.refresh_token_field)
             .and_then(|v| v.as_str())
             .map(|s| s.to_string());
 
@@ -180,4 +181,21 @@ pub enum AuthError {
     ParseError(reqwest::Error),
     #[error("Database error: {0}")]
     DatabaseError(String),
+}
+
+/// Extract a value from a JSON document using a dot-notation path.
+/// Examples:
+///   "token"        → response.token
+///   "result.token" → response.result.token
+///   "result.newToken" → response.result.newToken
+///   "data.access_token" → response.data.access_token
+///
+/// If the path has no dots, it works like a simple key lookup.
+pub fn extract_json_path<'a>(value: &'a serde_json::Value, path: &str) -> Option<&'a serde_json::Value> {
+    let parts: Vec<&str> = path.split('.').collect();
+    let mut current = value;
+    for part in parts {
+        current = current.get(part)?;
+    }
+    Some(current)
 }

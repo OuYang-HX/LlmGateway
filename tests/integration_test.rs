@@ -1124,3 +1124,94 @@ async fn test_time_bucketed_stats_monthly_granularity() {
     let buckets = db.get_time_bucketed_stats(None, None, &start, &end, "month").await.unwrap();
     assert!(!buckets.is_empty());
 }
+
+// ==================== JSON Path Extraction Tests ====================
+
+#[test]
+fn test_extract_json_path_simple_key() {
+    let json = serde_json::json!({"token": "abc123"});
+    let val = llm_gateway::auth::extract_json_path(&json, "token");
+    assert_eq!(val.unwrap().as_str(), Some("abc123"));
+}
+
+#[test]
+fn test_extract_json_path_nested_one_level() {
+    let json = serde_json::json!({"result": {"token": "abc123"}});
+    let val = llm_gateway::auth::extract_json_path(&json, "result.token");
+    assert_eq!(val.unwrap().as_str(), Some("abc123"));
+}
+
+#[test]
+fn test_extract_json_path_nested_two_levels() {
+    let json = serde_json::json!({"data": {"result": {"token": "xyz"}}});
+    let val = llm_gateway::auth::extract_json_path(&json, "data.result.token");
+    assert_eq!(val.unwrap().as_str(), Some("xyz"));
+}
+
+#[test]
+fn test_extract_json_path_result_newtoken() {
+    // The exact format the user reported
+    let json = serde_json::json!({
+        "result": {"newToken": "xxx", "token": "yyy"},
+        "status": "ok"
+    });
+    let val = llm_gateway::auth::extract_json_path(&json, "result.newToken");
+    assert_eq!(val.unwrap().as_str(), Some("xxx"));
+    let val2 = llm_gateway::auth::extract_json_path(&json, "result.token");
+    assert_eq!(val2.unwrap().as_str(), Some("yyy"));
+}
+
+#[test]
+fn test_extract_json_path_missing_key() {
+    let json = serde_json::json!({"result": {"token": "abc"}});
+    let val = llm_gateway::auth::extract_json_path(&json, "result.newToken");
+    assert!(val.is_none());
+}
+
+#[test]
+fn test_extract_json_path_missing_parent() {
+    let json = serde_json::json!({"status": "ok"});
+    let val = llm_gateway::auth::extract_json_path(&json, "result.token");
+    assert!(val.is_none());
+}
+
+#[test]
+fn test_extract_json_path_empty_string() {
+    let json = serde_json::json!({"token": ""});
+    let val = llm_gateway::auth::extract_json_path(&json, "token");
+    assert_eq!(val.unwrap().as_str(), Some(""));
+}
+
+#[test]
+fn test_extract_json_path_number_value() {
+    let json = serde_json::json!({"result": {"expires": 3600}});
+    let val = llm_gateway::auth::extract_json_path(&json, "result.expires");
+    assert_eq!(val.unwrap().as_i64(), Some(3600));
+}
+
+#[test]
+fn test_extract_json_path_status_field() {
+    let json = serde_json::json!({
+        "result": {"newToken": "abc", "token": "def"},
+        "status": "ok"
+    });
+    let val = llm_gateway::auth::extract_json_path(&json, "status");
+    assert_eq!(val.unwrap().as_str(), Some("ok"));
+}
+
+#[test]
+fn test_extract_json_path_array_index_not_supported() {
+    // Arrays are not supported - should return None for numeric keys
+    let json = serde_json::json!({"tokens": ["a", "b"]});
+    let val = llm_gateway::auth::extract_json_path(&json, "tokens.0");
+    assert!(val.is_none()); // "0" is not a valid object key
+}
+
+#[test]
+fn test_extract_json_path_deeply_nested() {
+    let json = serde_json::json!({
+        "response": {"auth": {"credentials": {"access_token": "deep-token"}}}
+    });
+    let val = llm_gateway::auth::extract_json_path(&json, "response.auth.credentials.access_token");
+    assert_eq!(val.unwrap().as_str(), Some("deep-token"));
+}

@@ -167,8 +167,8 @@
             <div class="form-group"><label>密码</label><input id="prov-token-password" type="password" placeholder="password"></div>
         </div>
         <div class="form-row">
-            <div class="form-group"><label>Token 字段名</label><input id="prov-token-field" value="token"><small style="color:#64748b">登录接口返回 JSON 中 token 的字段名</small></div>
-            <div class="form-group"><label>Refresh Token 字段名</label><input id="prov-refresh-token-field" value="refreshToken"></div>
+            <div class="form-group"><label>Token 字段名（支持点号路径）</label><input id="prov-token-field" value="token"><small style="color:#64748b">登录接口返回 JSON 中 token 的路径，如 token、result.token、result.newToken</small></div>
+            <div class="form-group"><label>Refresh Token 字段名</label><input id="prov-refresh-token-field" value="refreshToken"><small style="color:#64748b">如 refreshToken、result.refreshToken</small></div>
         </div>
         <div class="form-row">
             <div class="form-group"><label>Header 字段名</label><input id="prov-dyn-header-field" value="Authorization"></div>
