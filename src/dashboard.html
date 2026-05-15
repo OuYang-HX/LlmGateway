@@ -175,6 +175,7 @@
             <div class="form-group"><label>密码字段名</label><input id="prov-token-password-field" value="password"><small style="color:#64748b">请求体中密码的字段名，如 password、secret、pwd</small></div>
         </div>
         <div class="form-group"><label>自定义请求体模板（可选，留空则自动构建）</label><textarea id="prov-token-body-template" rows="3" style="width:100%;background:#0f172a;border:1px solid #334155;color:#e2e8f0;padding:8px 12px;border-radius:6px;font-size:13px;font-family:monospace" placeholder='如: {"grant_type":"password","username":"{{username}}","password":"{{password}}"}'></textarea><small style="color:#64748b">用 {{username}} 和 {{password}} 作为占位符，网关会自动替换</small></div>
+        <div class="form-group"><label>自定义请求头（可选，JSON 格式）</label><textarea id="prov-token-extra-headers" rows="2" style="width:100%;background:#0f172a;border:1px solid #334155;color:#e2e8f0;padding:8px 12px;border-radius:6px;font-size:13px;font-family:monospace" placeholder='{"X-App-Id":"myapp","X-Api-Version":"v2"}'></textarea><small style="color:#64748b">获取 Token 时附带的额外请求头，JSON 对象格式</small></div>
         <div class="form-row">
             <div class="form-group"><label>Token 字段名（支持点号路径）</label><input id="prov-token-field" value="token"><small style="color:#64748b">登录接口返回 JSON 中 token 的路径，如 token、result.token、result.newToken</small></div>
             <div class="form-group"><label>Refresh Token 字段名</label><input id="prov-refresh-token-field" value="refreshToken"><small style="color:#64748b">如 refreshToken、result.refreshToken</small></div>
@@ -344,6 +345,7 @@ function editProvider(id){
         document.getElementById('prov-token-username-field').value=p.token_username_field||'username';
         document.getElementById('prov-token-password-field').value=p.token_password_field||'password';
         document.getElementById('prov-token-body-template').value=p.token_body_template||'';
+        document.getElementById('prov-token-extra-headers').value=p.token_extra_headers||'';
         document.getElementById('prov-token-field').value=p.token_field;
         document.getElementById('prov-refresh-token-field').value=p.refresh_token_field;
         document.getElementById('prov-dyn-header-field').value=p.token_header_field;
@@ -377,6 +379,7 @@ async function saveProvider(){
         body.token_username_field=document.getElementById('prov-token-username-field').value;
         body.token_password_field=document.getElementById('prov-token-password-field').value;
         body.token_body_template=document.getElementById('prov-token-body-template').value||undefined;
+        body.token_extra_headers=document.getElementById('prov-token-extra-headers').value||undefined;
         body.token_field=document.getElementById('prov-token-field').value;
         body.refresh_token_field=document.getElementById('prov-refresh-token-field').value;
         body.token_header_field=document.getElementById('prov-dyn-header-field').value;

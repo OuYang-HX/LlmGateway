@@ -144,6 +144,8 @@ pub struct CreateProviderRequest {
     #[serde(default = "default_password_field")]
     pub token_password_field: String,
     pub token_body_template: Option<String>,
+    #[serde(default)]
+    pub token_extra_headers: Option<String>,
     #[serde(default = "default_token_field")]
     pub token_field: String,
     #[serde(default = "default_refresh_token_field")]
@@ -191,6 +193,7 @@ pub async fn create_provider(
         Some(req.token_username_field.as_str()),
         Some(req.token_password_field.as_str()),
         req.token_body_template.as_deref(),
+        req.token_extra_headers.as_deref(),
         &req.token_field,
         &req.refresh_token_field,
         &req.token_header_field,
@@ -265,6 +268,7 @@ pub struct UpdateProviderRequest {
     pub token_username_field: Option<String>,
     pub token_password_field: Option<String>,
     pub token_body_template: Option<String>,
+    pub token_extra_headers: Option<String>,
     pub token_field: Option<String>,
     pub refresh_token_field: Option<String>,
     pub token_header_field: Option<String>,
@@ -317,6 +321,8 @@ pub async fn update_provider(
         .unwrap_or("password");
     let token_body_template = req.token_body_template.as_deref()
         .or(existing.token_body_template.as_deref());
+    let token_extra_headers = req.token_extra_headers.as_deref()
+        .or(existing.token_extra_headers.as_deref());
     let token_field = req.token_field.as_deref().unwrap_or(&existing.token_field);
     let refresh_token_field = req.refresh_token_field.as_deref().unwrap_or(&existing.refresh_token_field);
     let token_header_field = req.token_header_field.as_deref().unwrap_or(&existing.token_header_field);
@@ -330,6 +336,7 @@ pub async fn update_provider(
         Some(token_request_method), Some(token_content_type),
         Some(token_username_field), Some(token_password_field),
         token_body_template,
+        token_extra_headers,
         token_field, refresh_token_field, token_header_field, token_header_prefix,
         token_expiry_seconds, weight,
     ).await {

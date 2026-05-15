@@ -90,7 +90,7 @@ impl AuthManager {
             serde_json::json!({ refresh_field: refresh_token }).to_string()
         };
 
-        let response = self.send_token_request(token_url, method, content_type, &body).await?;
+        let response = self.send_token_request(token_url, method, content_type, &body, provider.token_extra_headers.as_deref()).await?;
 
         if !response.status().is_success() {
             return Err(AuthError::RefreshFailed(response.status().to_string()));
@@ -123,7 +123,7 @@ impl AuthManager {
             let body = template
                 .replace("{{username}}", username)
                 .replace("{{password}}", password);
-            self.send_token_request(token_url, method, content_type, &body).await?
+            self.send_token_request(token_url, method, content_type, &body, provider.token_extra_headers.as_deref()).await?
         } else {
             // Build body from field names
             if content_type == "form" {
@@ -132,14 +132,14 @@ impl AuthManager {
                     urlencoding::encode(username),
                     urlencoding::encode(password_field),
                     urlencoding::encode(password));
-                self.send_token_request(token_url, method, "form", &body).await?
+                self.send_token_request(token_url, method, "form", &body, provider.token_extra_headers.as_deref()).await?
             } else {
                 let body = serde_json::json!({
                     username_field: username,
                     password_field: password,
                 });
                 let body_str = serde_json::to_string(&body).map_err(|e| AuthError::ParseError(e.into()))?;
-                self.send_token_request(token_url, method, "json", &body_str).await?
+                self.send_token_request(token_url, method, "json", &body_str, provider.token_extra_headers.as_deref()).await?
             }
         };
 
@@ -158,8 +158,8 @@ impl AuthManager {
         self.extract_and_store_token(provider, &token_response).await
     }
 
-    /// Send a token request with the given body
-    async fn send_token_request(&self, url: &str, method: &str, content_type: &str, body: &str) -> Result<reqwest::Response, AuthError> {
+    /// Send a token request with the given body and optional extra headers
+    async fn send_token_request(&self, url: &str, method: &str, content_type: &str, body: &str, extra_headers: Option<&str>) -> Result<reqwest::Response, AuthError> {
         let method = match method {
             "GET" => reqwest::Method::GET,
             _ => reqwest::Method::POST,
@@ -171,6 +171,17 @@ impl AuthManager {
             req = req.header("Content-Type", "application/x-www-form-urlencoded");
         } else {
             req = req.header("Content-Type", "application/json");
+        }
+
+        // Add custom extra headers from provider config
+        if let Some(headers_json) = extra_headers {
+            if let Ok(headers) = serde_json::from_str::<serde_json::Map<String, serde_json::Value>>(headers_json) {
+                for (key, value) in headers {
+                    if let Some(v) = value.as_str() {
+                        req = req.header(&key, v);
+                    }
+                }
+            }
         }
 
         req = req.body(body.to_string());

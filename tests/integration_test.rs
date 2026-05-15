@@ -1215,3 +1215,90 @@ fn test_extract_json_path_deeply_nested() {
     let val = llm_gateway::auth::extract_json_path(&json, "response.auth.credentials.access_token");
     assert_eq!(val.unwrap().as_str(), Some("deep-token"));
 }
+
+// ==================== Token Extra Headers Tests ====================
+
+#[test]
+fn test_provider_extra_headers_stored() {
+    let rt = tokio::runtime::Runtime::new().unwrap();
+    rt.block_on(async {
+        let db = llm_gateway::db::Database::new(":memory:").await.unwrap();
+        db.create_provider(
+            "prov-eh", "ExtraHeaders", "https://p.com", "openai", "dynamic",
+            None, Some("https://auth.com/login"), Some("user"), Some("pass"),
+            Some("POST"), Some("json"), Some("username"), Some("password"),
+            None, Some(r#"{"X-App-Id":"myapp","X-Api-Version":"v2"}"#),
+            "token", "refreshToken", "Authorization", "Bearer ", 86400, 1,
+        ).await.unwrap();
+
+        let p = db.get_provider("prov-eh").await.unwrap().unwrap();
+        assert_eq!(p.token_extra_headers.as_deref(), Some(r#"{"X-App-Id":"myapp","X-Api-Version":"v2"}"#));
+    });
+    std::fs::remove_file(":memory:").ok();
+}
+
+#[test]
+fn test_provider_extra_headers_none_by_default() {
+    let rt = tokio::runtime::Runtime::new().unwrap();
+    rt.block_on(async {
+        let db = llm_gateway::db::Database::new(":memory:").await.unwrap();
+        db.create_provider_simple(
+            "prov-noeh", "NoExtraHeaders", "https://p.com", "openai", "api_key",
+            Some("key"), None, None, None,
+            "token", "refreshToken", "Authorization", "Bearer ", 86400, 1,
+        ).await.unwrap();
+
+        let p = db.get_provider("prov-noeh").await.unwrap().unwrap();
+        assert!(p.token_extra_headers.is_none());
+    });
+    std::fs::remove_file(":memory:").ok();
+}
+
+#[test]
+fn test_provider_update_extra_headers() {
+    let rt = tokio::runtime::Runtime::new().unwrap();
+    rt.block_on(async {
+        let db = llm_gateway::db::Database::new(":memory:").await.unwrap();
+        db.create_provider(
+            "prov-eh2", "ExtraHeaders2", "https://p.com", "openai", "dynamic",
+            None, Some("https://auth.com/login"), Some("user"), Some("pass"),
+            Some("POST"), Some("json"), Some("username"), Some("password"),
+            None, Some(r#"{"X-Custom":"val1"}"#),
+            "token", "refreshToken", "Authorization", "Bearer ", 86400, 1,
+        ).await.unwrap();
+
+        // Update via delete + recreate with new headers
+        db.delete_provider("prov-eh2").await.unwrap();
+        db.create_provider(
+            "prov-eh2", "ExtraHeaders2", "https://p.com", "openai", "dynamic",
+            None, Some("https://auth.com/login"), Some("user"), Some("pass"),
+            Some("POST"), Some("json"), Some("username"), Some("password"),
+            None, Some(r#"{"X-Custom":"val2","X-New":"header"}"#),
+            "token", "refreshToken", "Authorization", "Bearer ", 86400, 1,
+        ).await.unwrap();
+
+        let p = db.get_provider("prov-eh2").await.unwrap().unwrap();
+        let headers: serde_json::Map<String, serde_json::Value> = serde_json::from_str(p.token_extra_headers.as_deref().unwrap()).unwrap();
+        assert_eq!(headers["X-Custom"].as_str(), Some("val2"));
+        assert_eq!(headers["X-New"].as_str(), Some("header"));
+    });
+    std::fs::remove_file(":memory:").ok();
+}
+
+#[test]
+fn test_extra_headers_json_parsing() {
+    // Verify that the JSON format used for extra headers is valid
+    let headers_json = r#"{"X-App-Id":"myapp","X-Api-Version":"v2","Authorization":"Basic abc123"}"#;
+    let parsed: serde_json::Map<String, serde_json::Value> = serde_json::from_str(headers_json).unwrap();
+    assert_eq!(parsed.len(), 3);
+    assert_eq!(parsed["X-App-Id"].as_str(), Some("myapp"));
+    assert_eq!(parsed["X-Api-Version"].as_str(), Some("v2"));
+    assert_eq!(parsed["Authorization"].as_str(), Some("Basic abc123"));
+}
+
+#[test]
+fn test_extra_headers_empty_object() {
+    let headers_json = "{}";
+    let parsed: serde_json::Map<String, serde_json::Value> = serde_json::from_str(headers_json).unwrap();
+    assert_eq!(parsed.len(), 0);
+}

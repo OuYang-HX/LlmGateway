@@ -63,6 +63,7 @@ impl Database {
                 token_username_field TEXT DEFAULT 'username',
                 token_password_field TEXT DEFAULT 'password',
                 token_body_template TEXT,
+                token_extra_headers TEXT,
                 token_field TEXT DEFAULT 'token',
                 refresh_token_field TEXT DEFAULT 'refreshToken',
                 token_header_field TEXT DEFAULT 'Authorization',
@@ -227,6 +228,7 @@ impl Database {
         token_username_field: Option<&str>,
         token_password_field: Option<&str>,
         token_body_template: Option<&str>,
+        token_extra_headers: Option<&str>,
         token_field: &str,
         refresh_token_field: &str,
         token_header_field: &str,
@@ -235,8 +237,8 @@ impl Database {
         weight: i32,
     ) -> Result<(), sqlx::Error> {
         sqlx::query(
-            r#"INSERT INTO providers (id, name, base_url, api_type, auth_type, api_key, token_url, token_username, token_password, token_request_method, token_content_type, token_username_field, token_password_field, token_body_template, token_field, refresh_token_field, token_header_field, token_header_prefix, token_expiry_seconds, weight)
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)"#
+            r#"INSERT INTO providers (id, name, base_url, api_type, auth_type, api_key, token_url, token_username, token_password, token_request_method, token_content_type, token_username_field, token_password_field, token_body_template, token_extra_headers, token_field, refresh_token_field, token_header_field, token_header_prefix, token_expiry_seconds, weight)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)"#
         )
         .bind(id)
         .bind(name)
@@ -252,6 +254,7 @@ impl Database {
         .bind(token_username_field)
         .bind(token_password_field)
         .bind(token_body_template)
+        .bind(token_extra_headers)
         .bind(token_field)
         .bind(refresh_token_field)
         .bind(token_header_field)
@@ -287,7 +290,7 @@ impl Database {
         self.create_provider(
             id, name, base_url, api_type, auth_type,
             api_key, token_url, token_username, token_password,
-            None, None, None, None, None,
+            None, None, None, None, None, None,
             token_field, refresh_token_field, token_header_field, token_header_prefix,
             token_expiry_seconds, weight,
         ).await
@@ -694,6 +697,7 @@ pub struct ProviderRow {
     pub token_username_field: Option<String>,
     pub token_password_field: Option<String>,
     pub token_body_template: Option<String>,
+    pub token_extra_headers: Option<String>,
     pub token_field: String,
     pub refresh_token_field: String,
     pub token_header_field: String,
