@@ -28,6 +28,11 @@ impl LlmProxy {
         }
     }
 
+    /// Get a reference to the HTTP client for WebSocket proxy
+    pub fn http_client(&self) -> &reqwest::Client {
+        &self.http_client
+    }
+
     /// Select a provider using weighted round-robin
     pub async fn select_provider(&self, allowed_provider_ids: Option<&[String]>) -> Result<ProviderRow, ProxyError> {
         let providers = self.db.list_active_providers().await
