@@ -55,6 +55,25 @@ pub async fn proxy_request(
         .await
         .unwrap_or_default();
 
+    // Extract model from request body and validate against provider's allowed models
+    let request_model = serde_json::from_slice::<serde_json::Value>(&body_bytes)
+        .ok()
+        .and_then(|v| v.get("model")?.as_str().map(|s| s.to_string()));
+
+    if let Some(ref model) = request_model {
+        match state.db.is_model_allowed_for_provider(&provider.id, model).await {
+            Ok(false) => {
+                tracing::warn!("Model '{}' not allowed for provider '{}'", model, provider.id);
+                return (StatusCode::FORBIDDEN, format!("Model '{}' is not available on provider '{}'", model, provider.id)).into_response();
+            }
+            Err(e) => {
+                tracing::error!("Failed to check model permission: {}", e);
+                // Allow on DB error to avoid blocking requests
+            }
+            Ok(true) => {}
+        }
+    }
+
     // Check if this is a streaming request
     let is_streaming = serde_json::from_slice::<serde_json::Value>(&body_bytes)
         .ok()

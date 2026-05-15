@@ -89,6 +89,19 @@
                 <tbody></tbody>
             </table>
         </div>
+        <!-- 模型管理区域 -->
+        <div id="model-management" class="panel hidden">
+            <h2>模型管理 — <span id="model-provider-name"></span></h2>
+            <div class="controls">
+                <input id="new-model-id" placeholder="输入模型 ID，如 gpt-4o、deepseek-chat" style="width:260px">
+                <button class="btn btn-success" onclick="addModel()">+ 添加模型</button>
+                <button class="btn" onclick="testAllModels()" id="test-all-btn">🧪 全部测试连接</button>
+            </div>
+            <table id="model-table">
+                <thead><tr><th>模型 ID</th><th>状态</th><th>测试结果</th><th>测试时间</th><th>操作</th></tr></thead>
+                <tbody></tbody>
+            </table>
+        </div>
     </div>
 
     <!-- ====== API Key 管理 ====== -->
@@ -284,7 +297,7 @@ function renderProvidersTable(){
         return`<tr>
             <td>${p.id}</td><td>${p.name}</td><td style="font-size:11px;word-break:break-all">${p.base_url}</td>
             <td>${authBadge}</td><td>${p.weight}</td><td>${statusBadge}</td><td>${tokenStatus}</td>
-            <td><button class="btn btn-sm" onclick='editProvider("${p.id}")'>编辑</button> ${p.auth_type==='dynamic_token'?'<button class="btn btn-sm btn-success" onclick=\'refreshToken("'+p.id+'\")\'>🔄 刷新Token</button>':''} <button class="btn btn-sm btn-danger" onclick='deleteProvider("${p.id}")'>删除</button></td>
+            <td><button class="btn btn-sm" onclick='editProvider("${p.id}")'>编辑</button> <button class="btn btn-sm" onclick='showModels("${p.id}")'>🤖 模型</button> ${p.auth_type==='dynamic_token'?'<button class="btn btn-sm btn-success" onclick=\'refreshToken("'+p.id+'\")\'>🔄 刷新Token</button>':''} <button class="btn btn-sm btn-danger" onclick='deleteProvider("${p.id}")'>删除</button></td>
         </tr>`;
     }).join('');
 }
@@ -549,6 +562,124 @@ async function loadStats(){
             <td>${b.completion_tokens}</td><td>${b.total_tokens}</td><td>${b.throttle_count}</td>
         </tr>`).join('')||'<tr><td colspan="6" class="empty-state">暂无数据</td></tr>';
     }catch(e){console.error(e)}
+}
+
+// ========== 模型管理 ==========
+let currentModelProviderId = null;
+
+async function showModels(providerId) {
+    currentModelProviderId = providerId;
+    const p = allProviders.find(x => x.id === providerId);
+    document.getElementById('model-provider-name').textContent = p ? (p.name || p.id) : providerId;
+    document.getElementById('model-management').classList.remove('hidden');
+    await loadModels();
+}
+
+async function loadModels() {
+    if (!currentModelProviderId) return;
+    try {
+        const models = await (await fetch(API + '/providers/' + currentModelProviderId + '/models')).json();
+        const tb = document.querySelector('#model-table tbody');
+        if (!models.length) {
+            tb.innerHTML = '<tr><td colspan="5" class="empty-state"><p>暂无模型，点击上方按钮添加</p></td></tr>';
+            return;
+        }
+        tb.innerHTML = models.map(m => {
+            const statusBadge = m.is_active
+                ? '<span class="badge badge-green">可用</span>'
+                : '<span class="badge badge-red">不可用</span>';
+            const testBadge = m.last_test_status === 'success'
+                ? '<span class="badge badge-green">✅ ' + (m.last_test_message || '成功') + '</span>'
+                : m.last_test_status === 'failed'
+                    ? '<span class="badge badge-red">❌ ' + (m.last_test_message || '失败') + '</span>'
+                    : '<span class="badge badge-yellow">未测试</span>';
+            const testTime = m.last_tested_at ? new Date(m.last_tested_at.replace(' ', 'T')).toLocaleString() : '-';
+            return `<tr>
+                <td style="font-family:monospace">${m.model_id}</td>
+                <td>${statusBadge}</td>
+                <td>${testBadge}</td>
+                <td style="font-size:12px">${testTime}</td>
+                <td>
+                    <button class="btn btn-sm" onclick="testModel('${m.model_id}')" id="test-btn-${m.model_id}">🧪 测试</button>
+                    <button class="btn btn-sm btn-danger" onclick="removeModel('${m.model_id}')">删除</button>
+                </td>
+            </tr>`;
+        }).join('');
+    } catch (e) { console.error(e); }
+}
+
+async function addModel() {
+    const input = document.getElementById('new-model-id');
+    const modelId = input.value.trim();
+    if (!modelId) { alert('请输入模型 ID'); return; }
+    if (!currentModelProviderId) return;
+    try {
+        const resp = await fetch(API + '/providers/' + currentModelProviderId + '/models', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ model_id: modelId })
+        });
+        if (resp.ok || resp.status === 201) {
+            input.value = '';
+            await loadModels();
+        } else {
+            const err = await resp.json();
+            alert('添加失败: ' + (err.error || resp.statusText));
+        }
+    } catch (e) { alert('网络错误: ' + e.message); }
+}
+
+async function removeModel(modelId) {
+    if (!confirm('确定要删除模型 "' + modelId + '" 吗？')) return;
+    try {
+        const resp = await fetch(API + '/providers/' + currentModelProviderId + '/models/' + encodeURIComponent(modelId), { method: 'DELETE' });
+        if (resp.ok) await loadModels();
+        else { const err = await resp.json(); alert('删除失败: ' + (err.error || resp.statusText)); }
+    } catch (e) { alert('网络错误: ' + e.message); }
+}
+
+async function testModel(modelId) {
+    const btn = document.getElementById('test-btn-' + modelId);
+    if (btn) { btn.disabled = true; btn.textContent = '⏳ 测试中...'; }
+    try {
+        const resp = await fetch(API + '/providers/' + currentModelProviderId + '/models/' + encodeURIComponent(modelId) + '/test', { method: 'POST' });
+        const data = await resp.json();
+        if (data.status === 'success') {
+            alert('✅ 模型 ' + modelId + ' 测试通过！\n' + data.message);
+        } else {
+            alert('❌ 模型 ' + modelId + ' 测试失败！\n' + data.message);
+        }
+        await loadModels();
+    } catch (e) {
+        alert('网络错误: ' + e.message);
+        if (btn) { btn.disabled = false; btn.textContent = '🧪 测试'; }
+    }
+}
+
+async function testAllModels() {
+    if (!currentModelProviderId) return;
+    const btn = document.getElementById('test-all-btn');
+    btn.disabled = true;
+    btn.textContent = '⏳ 测试中...';
+    try {
+        const resp = await fetch(API + '/providers/' + currentModelProviderId + '/models/test-all', { method: 'POST' });
+        const data = await resp.json();
+        const results = data.results || [];
+        let summary = '测试结果：\n';
+        let failCount = 0;
+        results.forEach(r => {
+            const icon = r.status === 'success' ? '✅' : '❌';
+            summary += icon + ' ' + r.model_id + ': ' + r.message + '\n';
+            if (r.status !== 'success') failCount++;
+        });
+        alert(summary);
+        await loadModels();
+    } catch (e) {
+        alert('网络错误: ' + e.message);
+    } finally {
+        btn.disabled = false;
+        btn.textContent = '🧪 全部测试连接';
+    }
 }
 
 // ========== 初始化 ==========

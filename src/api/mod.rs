@@ -429,6 +429,238 @@ pub async fn update_provider(
     }
 }
 
+// ========== Provider Model handlers ==========
+
+/// Add a model to a provider
+pub async fn add_provider_model(
+    State(state): State<AppState>,
+    Path(id): Path<String>,
+    Json(req): Json<AddProviderModelRequest>,
+) -> impl IntoResponse {
+    // Verify provider exists
+    if state.db.get_provider(&id).await.ok().flatten().is_none() {
+        return (StatusCode::NOT_FOUND, Json(serde_json::json!({"error": "Provider not found"}))).into_response();
+    }
+
+    match state.db.add_provider_model(&id, &req.model_id).await {
+        Ok(()) => {
+            let model = state.db.get_provider_model(&id, &req.model_id).await.ok().flatten();
+            (StatusCode::CREATED, Json(serde_json::json!({"provider_id": id, "model_id": req.model_id, "model": model}))).into_response()
+        }
+        Err(e) => {
+            tracing::error!("Failed to add provider model: {}", e);
+            (StatusCode::INTERNAL_SERVER_ERROR, Json(serde_json::json!({"error": e.to_string()}))).into_response()
+        }
+    }
+}
+
+/// Remove a model from a provider
+pub async fn remove_provider_model(
+    State(state): State<AppState>,
+    Path((id, model_id)): Path<(String, String)>,
+) -> impl IntoResponse {
+    match state.db.remove_provider_model(&id, &model_id).await {
+        Ok(true) => (StatusCode::OK, Json(serde_json::json!({"message": "Model removed"}))).into_response(),
+        Ok(false) => (StatusCode::NOT_FOUND, Json(serde_json::json!({"error": "Model not found"}))).into_response(),
+        Err(e) => {
+            tracing::error!("Failed to remove provider model: {}", e);
+            (StatusCode::INTERNAL_SERVER_ERROR, Json(serde_json::json!({"error": e.to_string()}))).into_response()
+        }
+    }
+}
+
+/// List all models for a provider
+pub async fn list_provider_models(
+    State(state): State<AppState>,
+    Path(id): Path<String>,
+) -> impl IntoResponse {
+    match state.db.list_provider_models(&id).await {
+        Ok(models) => Json(models).into_response(),
+        Err(e) => {
+            tracing::error!("Failed to list provider models: {}", e);
+            (StatusCode::INTERNAL_SERVER_ERROR, Json(serde_json::json!({"error": e.to_string()}))).into_response()
+        }
+    }
+}
+
+/// Test connection for a specific model
+pub async fn test_provider_model(
+    State(state): State<AppState>,
+    Path((id, model_id)): Path<(String, String)>,
+) -> impl IntoResponse {
+    let provider = match state.db.get_provider(&id).await {
+        Ok(Some(p)) => p,
+        Ok(None) => return (StatusCode::NOT_FOUND, Json(serde_json::json!({"error": "Provider not found"}))).into_response(),
+        Err(e) => {
+            tracing::error!("Failed to get provider: {}", e);
+            return (StatusCode::INTERNAL_SERVER_ERROR, Json(serde_json::json!({"error": e.to_string()}))).into_response();
+        }
+    };
+
+    // Verify model exists in provider's list
+    if state.db.get_provider_model(&id, &model_id).await.ok().flatten().is_none() {
+        return (StatusCode::NOT_FOUND, Json(serde_json::json!({"error": "Model not found in provider"}))).into_response();
+    }
+
+    // Build a minimal chat completion request to test the model
+    let test_result = test_model_connection(&state, &provider, &model_id).await;
+
+    let (status, message, is_active) = match &test_result {
+        Ok(resp) => {
+            if resp.status_code >= 200 && resp.status_code < 300 {
+                ("success".to_string(), format!("连接成功 (HTTP {})", resp.status_code), true)
+            } else {
+                let body_str = String::from_utf8_lossy(&resp.body);
+                let error_msg = serde_json::from_slice::<serde_json::Value>(&resp.body)
+                    .ok()
+                    .and_then(|v| v.get("error").and_then(|e| e.get("message")).and_then(|m| m.as_str()).map(|s| s.to_string()))
+                    .unwrap_or_else(|| body_str.chars().take(200).collect());
+                ("failed".to_string(), format!("HTTP {}: {}", resp.status_code, error_msg), false)
+            }
+        }
+        Err(e) => ("failed".to_string(), e.to_string(), false),
+    };
+
+    // Update test status in database
+    let _ = state.db.update_provider_model_test_status(
+        &id, &model_id, &status, Some(&message), is_active,
+    ).await;
+
+    let response = serde_json::json!({
+        "provider_id": id,
+        "model_id": model_id,
+        "status": status,
+        "message": message,
+        "is_active": is_active,
+    });
+
+    if status == "success" {
+        (StatusCode::OK, Json(response)).into_response()
+    } else {
+        (StatusCode::BAD_REQUEST, Json(response)).into_response()
+    }
+}
+
+/// Test all models for a provider
+pub async fn test_all_provider_models(
+    State(state): State<AppState>,
+    Path(id): Path<String>,
+) -> impl IntoResponse {
+    let provider = match state.db.get_provider(&id).await {
+        Ok(Some(p)) => p,
+        Ok(None) => return (StatusCode::NOT_FOUND, Json(serde_json::json!({"error": "Provider not found"}))).into_response(),
+        Err(e) => {
+            tracing::error!("Failed to get provider: {}", e);
+            return (StatusCode::INTERNAL_SERVER_ERROR, Json(serde_json::json!({"error": e.to_string()}))).into_response();
+        }
+    };
+
+    let models = match state.db.list_provider_models(&id).await {
+        Ok(m) => m,
+        Err(e) => {
+            tracing::error!("Failed to list provider models: {}", e);
+            return (StatusCode::INTERNAL_SERVER_ERROR, Json(serde_json::json!({"error": e.to_string()}))).into_response();
+        }
+    };
+
+    let mut results = Vec::new();
+    for model in &models {
+        let test_result = test_model_connection(&state, &provider, &model.model_id).await;
+
+        let (status, message, is_active) = match &test_result {
+            Ok(resp) => {
+                if resp.status_code >= 200 && resp.status_code < 300 {
+                    ("success".to_string(), format!("连接成功 (HTTP {})", resp.status_code), true)
+                } else {
+                    let body_str = String::from_utf8_lossy(&resp.body);
+                    let error_msg = serde_json::from_slice::<serde_json::Value>(&resp.body)
+                        .ok()
+                        .and_then(|v| v.get("error").and_then(|e| e.get("message")).and_then(|m| m.as_str()).map(|s| s.to_string()))
+                        .unwrap_or_else(|| body_str.chars().take(200).collect());
+                    ("failed".to_string(), format!("HTTP {}: {}", resp.status_code, error_msg), false)
+                }
+            }
+            Err(e) => ("failed".to_string(), e.to_string(), false),
+        };
+
+        let _ = state.db.update_provider_model_test_status(
+            &id, &model.model_id, &status, Some(&message), is_active,
+        ).await;
+
+        results.push(serde_json::json!({
+            "model_id": model.model_id,
+            "status": status,
+            "message": message,
+            "is_active": is_active,
+        }));
+    }
+
+    (StatusCode::OK, Json(serde_json::json!({
+        "provider_id": id,
+        "results": results,
+    }))).into_response()
+}
+
+/// Helper: test model connection by sending a minimal chat completion request
+async fn test_model_connection(
+    state: &AppState,
+    provider: &crate::db::ProviderRow,
+    model_id: &str,
+) -> Result<crate::proxy::ProxyResponse, String> {
+    // Get auth header
+    let (auth_header_name, auth_header_value) = state.auth_manager.get_auth_header(provider).await
+        .map_err(|e| format!("Auth error: {}", e))?;
+
+    // Build test request body
+    let test_body = serde_json::json!({
+        "model": model_id,
+        "messages": [{"role": "user", "content": "hi"}],
+        "max_tokens": 1
+    });
+
+    let base_url = provider.base_url.trim_end_matches('/');
+    let target_url = format!("{}/chat/completions", base_url);
+
+    let client = if provider.bypass_proxy {
+        &state.proxy.no_proxy_client()
+    } else {
+        state.proxy.http_client()
+    };
+
+    let mut req_builder = client
+        .post(&target_url)
+        .header(&auth_header_name, &auth_header_value)
+        .header("Content-Type", "application/json")
+        .json(&test_body);
+
+    // Add stored cookies from auth response
+    if let Some(cookies) = &provider.token_cookies {
+        if !cookies.is_empty() {
+            req_builder = req_builder.header("Cookie", cookies.as_str());
+        }
+    }
+
+    let response = req_builder
+        .timeout(std::time::Duration::from_secs(30))
+        .send()
+        .await
+        .map_err(|e| format!("Connection error: {}", e))?;
+
+    let status_code = response.status().as_u16() as i32;
+    let body = response.bytes().await.unwrap_or_default();
+
+    Ok(crate::proxy::ProxyResponse {
+        status_code,
+        content_type: None,
+        body,
+    })
+}
+
+#[derive(Debug, Deserialize)]
+pub struct AddProviderModelRequest {
+    pub model_id: String,
+}
+
 // ========== Statistics handlers ==========
 
 #[derive(Debug, Deserialize)]

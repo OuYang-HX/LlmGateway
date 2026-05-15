@@ -42,9 +42,14 @@ impl LlmProxy {
         }
     }
 
-    /// Get a reference to the HTTP client for WebSocket proxy
+    /// Get a reference to the HTTP client for WebSocket proxy and model testing
     pub fn http_client(&self) -> &reqwest::Client {
         &self.http_client
+    }
+
+    /// Get a reference to the no_proxy client for model testing
+    pub fn no_proxy_client(&self) -> &reqwest::Client {
+        &self.no_proxy_client
     }
 
     /// Select a provider using weighted round-robin
@@ -64,10 +69,6 @@ impl LlmProxy {
         } else {
             providers
         };
-
-        if filtered.is_empty() {
-            return Err(ProxyError::NoMatchingProvider);
-        }
 
         // Weighted round-robin selection
         let total_weight: i64 = filtered.iter().map(|p| p.weight).sum();

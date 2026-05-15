@@ -124,6 +124,22 @@ impl Database {
                 FOREIGN KEY (provider_id) REFERENCES providers(id)
             );
 
+            CREATE TABLE IF NOT EXISTS provider_models (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                provider_id TEXT NOT NULL,
+                model_id TEXT NOT NULL,
+                is_active BOOLEAN NOT NULL DEFAULT 1,
+                last_test_status TEXT,
+                last_test_message TEXT,
+                last_tested_at TEXT,
+                created_at TEXT NOT NULL DEFAULT (datetime('now')),
+                updated_at TEXT NOT NULL DEFAULT (datetime('now')),
+                FOREIGN KEY (provider_id) REFERENCES providers(id) ON DELETE CASCADE,
+                UNIQUE(provider_id, model_id)
+            );
+
+            CREATE INDEX IF NOT EXISTS idx_provider_models_provider ON provider_models(provider_id);
+
             CREATE INDEX IF NOT EXISTS idx_request_logs_api_key ON request_logs(api_key_id);
             CREATE INDEX IF NOT EXISTS idx_request_logs_provider ON request_logs(provider_id);
             CREATE INDEX IF NOT EXISTS idx_request_logs_created_at ON request_logs(created_at);
@@ -537,6 +553,174 @@ impl Database {
         Ok(result.rows_affected() > 0)
     }
 
+    // ========== Provider Model operations ==========
+
+    /// Add a model to a provider
+    pub async fn add_provider_model(
+        &self,
+        provider_id: &str,
+        model_id: &str,
+    ) -> Result<(), sqlx::Error> {
+        sqlx::query(
+            "INSERT INTO provider_models (provider_id, model_id) VALUES (?, ?)"
+        )
+        .bind(provider_id)
+        .bind(model_id)
+        .execute(&self.pool)
+        .await?;
+
+        Ok(())
+    }
+
+    /// Remove a model from a provider
+    pub async fn remove_provider_model(
+        &self,
+        provider_id: &str,
+        model_id: &str,
+    ) -> Result<bool, sqlx::Error> {
+        let result = sqlx::query(
+            "DELETE FROM provider_models WHERE provider_id = ? AND model_id = ?"
+        )
+        .bind(provider_id)
+        .bind(model_id)
+        .execute(&self.pool)
+        .await?;
+
+        Ok(result.rows_affected() > 0)
+    }
+
+    /// List all models for a provider
+    pub async fn list_provider_models(
+        &self,
+        provider_id: &str,
+    ) -> Result<Vec<ProviderModelRow>, sqlx::Error> {
+        let rows = sqlx::query_as::<_, ProviderModelRow>(
+            "SELECT * FROM provider_models WHERE provider_id = ? ORDER BY model_id"
+        )
+        .bind(provider_id)
+        .fetch_all(&self.pool)
+        .await?;
+
+        Ok(rows)
+    }
+
+    /// List active models for a provider
+    pub async fn list_active_provider_models(
+        &self,
+        provider_id: &str,
+    ) -> Result<Vec<ProviderModelRow>, sqlx::Error> {
+        let rows = sqlx::query_as::<_, ProviderModelRow>(
+            "SELECT * FROM provider_models WHERE provider_id = ? AND is_active = 1 ORDER BY model_id"
+        )
+        .bind(provider_id)
+        .fetch_all(&self.pool)
+        .await?;
+
+        Ok(rows)
+    }
+
+    /// Get a specific provider model
+    pub async fn get_provider_model(
+        &self,
+        provider_id: &str,
+        model_id: &str,
+    ) -> Result<Option<ProviderModelRow>, sqlx::Error> {
+        let row = sqlx::query_as::<_, ProviderModelRow>(
+            "SELECT * FROM provider_models WHERE provider_id = ? AND model_id = ?"
+        )
+        .bind(provider_id)
+        .bind(model_id)
+        .fetch_optional(&self.pool)
+        .await?;
+
+        Ok(row)
+    }
+
+    /// Update provider model test status
+    pub async fn update_provider_model_test_status(
+        &self,
+        provider_id: &str,
+        model_id: &str,
+        status: &str,
+        message: Option<&str>,
+        is_active: bool,
+    ) -> Result<(), sqlx::Error> {
+        sqlx::query(
+            r#"UPDATE provider_models SET
+                last_test_status = ?,
+                last_test_message = ?,
+                is_active = ?,
+                last_tested_at = datetime('now'),
+                updated_at = datetime('now')
+                WHERE provider_id = ? AND model_id = ?"#
+        )
+        .bind(status)
+        .bind(message)
+        .bind(is_active)
+        .bind(provider_id)
+        .bind(model_id)
+        .execute(&self.pool)
+        .await?;
+
+        Ok(())
+    }
+
+    /// Set all models for a provider (replace existing)
+    pub async fn set_provider_models(
+        &self,
+        provider_id: &str,
+        model_ids: &[String],
+    ) -> Result<(), sqlx::Error> {
+        // Delete existing models
+        sqlx::query("DELETE FROM provider_models WHERE provider_id = ?")
+            .bind(provider_id)
+            .execute(&self.pool)
+            .await?;
+
+        // Insert new models
+        for model_id in model_ids {
+            sqlx::query(
+                "INSERT INTO provider_models (provider_id, model_id) VALUES (?, ?)"
+            )
+            .bind(provider_id)
+            .bind(model_id)
+            .execute(&self.pool)
+            .await?;
+        }
+
+        Ok(())
+    }
+
+    /// Check if a model is allowed for a provider
+    pub async fn is_model_allowed_for_provider(
+        &self,
+        provider_id: &str,
+        model_id: &str,
+    ) -> Result<bool, sqlx::Error> {
+        // If provider has no models configured, allow all
+        let count: i64 = sqlx::query_scalar(
+            "SELECT COUNT(*) FROM provider_models WHERE provider_id = ?"
+        )
+        .bind(provider_id)
+        .fetch_one(&self.pool)
+        .await?;
+
+        if count == 0 {
+            return Ok(true);
+        }
+
+        // Check if this specific model is active
+        let active_count: i64 = sqlx::query_scalar(
+            "SELECT COUNT(*) FROM provider_models WHERE provider_id = ? AND model_id = ? AND is_active = 1"
+        )
+        .bind(provider_id)
+        .bind(model_id)
+        .fetch_one(&self.pool)
+        .await?;
+
+        Ok(active_count > 0)
+    }
+
     // ========== Request log operations ==========
 
     /// Insert a request log entry
@@ -863,6 +1047,19 @@ pub struct ProviderRow {
     pub is_active: bool,
     pub weight: i64,
     pub bypass_proxy: bool,
+    pub created_at: String,
+    pub updated_at: String,
+}
+
+#[derive(Debug, Clone, Serialize, sqlx::FromRow)]
+pub struct ProviderModelRow {
+    pub id: i64,
+    pub provider_id: String,
+    pub model_id: String,
+    pub is_active: bool,
+    pub last_test_status: Option<String>,
+    pub last_test_message: Option<String>,
+    pub last_tested_at: Option<String>,
     pub created_at: String,
     pub updated_at: String,
 }

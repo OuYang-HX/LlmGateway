@@ -67,6 +67,10 @@ async fn main() -> anyhow::Result<()> {
         .route("/api/v1/providers", post(api::create_provider).get(api::list_providers))
         .route("/api/v1/providers/:id", get(api::get_provider).delete(api::delete_provider).put(api::update_provider))
         .route("/api/v1/providers/:id/refresh-token", post(api::refresh_provider_token))
+        .route("/api/v1/providers/:id/models", post(api::add_provider_model).get(api::list_provider_models))
+        .route("/api/v1/providers/:id/models/:model_id", delete(api::remove_provider_model))
+        .route("/api/v1/providers/:id/models/:model_id/test", post(api::test_provider_model))
+        .route("/api/v1/providers/:id/models/test-all", post(api::test_all_provider_models))
 
         // Statistics
         .route("/api/v1/stats", get(api::get_stats))
