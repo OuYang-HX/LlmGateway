@@ -103,7 +103,7 @@ async fn main() -> anyhow::Result<()> {
 fn load_config() -> anyhow::Result<config::AppConfig> {
     let mut cfg = config_crate::Config::builder()
         .set_default("server.host", "0.0.0.0")?
-        .set_default("server.port", 3000)?
+        .set_default("server.port", 49127)?
         .set_default("database.url", "sqlite:llm_gateway.db")?;
 
     if std::path::Path::new("config.toml").exists() {
