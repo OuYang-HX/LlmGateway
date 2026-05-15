@@ -40,16 +40,6 @@ pub async fn proxy_request(
         .as_ref()
         .and_then(|s| serde_json::from_str(s).ok());
 
-    // Select a provider
-    let provider = state.proxy.select_provider(allowed_providers.as_deref()).await;
-    let provider = match provider {
-        Ok(p) => p,
-        Err(e) => {
-            tracing::error!("Failed to select provider: {}", e);
-            return (StatusCode::SERVICE_UNAVAILABLE, "No provider available").into_response();
-        }
-    };
-
     // Read body bytes
     let body_bytes = axum::body::to_bytes(body, 10 * 1024 * 1024) // 10MB max
         .await
@@ -60,57 +50,116 @@ pub async fn proxy_request(
         .ok()
         .and_then(|v| v.get("model")?.as_str().map(|s| s.to_string()));
 
-    // Try unified model routing: if model has mappings, replace model name and select mapped provider
-    let mut final_body = body_bytes.clone();
-    let mut final_provider = provider;
+    // === Unified model routing ===
+    // The model ID in the request MUST be a unified model ID (exists in models table).
+    // Provider model IDs (like "MiniMax-M2.7-highspeed") are internal and cannot be used directly.
+    // The gateway will look up the unified model's mappings to find the provider and internal model ID.
     
-    if let Some(ref model_id) = request_model {
-        // Check if this model has active mappings in model_mappings table
-        // Use a timeout to avoid blocking
-        let mappings_result = tokio::time::timeout(
-            std::time::Duration::from_secs(5),
-            state.db.list_active_model_mappings(model_id)
-        ).await;
-        
-        if let Ok(Ok(mappings)) = mappings_result {
-            if !mappings.is_empty() {
-                // Filter by allowed providers
-                let valid_mappings: Vec<_> = mappings.into_iter()
-                    .filter(|m| {
-                        let provider_allowed = allowed_providers.as_ref()
-                            .map(|ap| ap.is_empty() || ap.contains(&m.provider_id))
-                            .unwrap_or(true);
-                        m.is_active && provider_allowed
-                    })
-                    .collect();
-
-                if !valid_mappings.is_empty() {
-                    // Use the first valid mapping (simple selection)
-                    let selected = &valid_mappings[0];
-                    
-                    // Get the mapped provider
-                    let provider_result = tokio::time::timeout(
-                        std::time::Duration::from_secs(5),
-                        state.db.get_provider(&selected.provider_id)
-                    ).await;
-                    
-                    if let Ok(Ok(Some(mapped_provider))) = provider_result {
-                        if mapped_provider.is_active {
-                            // Replace model name in body
-                            if let Ok(mut body_json) = serde_json::from_slice::<serde_json::Value>(&body_bytes) {
-                                if let Some(obj) = body_json.as_object_mut() {
-                                    obj.insert("model".to_string(), serde_json::Value::String(selected.provider_model_id.clone()));
-                                    let new_body_str = serde_json::to_string(&body_json).unwrap_or_default();
-                                    final_body = axum::body::Bytes::from(new_body_str);
-                                }
-                            }
-                            final_provider = mapped_provider;
-                        }
-                    }
-                }
-            }
+    let request_model_id = match request_model {
+        Some(id) => id,
+        None => {
+            return (StatusCode::BAD_REQUEST, "Missing 'model' field in request body").into_response();
         }
+    };
+
+    // Look up the unified model
+    let model_result = tokio::time::timeout(
+        std::time::Duration::from_secs(5),
+        state.db.get_model(&request_model_id)
+    ).await;
+
+    let model = match model_result {
+        Ok(Ok(Some(m))) if m.is_active => m,
+        Ok(Ok(Some(_))) => {
+            return (StatusCode::FORBIDDEN, 
+                format!("Model '{}' is inactive. Please use an active model.", request_model_id)
+            ).into_response();
+        }
+        Ok(Ok(None)) => {
+            return (StatusCode::NOT_FOUND, 
+                format!("Model '{}' not found. You must use a unified model ID (对外模型ID), not a provider model ID.", request_model_id)
+            ).into_response();
+        }
+        _ => {
+            return (StatusCode::INTERNAL_SERVER_ERROR, "Failed to look up model").into_response();
+        }
+    };
+
+    // Get active mappings for this unified model
+    let mappings_result = tokio::time::timeout(
+        std::time::Duration::from_secs(5),
+        state.db.list_active_model_mappings(&request_model_id)
+    ).await;
+
+    let mappings = match mappings_result {
+        Ok(Ok(m)) => m,
+        _ => {
+            return (StatusCode::INTERNAL_SERVER_ERROR, "Failed to look up model mappings").into_response();
+        }
+    };
+
+    if mappings.is_empty() {
+        return (StatusCode::NOT_FOUND, 
+            format!("Model '{}' has no provider mappings configured. Please configure a provider mapping for this model.", request_model_id)
+        ).into_response();
     }
+
+    // Filter mappings by allowed providers
+    let valid_mappings: Vec<_> = mappings.into_iter()
+        .filter(|m| {
+            let provider_allowed = allowed_providers.as_ref()
+                .map(|ap| ap.is_empty() || ap.contains(&m.provider_id))
+                .unwrap_or(true);
+            m.is_active && provider_allowed
+        })
+        .collect();
+
+    if valid_mappings.is_empty() {
+        return (StatusCode::FORBIDDEN, 
+            format!("Model '{}' has no available provider mappings for this API key.", request_model_id)
+        ).into_response();
+    }
+
+    // Select a mapping (weighted random selection)
+    let total_weight: i64 = valid_mappings.iter().map(|m| m.weight).sum();
+    if total_weight <= 0 {
+        return (StatusCode::INTERNAL_SERVER_ERROR, "Model mappings have invalid weights").into_response();
+    }
+    
+    // Simple selection: use first valid mapping for now
+    // TODO: implement weighted random selection
+    let selected_mapping = &valid_mappings[0];
+
+    // Get the mapped provider
+    let provider_result = tokio::time::timeout(
+        std::time::Duration::from_secs(5),
+        state.db.get_provider(&selected_mapping.provider_id)
+    ).await;
+
+    let provider = match provider_result {
+        Ok(Ok(Some(p))) if p.is_active => p,
+        Ok(Ok(Some(_))) => {
+            return (StatusCode::SERVICE_UNAVAILABLE, 
+                format!("Provider '{}' is inactive.", selected_mapping.provider_id)
+            ).into_response();
+        }
+        _ => {
+            return (StatusCode::INTERNAL_SERVER_ERROR, "Failed to look up provider").into_response();
+        }
+    };
+
+    // Replace model name in body: unified model ID -> provider model ID
+    let final_body = if let Ok(mut body_json) = serde_json::from_slice::<serde_json::Value>(&body_bytes) {
+        if let Some(obj) = body_json.as_object_mut() {
+            obj.insert("model".to_string(), serde_json::Value::String(selected_mapping.provider_model_id.clone()));
+            let new_body_str = serde_json::to_string(&body_json).unwrap_or_default();
+            axum::body::Bytes::from(new_body_str)
+        } else {
+            body_bytes.clone()
+        }
+    } else {
+        body_bytes.clone()
+    };
 
     // Check if this is a streaming request
     let is_streaming = serde_json::from_slice::<serde_json::Value>(&body_bytes)
@@ -122,7 +171,7 @@ pub async fn proxy_request(
         // Streaming path: forward and stream the response
         let response = state.proxy.forward_streaming(
             &api_key_row.id,
-            &final_provider,
+            &provider,
             &path,
             &method,
             headers,
@@ -173,7 +222,7 @@ pub async fn proxy_request(
     // Non-streaming path: forward, extract usage, and return
     let response = state.proxy.forward_and_collect(
         &api_key_row.id,
-        &final_provider,
+        &provider,
         &path,
         &method,
         headers,
