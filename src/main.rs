@@ -1,4 +1,5 @@
 use llm_gateway::{config, db, auth, proxy, stats, api, dashboard, AppState};
+use llm_gateway::auth::token_refresh::TokenRefreshTask;
 
 use axum::{
     Router,
@@ -34,6 +35,10 @@ async fn main() -> anyhow::Result<()> {
     stats_collector.start_snapshot_task(10); // Snapshot every 10 seconds
     stats_collector.start_cleanup_task(300);  // Cleanup every 5 minutes
 
+    // Start token refresh task
+    let token_refresh = Arc::new(TokenRefreshTask::new(db.clone(), auth_manager.clone()));
+    token_refresh.clone().start(60); // Check every 60 seconds
+
     // Create combined app state
     let state = AppState {
         db: db.clone(),
@@ -55,16 +60,12 @@ async fn main() -> anyhow::Result<()> {
         .route("/dashboard", get(dashboard::dashboard_page))
 
         // API Key management
-        .route("/api/v1/api-keys", post(api::create_api_key))
-        .route("/api/v1/api-keys", get(api::list_api_keys))
-        .route("/api/v1/api-keys/{id}", get(api::get_api_key))
-        .route("/api/v1/api-keys/{id}", delete(api::delete_api_key))
+        .route("/api/v1/api-keys", post(api::create_api_key).get(api::list_api_keys))
+        .route("/api/v1/api-keys/:id", get(api::get_api_key).delete(api::delete_api_key))
 
         // Provider management
-        .route("/api/v1/providers", post(api::create_provider))
-        .route("/api/v1/providers", get(api::list_providers))
-        .route("/api/v1/providers/{id}", get(api::get_provider))
-        .route("/api/v1/providers/{id}", delete(api::delete_provider))
+        .route("/api/v1/providers", post(api::create_provider).get(api::list_providers))
+        .route("/api/v1/providers/:id", get(api::get_provider).delete(api::delete_provider))
 
         // Statistics
         .route("/api/v1/stats", get(api::get_stats))
@@ -78,8 +79,8 @@ async fn main() -> anyhow::Result<()> {
         .route("/api/v1/dashboard/token-rate", get(api::get_token_rate))
 
         // LLM Proxy (catch-all for /v1/* paths)
-        .route("/v1/{*path}", post(proxy::proxy_request))
-        .route("/v1/{*path}", get(proxy::proxy_request))
+        .route("/v1/*path", post(proxy::proxy_request))
+        .route("/v1/*path", get(proxy::proxy_request))
 
         // Apply state and middleware
         .with_state(state)

@@ -21,10 +21,9 @@ if echo "$TEST_OUTPUT" | grep -q "could not compile"; then
   exit 0
 fi
 
-# Find the line with the most passed tests (integration tests line)
-# Format: "test result: ok. 39 passed; 0 failed; ..."
-PASSED=$(echo "$TEST_OUTPUT" | grep "passed" | grep -oP '\d+(?= passed)' | sort -rn | head -1 || echo "0")
-FAILED=$(echo "$TEST_OUTPUT" | grep "passed" | grep -oP '\d+(?= failed)' | sort -rn | head -1 || echo "0")
+# Sum all "X passed" counts across all test suites
+PASSED=$(echo "$TEST_OUTPUT" | grep -oP '\d+(?= passed)' | awk '{sum+=$1} END {print sum}')
+FAILED=$(echo "$TEST_OUTPUT" | grep -oP '\d+(?= failed)' | awk '{sum+=$1} END {print sum}')
 TOTAL=$((PASSED + FAILED))
 
 echo "METRIC features_complete=$PASSED"

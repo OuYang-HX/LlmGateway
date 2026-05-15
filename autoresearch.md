@@ -59,4 +59,8 @@ Design and implement a high-performance LLM Gateway service in Rust that:
 - All tests must pass before marking a feature complete
 
 ## What's Been Tried
-(Starting fresh — no experiments yet)
+## What's Been Tried
+- Iteration 1: Baseline — 39 tests, core modules (db, auth, proxy, stats, api, dashboard)
+- Iteration 2: Expanded to 70 tests — comprehensive coverage of all features
+- Key wins: weighted round-robin, per-API-key stats, throttle tracking, time-bucketed stats
+- Still needed: HTTP API endpoint tests, dynamic token refresh task, WebSocket, Chart.js, config template
