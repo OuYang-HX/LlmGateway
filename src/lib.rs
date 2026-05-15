@@ -6,6 +6,7 @@ pub mod stats;
 pub mod api;
 pub mod dashboard;
 pub mod utils;
+pub mod usage;
 
 use std::sync::Arc;
 

@@ -29,7 +29,7 @@ impl TokenRefreshTask {
     }
 
     /// Refresh tokens for all providers that need it
-    async fn refresh_all_tokens(&self) -> Result<(), String> {
+    pub async fn refresh_all_tokens(&self) -> Result<(), String> {
         let providers = self.db.list_active_providers().await
             .map_err(|e| e.to_string())?;
 
