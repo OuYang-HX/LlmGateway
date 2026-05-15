@@ -65,7 +65,6 @@
     <div class="tabs">
         <button class="tab active" onclick="showTab('overview')">概览</button>
         <button class="tab" onclick="showTab('providers')">服务商管理</button>
-        <button class="tab" onclick="showTab('models')">统一模型</button>
         <button class="tab" onclick="showTab('apikeys')">API Key 管理</button>
         <button class="tab" onclick="showTab('logs')">请求日志</button>
         <button class="tab" onclick="showTab('stats')">统计分析</button>
@@ -99,22 +98,7 @@
                 <button class="btn" onclick="testAllModels()" id="test-all-btn">🧪 全部测试连接</button>
             </div>
             <table id="model-table">
-                <thead><tr><th>模型 ID</th><th>状态</th><th>测试结果</th><th>测试时间</th><th>操作</th></tr></thead>
-                <tbody></tbody>
-            </table>
-        </div>
-    </div>
-
-    <!-- ====== 统一模型管理 ====== -->
-    <div id="tab-models" class="hidden">
-        <div class="controls">
-            <button class="btn btn-success" onclick="openUnifiedModelModal()">+ 创建统一模型</button>
-        </div>
-        <div class="panel">
-            <h2>统一模型</h2>
-            <p style="color:#64748b;font-size:13px;margin-bottom:16px">统一模型是对外暴露的唯一模型ID。当外部请求使用该模型时，网关会根据权重自动路由到对应的服务商。</p>
-            <table id="unified-model-table">
-                <thead><tr><th>对外模型ID</th><th>名称</th><th>类型</th><th>优先级</th><th>映射数量</th><th>状态</th><th>操作</th></tr></thead>
+                <thead><tr><th>服务商模型ID</th><th>对外ID</th><th>状态</th><th>测试结果</th><th>测试时间</th><th>操作</th></tr></thead>
                 <tbody></tbody>
             </table>
         </div>
@@ -257,7 +241,6 @@ function showTab(name){
     event.target.classList.add('active');
     if(name==='providers') loadProvidersManage();
     if(name==='apikeys') loadApiKeysManage();
-    if(name==='models') loadUnifiedModels();
     if(name==='overview'){loadSummary();loadOverviewProviders();loadOverviewApiKeys();}
     if(name==='logs') loadLogProviderOptions();
     if(name==='stats') loadStatsProviderOptions();
@@ -595,10 +578,25 @@ async function showModels(providerId) {
 async function loadModels() {
     if (!currentModelProviderId) return;
     try {
-        const models = await (await fetch(API + '/providers/' + currentModelProviderId + '/models')).json();
+        const [models, unifiedModels] = await Promise.all([
+            fetch(API + '/providers/' + currentModelProviderId + '/models').then(r => r.json()),
+            fetch(API + '/models').then(r => r.json())
+        ]);
+        
+        // 构建服务商模型ID到对外ID的映射
+        const modelMappings = {};
+        unifiedModels.forEach(um => {
+            um.mappings.forEach(m => {
+                if (m.mapping.provider_id === currentModelProviderId) {
+                    const key = um.model.id + '|' + m.mapping.provider_model_id;
+                    modelMappings[key] = um.model.id;
+                }
+            });
+        });
+        
         const tb = document.querySelector('#model-table tbody');
         if (!models.length) {
-            tb.innerHTML = '<tr><td colspan="5" class="empty-state"><p>暂无模型，点击上方按钮添加</p></td></tr>';
+            tb.innerHTML = '<tr><td colspan="6" class="empty-state"><p>暂无模型，点击上方按钮添加</p></td></tr>';
             return;
         }
         tb.innerHTML = models.map(m => {
@@ -611,12 +609,22 @@ async function loadModels() {
                     ? '<span class="badge badge-red">❌ ' + (m.last_test_message || '失败') + '</span>'
                     : '<span class="badge badge-yellow">未测试</span>';
             const testTime = m.last_tested_at ? fmtTime(m.last_tested_at) : '-';
+            
+            // 检查是否有对外ID
+            const mappingKey = Object.keys(modelMappings).find(k => k.endsWith('|' + m.model_id));
+            const externalId = mappingKey ? mappingKey.split('|')[0] : null;
+            const externalIdCell = externalId 
+                ? `<span style="color:#22c55e;font-weight:bold">${externalId}</span>`
+                : '<span style="color:#94a3b8">未设置</span>';
+            
             return `<tr>
                 <td style="font-family:monospace">${m.model_id}</td>
+                <td>${externalIdCell}</td>
                 <td>${statusBadge}</td>
                 <td>${testBadge}</td>
                 <td style="font-size:12px">${testTime}</td>
                 <td>
+                    <button class="btn btn-sm" onclick="setExternalId('${m.model_id}', '${externalId || ''}')">🔗 ${externalId ? '修改对外ID' : '设置对外ID'}</button>
                     <button class="btn btn-sm" onclick="testModel('${m.model_id}')" id="test-btn-${m.model_id}">🧪 测试</button>
                     <button class="btn btn-sm btn-danger" onclick="removeModel('${m.model_id}')">删除</button>
                 </td>
@@ -653,6 +661,95 @@ async function removeModel(modelId) {
         if (resp.ok) await loadModels();
         else { const err = await resp.json(); alert('删除失败: ' + (err.error || resp.statusText)); }
     } catch (e) { alert('网络错误: ' + e.message); }
+}
+
+// 设置对外ID
+let currentSettingExternalIdModel = null;
+
+function openExternalIdModal(providerModelId, currentExternalId) {
+    currentSettingExternalIdModel = providerModelId;
+    document.getElementById('external-id-modal').classList.remove('hidden');
+    document.getElementById('ext-provider-model-id').textContent = providerModelId;
+    document.getElementById('ext-id').value = currentExternalId || '';
+}
+
+function closeExternalIdModal() {
+    document.getElementById('external-id-modal').classList.add('hidden');
+    currentSettingExternalIdModel = null;
+}
+
+async function saveExternalId() {
+    const externalId = document.getElementById('ext-id').value.trim();
+    if (!externalId) {
+        alert('请输入对外ID');
+        return;
+    }
+    if (!currentSettingExternalIdModel) return;
+    
+    try {
+        // 1. 检查对外ID对应的统一模型是否存在
+        let modelExists = false;
+        const existingModels = await fetch(API + '/models/' + externalId).then(r => r.json()).catch(() => null);
+        
+        if (existingModels && existingModels.model && existingModels.model.id === externalId) {
+            modelExists = true;
+            // 检查该服务商是否已有映射
+            const existingMapping = existingModels.mappings.find(
+                m => m.mapping.provider_id === currentModelProviderId && m.mapping.provider_model_id === currentSettingExternalIdModel
+            );
+            if (existingMapping) {
+                alert('该对外ID已映射到同一服务商模型，无需重复设置');
+                closeExternalIdModal();
+                return;
+            }
+        }
+        
+        // 2. 如果统一模型不存在，先创建
+        if (!modelExists) {
+            const createResp = await fetch(API + '/models', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({
+                    id: externalId,
+                    name: externalId,
+                    model_type: 'chat',
+                    priority: 0
+                })
+            });
+            if (!createResp.ok) {
+                const err = await createResp.json();
+                alert('创建统一模型失败: ' + (err.error || createResp.statusText));
+                return;
+            }
+        }
+        
+        // 3. 添加映射
+        const mappingResp = await fetch(API + '/models/' + externalId + '/mappings', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+                provider_id: currentModelProviderId,
+                provider_model_id: currentSettingExternalIdModel,
+                weight: 1,
+                cost_multiplier: 1.0
+            })
+        });
+        
+        if (mappingResp.ok || mappingResp.status === 201) {
+            alert('对外ID设置成功！');
+            closeExternalIdModal();
+            await loadModels();
+        } else {
+            const err = await mappingResp.json();
+            alert('设置失败: ' + (err.error || mappingResp.statusText));
+        }
+    } catch (e) {
+        alert('网络错误: ' + e.message);
+    }
+}
+
+function setExternalId(providerModelId, currentExternalId) {
+    openExternalIdModal(providerModelId, currentExternalId);
 }
 
 async function testModel(modelId) {
@@ -699,275 +796,6 @@ async function testAllModels() {
     }
 }
 
-// ========== 统一模型管理 ==========
-let currentUnifiedModel = null;
-
-async function loadUnifiedModels() {
-    try {
-        const resp = await fetch(API + '/models');
-        const data = await resp.json();
-        const tb = document.querySelector('#unified-model-table tbody');
-        if (!data || data.length === 0) {
-            tb.innerHTML = '<tr><td colspan="7" class="empty-state"><p>暂无统一模型，点击上方按钮创建</p></td></tr>';
-            return;
-        }
-        tb.innerHTML = data.map(m => `
-            <tr>
-                <td style="font-family:monospace;font-weight:bold">${m.model.id}</td>
-                <td>${m.model.name || '-'}</td>
-                <td>${m.model.model_type || 'chat'}</td>
-                <td>${m.model.priority}</td>
-                <td>${m.mappings.length}</td>
-                <td>${m.model.is_active ? '<span style="color:#22c55e">● 启用</span>' : '<span style="color:#ef4444">● 停用</span>'}</td>
-                <td>
-                    <button class="btn btn-sm" onclick="showModelMappings('${m.model.id}')">🔗 映射</button>
-                    <button class="btn btn-sm" onclick="editUnifiedModel('${m.model.id}')">✏️ 编辑</button>
-                    <button class="btn btn-sm btn-danger" onclick="deleteUnifiedModel('${m.model.id}')">删除</button>
-                </td>
-            </tr>
-        `).join('');
-    } catch (e) {
-        console.error('加载统一模型失败:', e);
-    }
-}
-
-function openUnifiedModelModal(modelId = null) {
-    currentUnifiedModel = modelId;
-    document.getElementById('unified-model-modal').classList.remove('hidden');
-    document.getElementById('unified-model-modal-title').textContent = modelId ? '编辑统一模型' : '创建统一模型';
-    document.getElementById('um-id').value = modelId || '';
-    document.getElementById('um-id').disabled = !!modelId;
-    document.getElementById('um-name').value = '';
-    document.getElementById('um-description').value = '';
-    document.getElementById('um-model-type').value = 'chat';
-    document.getElementById('um-priority').value = '0';
-    document.getElementById('um-is-active').checked = true;
-    
-    if (modelId) {
-        fetch(API + '/models/' + modelId)
-            .then(r => r.json())
-            .then(data => {
-                document.getElementById('um-name').value = data.model.name || '';
-                document.getElementById('um-description').value = data.model.description || '';
-                document.getElementById('um-model-type').value = data.model.model_type || 'chat';
-                document.getElementById('um-priority').value = data.model.priority || 0;
-                document.getElementById('um-is-active').checked = data.model.is_active !== false;
-            });
-    }
-}
-
-function closeUnifiedModelModal() {
-    document.getElementById('unified-model-modal').classList.add('hidden');
-    currentUnifiedModel = null;
-}
-
-async function saveUnifiedModel() {
-    const id = document.getElementById('um-id').value.trim();
-    const name = document.getElementById('um-name').value.trim();
-    const description = document.getElementById('um-description').value.trim();
-    const model_type = document.getElementById('um-model-type').value;
-    const priority = parseInt(document.getElementById('um-priority').value) || 0;
-    const is_active = document.getElementById('um-is-active').checked;
-    
-    if (!id) { alert('请输入对外模型ID'); return; }
-    if (!name) { alert('请输入模型名称'); return; }
-    
-    try {
-        let resp;
-        if (currentUnifiedModel) {
-            resp = await fetch(API + '/models/' + currentUnifiedModel, {
-                method: 'PUT',
-                headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify({ name, description, model_type, priority, is_active })
-            });
-        } else {
-            resp = await fetch(API + '/models', {
-                method: 'POST',
-                headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify({ id, name, description, model_type, priority })
-            });
-        }
-        
-        if (resp.ok) {
-            closeUnifiedModelModal();
-            loadUnifiedModels();
-        } else {
-            const err = await resp.json();
-            alert('保存失败: ' + (err.error || resp.statusText));
-        }
-    } catch (e) {
-        alert('网络错误: ' + e.message);
-    }
-}
-
-async function editUnifiedModel(modelId) {
-    openUnifiedModelModal(modelId);
-}
-
-async function deleteUnifiedModel(modelId) {
-    if (!confirm('确定要删除统一模型 "' + modelId + '" 吗？这将同时删除所有服务商映射。')) return;
-    try {
-        const resp = await fetch(API + '/models/' + modelId, { method: 'DELETE' });
-        if (resp.ok) {
-            loadUnifiedModels();
-        } else {
-            const err = await resp.json();
-            alert('删除失败: ' + (err.error || resp.statusText));
-        }
-    } catch (e) {
-        alert('网络错误: ' + e.message);
-    }
-}
-
-// ========== 模型映射管理 ==========
-let currentModelForMapping = null;
-
-async function showModelMappings(modelId) {
-    currentModelForMapping = modelId;
-    document.getElementById('mapping-modal').classList.remove('hidden');
-    document.getElementById('mapping-model-name').textContent = modelId;
-    await loadModelMappings();
-}
-
-function closeMappingModal() {
-    document.getElementById('mapping-modal').classList.add('hidden');
-    currentModelForMapping = null;
-}
-
-async function loadModelMappings() {
-    if (!currentModelForMapping) return;
-    try {
-        const [modelResp, providersResp] = await Promise.all([
-            fetch(API + '/models/' + currentModelForMapping),
-            fetch(API + '/providers')
-        ]);
-        const modelData = await modelResp.json();
-        const providers = await providersResp.json();
-        
-        const tb = document.querySelector('#mapping-table tbody');
-        const mappings = modelData.mappings || [];
-        
-        if (mappings.length === 0) {
-            tb.innerHTML = '<tr><td colspan="6" class="empty-state"><p>暂无服务商映射，点击上方按钮添加</p></td></tr>';
-        } else {
-            tb.innerHTML = mappings.map(m => `
-                <tr>
-                    <td>${m.provider.name}</td>
-                    <td style="font-family:monospace">${m.provider.id}</td>
-                    <td style="font-family:monospace">${m.mapping.provider_model_id}</td>
-                    <td>${m.mapping.weight}</td>
-                    <td>${m.mapping.cost_multiplier}x</td>
-                    <td>${m.mapping.is_active ? '<span style="color:#22c55e">● 启用</span>' : '<span style="color:#ef4444">● 停用</span>'}</td>
-                    <td>
-                        <button class="btn btn-sm" onclick="editMapping('${m.mapping.provider_id}')">✏️ 编辑</button>
-                        <button class="btn btn-sm btn-danger" onclick="removeMapping('${m.mapping.provider_id}')">删除</button>
-                    </td>
-                </tr>
-            `).join('');
-        }
-        
-        // 填充服务商下拉框（排除已映射的）
-        const mappedProviderIds = mappings.map(m => m.mapping.provider_id);
-        const availableProviders = providers.filter(p => !mappedProviderIds.includes(p.id));
-        const select = document.getElementById('mapping-provider-select');
-        select.innerHTML = '<option value="">选择服务商...</option>' + 
-            availableProviders.map(p => `<option value="${p.id}">${p.name} (${p.id})</option>`).join('');
-    } catch (e) {
-        console.error('加载映射失败:', e);
-    }
-}
-
-function openAddMappingModal() {
-    document.getElementById('mapping-form').classList.remove('hidden');
-    document.getElementById('mapping-provider-select').value = '';
-    document.getElementById('mapping-provider-model-id').value = '';
-    document.getElementById('mapping-weight').value = '1';
-    document.getElementById('mapping-cost-multiplier').value = '1.0';
-    document.getElementById('mapping-is-active').checked = true;
-    document.getElementById('mapping-edit-provider-id').value = '';
-}
-
-function closeMappingForm() {
-    document.getElementById('mapping-form').classList.add('hidden');
-}
-
-async function saveMapping() {
-    const provider_id = document.getElementById('mapping-provider-select').value;
-    const editProviderId = document.getElementById('mapping-edit-provider-id').value;
-    const provider_model_id = document.getElementById('mapping-provider-model-id').value.trim();
-    const weight = parseInt(document.getElementById('mapping-weight').value) || 1;
-    const cost_multiplier = parseFloat(document.getElementById('mapping-cost-multiplier').value) || 1.0;
-    const is_active = document.getElementById('mapping-is-active').checked;
-    
-    if (!provider_model_id) { alert('请输入服务商模型ID'); return; }
-    
-    try {
-        let resp;
-        if (editProviderId) {
-            // 更新现有映射
-            resp = await fetch(API + '/models/' + currentModelForMapping + '/mappings/' + editProviderId, {
-                method: 'PUT',
-                headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify({ provider_model_id, weight, cost_multiplier, is_active })
-            });
-        } else {
-            if (!provider_id) { alert('请选择服务商'); return; }
-            // 添加新映射
-            resp = await fetch(API + '/models/' + currentModelForMapping + '/mappings', {
-                method: 'POST',
-                headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify({ provider_id, provider_model_id, weight, cost_multiplier })
-            });
-        }
-        
-        if (resp.ok) {
-            closeMappingForm();
-            await loadModelMappings();
-            loadUnifiedModels();
-        } else {
-            const err = await resp.json();
-            alert('保存失败: ' + (err.error || resp.statusText));
-        }
-    } catch (e) {
-        alert('网络错误: ' + e.message);
-    }
-}
-
-async function editMapping(providerId) {
-    try {
-        const resp = await fetch(API + '/models/' + currentModelForMapping);
-        const data = await resp.json();
-        const mapping = data.mappings.find(m => m.mapping.provider_id === providerId);
-        if (mapping) {
-            document.getElementById('mapping-form').classList.remove('hidden');
-            document.getElementById('mapping-edit-provider-id').value = providerId;
-            document.getElementById('mapping-provider-select').value = '';
-            document.getElementById('mapping-provider-model-id').value = mapping.mapping.provider_model_id;
-            document.getElementById('mapping-weight').value = mapping.mapping.weight;
-            document.getElementById('mapping-cost-multiplier').value = mapping.mapping.cost_multiplier;
-            document.getElementById('mapping-is-active').checked = mapping.mapping.is_active;
-        }
-    } catch (e) {
-        alert('加载失败: ' + e.message);
-    }
-}
-
-async function removeMapping(providerId) {
-    if (!confirm('确定要删除该服务商映射吗？')) return;
-    try {
-        const resp = await fetch(API + '/models/' + currentModelForMapping + '/mappings/' + providerId, { method: 'DELETE' });
-        if (resp.ok) {
-            await loadModelMappings();
-            loadUnifiedModels();
-        } else {
-            const err = await resp.json();
-            alert('删除失败: ' + (err.error || resp.statusText));
-        }
-    } catch (e) {
-        alert('网络错误: ' + e.message);
-    }
-}
-
 // ========== 工具函数 ==========
 // 格式化 CST 时间（将 UTC 时间字符串 +8h 再显示）
 // 格式化时间：存储的是 UTC，直接 toLocaleString() 转本地时区
@@ -984,100 +812,22 @@ loadSummary();loadOverviewProviders();loadOverviewApiKeys();
 setInterval(loadSummary,30000);
 </script>
 
-<!-- ====== 统一模型编辑 Modal ====== -->
-<div id="unified-model-modal" class="modal-overlay hidden">
+<!-- ====== 设置对外ID Modal ====== -->
+<div id="external-id-modal" class="modal-overlay hidden">
 <div class="modal" style="max-width:500px">
-    <h3 id="unified-model-modal-title">创建统一模型</h3>
-    <input type="hidden" id="um-edit-id">
+    <h3>设置对外ID</h3>
+    <div class="form-group">
+        <label>服务商模型ID</label>
+        <div id="ext-provider-model-id" style="font-family:monospace;font-weight:bold;padding:8px 0"></div>
+    </div>
     <div class="form-group">
         <label>对外模型ID *</label>
-        <input id="um-id" placeholder="如 gpt-4、deepseek-chat" style="width:100%">
-        <small style="color:#64748b">外部请求时使用的模型标识，必须唯一</small>
-    </div>
-    <div class="form-group">
-        <label>名称 *</label>
-        <input id="um-name" placeholder="如 GPT-4、DeepSeek Chat" style="width:100%">
-    </div>
-    <div class="form-group">
-        <label>描述</label>
-        <input id="um-description" placeholder="模型描述（可选）" style="width:100%">
-    </div>
-    <div class="form-row">
-        <div class="form-group">
-            <label>模型类型</label>
-            <select id="um-model-type" style="width:100%">
-                <option value="chat">Chat (对话)</option>
-                <option value="embedding">Embedding (嵌入)</option>
-                <option value="completion">Completion (补全)</option>
-            </select>
-        </div>
-        <div class="form-group">
-            <label>优先级</label>
-            <input id="um-priority" type="number" value="0" style="width:100%">
-            <small style="color:#64748b">数字越大排序越靠前</small>
-        </div>
-    </div>
-    <div class="form-group">
-        <label><input type="checkbox" id="um-is-active" checked> 启用此模型</label>
+        <input id="ext-id" placeholder="如 my-gpt-4、unified-model-1" style="width:100%">
+        <small style="color:#64748b">全局唯一的对外模型标识，外部请求时使用此ID</small>
     </div>
     <div class="form-actions">
-        <button class="btn" onclick="closeUnifiedModelModal()">取消</button>
-        <button class="btn btn-success" onclick="saveUnifiedModel()">保存</button>
-    </div>
-</div>
-</div>
-
-<!-- ====== 模型映射管理 Modal ====== -->
-<div id="mapping-modal" class="modal-overlay hidden">
-<div class="modal" style="max-width:800px">
-    <h3>服务商映射 — <span id="mapping-model-name"></span></h3>
-    <div class="controls" style="margin-bottom:16px">
-        <button class="btn btn-success" onclick="openAddMappingModal()">+ 添加服务商映射</button>
-    </div>
-    <table id="mapping-table">
-        <thead><tr><th>服务商名称</th><th>服务商ID</th><th>服务商模型ID</th><th>权重</th><th>成本倍数</th><th>状态</th><th>操作</th></tr></thead>
-        <tbody></tbody>
-    </table>
-    <div class="form-actions" style="margin-top:16px">
-        <button class="btn" onclick="closeMappingModal()">关闭</button>
-    </div>
-</div>
-</div>
-
-<!-- ====== 添加/编辑映射表单 ====== -->
-<div id="mapping-form" class="modal-overlay hidden">
-<div class="modal" style="max-width:500px">
-    <h3 id="mapping-form-title">添加服务商映射</h3>
-    <input type="hidden" id="mapping-edit-provider-id">
-    <div class="form-group">
-        <label>服务商</label>
-        <select id="mapping-provider-select" style="width:100%">
-            <option value="">选择服务商...</option>
-        </select>
-    </div>
-    <div class="form-group">
-        <label>服务商模型ID *</label>
-        <input id="mapping-provider-model-id" placeholder="如 gpt-4、gpt-4-turbo" style="width:100%">
-        <small style="color:#64748b">该服务商实际使用的模型ID</small>
-    </div>
-    <div class="form-row">
-        <div class="form-group">
-            <label>权重</label>
-            <input id="mapping-weight" type="number" value="1" min="1" style="width:100%">
-            <small style="color:#64748b">负载均衡权重</small>
-        </div>
-        <div class="form-group">
-            <label>成本倍数</label>
-            <input id="mapping-cost-multiplier" type="number" value="1.0" step="0.1" min="0.1" style="width:100%">
-            <small style="color:#64748b">用于计费的token成本倍数</small>
-        </div>
-    </div>
-    <div class="form-group">
-        <label><input type="checkbox" id="mapping-is-active" checked> 启用此映射</label>
-    </div>
-    <div class="form-actions">
-        <button class="btn" onclick="closeMappingForm()">取消</button>
-        <button class="btn btn-success" onclick="saveMapping()">保存</button>
+        <button class="btn" onclick="closeExternalIdModal()">取消</button>
+        <button class="btn btn-success" onclick="saveExternalId()">保存</button>
     </div>
 </div>
 </div>
