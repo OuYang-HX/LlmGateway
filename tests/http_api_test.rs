@@ -33,7 +33,7 @@ async fn build_test_app() -> TestServer {
         .route("/api/v1/api-keys", post(llm_gateway::api::create_api_key).get(llm_gateway::api::list_api_keys))
         .route("/api/v1/api-keys/:id", get(llm_gateway::api::get_api_key).delete(llm_gateway::api::delete_api_key))
         .route("/api/v1/providers", post(llm_gateway::api::create_provider).get(llm_gateway::api::list_providers))
-        .route("/api/v1/providers/:id", get(llm_gateway::api::get_provider).delete(llm_gateway::api::delete_provider))
+        .route("/api/v1/providers/:id", get(llm_gateway::api::get_provider).delete(llm_gateway::api::delete_provider).put(llm_gateway::api::update_provider))
         .route("/api/v1/stats", get(llm_gateway::api::get_stats))
         .route("/api/v1/stats/bucketed", get(llm_gateway::api::get_time_bucketed_stats))
         .route("/api/v1/logs", get(llm_gateway::api::get_request_logs))
@@ -685,4 +685,349 @@ async fn test_http_dashboard_complete_workflow() {
     // 6. Verify token rate endpoint
     let rate = server.get("/api/v1/dashboard/token-rate").await;
     assert_eq!(rate.status_code(), StatusCode::OK);
+}
+
+// ==================== Provider Update (PUT) Tests ====================
+
+#[tokio::test]
+async fn test_http_update_provider_name() {
+    let server = build_test_app().await;
+    server.post("/api/v1/providers")
+        .json(&serde_json::json!({
+            "id": "upd-prov", "name": "Original Name", "base_url": "https://orig.com/v1",
+            "api_type": "openai", "auth_type": "api_key", "api_key": "sk-orig"
+        }))
+        .await;
+
+    let resp = server.put("/api/v1/providers/upd-prov")
+        .json(&serde_json::json!({"name": "Updated Name"}))
+        .await;
+    assert_eq!(resp.status_code(), StatusCode::OK);
+
+    let get_resp = server.get("/api/v1/providers/upd-prov").await;
+    let body: serde_json::Value = get_resp.json();
+    assert_eq!(body["name"], "Updated Name");
+    // Other fields should remain unchanged
+    assert_eq!(body["base_url"], "https://orig.com/v1");
+}
+
+#[tokio::test]
+async fn test_http_update_provider_base_url() {
+    let server = build_test_app().await;
+    server.post("/api/v1/providers")
+        .json(&serde_json::json!({
+            "id": "upd-url", "name": "URL Provider", "base_url": "https://old.com/v1",
+            "auth_type": "api_key", "api_key": "key"
+        }))
+        .await;
+
+    let resp = server.put("/api/v1/providers/upd-url")
+        .json(&serde_json::json!({"base_url": "https://new.com/v1"}))
+        .await;
+    assert_eq!(resp.status_code(), StatusCode::OK);
+
+    let body: serde_json::Value = server.get("/api/v1/providers/upd-url").await.json();
+    assert_eq!(body["base_url"], "https://new.com/v1");
+}
+
+#[tokio::test]
+async fn test_http_update_provider_api_key() {
+    let server = build_test_app().await;
+    server.post("/api/v1/providers")
+        .json(&serde_json::json!({
+            "id": "upd-key", "name": "Key Provider", "base_url": "https://kp.com/v1",
+            "auth_type": "api_key", "api_key": "old-key"
+        }))
+        .await;
+
+    let resp = server.put("/api/v1/providers/upd-key")
+        .json(&serde_json::json!({"api_key": "new-key-123"}))
+        .await;
+    assert_eq!(resp.status_code(), StatusCode::OK);
+
+    let body: serde_json::Value = server.get("/api/v1/providers/upd-key").await.json();
+    assert_eq!(body["api_key"], "new-key-123");
+}
+
+#[tokio::test]
+async fn test_http_update_provider_weight() {
+    let server = build_test_app().await;
+    server.post("/api/v1/providers")
+        .json(&serde_json::json!({
+            "id": "upd-wt", "name": "Weight Provider", "base_url": "https://wp.com/v1",
+            "auth_type": "api_key", "api_key": "key", "weight": 1
+        }))
+        .await;
+
+    let resp = server.put("/api/v1/providers/upd-wt")
+        .json(&serde_json::json!({"weight": 5}))
+        .await;
+    assert_eq!(resp.status_code(), StatusCode::OK);
+
+    let body: serde_json::Value = server.get("/api/v1/providers/upd-wt").await.json();
+    assert_eq!(body["weight"], 5);
+}
+
+#[tokio::test]
+async fn test_http_update_provider_to_dynamic_token() {
+    let server = build_test_app().await;
+    server.post("/api/v1/providers")
+        .json(&serde_json::json!({
+            "id": "upd-dyn", "name": "To Dynamic", "base_url": "https://dp.com/v1",
+            "auth_type": "api_key", "api_key": "key"
+        }))
+        .await;
+
+    let resp = server.put("/api/v1/providers/upd-dyn")
+        .json(&serde_json::json!({
+            "auth_type": "dynamic_token",
+            "token_url": "https://auth.dp.com/login",
+            "token_username": "admin",
+            "token_password": "secret",
+            "token_expiry_seconds": 28800
+        }))
+        .await;
+    assert_eq!(resp.status_code(), StatusCode::OK);
+
+    let body: serde_json::Value = server.get("/api/v1/providers/upd-dyn").await.json();
+    assert_eq!(body["auth_type"], "dynamic_token");
+    assert_eq!(body["token_url"], "https://auth.dp.com/login");
+    assert_eq!(body["token_username"], "admin");
+    assert_eq!(body["token_expiry_seconds"], 28800);
+}
+
+#[tokio::test]
+async fn test_http_update_provider_deactivate() {
+    let server = build_test_app().await;
+    server.post("/api/v1/providers")
+        .json(&serde_json::json!({
+            "id": "upd-deact", "name": "Deactivate Me", "base_url": "https://dm.com/v1",
+            "auth_type": "api_key", "api_key": "key"
+        }))
+        .await;
+
+    let resp = server.put("/api/v1/providers/upd-deact")
+        .json(&serde_json::json!({"is_active": false}))
+        .await;
+    assert_eq!(resp.status_code(), StatusCode::OK);
+
+    let body: serde_json::Value = server.get("/api/v1/providers/upd-deact").await.json();
+    assert_eq!(body["is_active"], false);
+}
+
+#[tokio::test]
+async fn test_http_update_provider_not_found() {
+    let server = build_test_app().await;
+    let resp = server.put("/api/v1/providers/nonexistent")
+        .json(&serde_json::json!({"name": "Ghost"}))
+        .await;
+    assert_eq!(resp.status_code(), StatusCode::NOT_FOUND);
+}
+
+#[tokio::test]
+async fn test_http_update_provider_multiple_fields() {
+    let server = build_test_app().await;
+    server.post("/api/v1/providers")
+        .json(&serde_json::json!({
+            "id": "upd-multi", "name": "Multi", "base_url": "https://m.com/v1",
+            "auth_type": "api_key", "api_key": "old-key", "weight": 1
+        }))
+        .await;
+
+    let resp = server.put("/api/v1/providers/upd-multi")
+        .json(&serde_json::json!({
+            "name": "Multi Updated",
+            "base_url": "https://m2.com/v1",
+            "api_key": "new-key",
+            "weight": 3
+        }))
+        .await;
+    assert_eq!(resp.status_code(), StatusCode::OK);
+
+    let body: serde_json::Value = server.get("/api/v1/providers/upd-multi").await.json();
+    assert_eq!(body["name"], "Multi Updated");
+    assert_eq!(body["base_url"], "https://m2.com/v1");
+    assert_eq!(body["api_key"], "new-key");
+    assert_eq!(body["weight"], 3);
+}
+
+// ==================== Dashboard Content Tests ====================
+
+#[tokio::test]
+async fn test_dashboard_has_provider_management_tab() {
+    let server = build_test_app().await;
+    let body = server.get("/").await.text();
+    assert!(body.contains("服务商管理"));
+    assert!(body.contains("添加服务商"));
+}
+
+#[tokio::test]
+async fn test_dashboard_has_apikey_management_tab() {
+    let server = build_test_app().await;
+    let body = server.get("/").await.text();
+    assert!(body.contains("API Key 管理"));
+    assert!(body.contains("创建 API Key"));
+}
+
+#[tokio::test]
+async fn test_dashboard_has_provider_modal() {
+    let server = build_test_app().await;
+    let body = server.get("/").await.text();
+    // Provider form fields
+    assert!(body.contains("prov-id"));
+    assert!(body.contains("prov-name"));
+    assert!(body.contains("prov-base-url"));
+    assert!(body.contains("prov-auth-type"));
+    assert!(body.contains("prov-weight"));
+    // Dynamic token fields
+    assert!(body.contains("prov-token-url"));
+    assert!(body.contains("prov-token-username"));
+    assert!(body.contains("prov-token-password"));
+    assert!(body.contains("prov-token-field"));
+    assert!(body.contains("prov-refresh-token-field"));
+    assert!(body.contains("prov-token-expiry"));
+    // Auth type toggle
+    assert!(body.contains("toggleAuthFields"));
+}
+
+#[tokio::test]
+async fn test_dashboard_has_apikey_modal() {
+    let server = build_test_app().await;
+    let body = server.get("/").await.text();
+    assert!(body.contains("ak-name"));
+    assert!(body.contains("ak-providers-checks"));
+}
+
+#[tokio::test]
+async fn test_dashboard_has_stats_tab() {
+    let server = build_test_app().await;
+    let body = server.get("/").await.text();
+    assert!(body.contains("统计分析"));
+    assert!(body.contains("st-granularity"));
+}
+
+#[tokio::test]
+async fn test_dashboard_has_log_tab() {
+    let server = build_test_app().await;
+    let body = server.get("/").await.text();
+    assert!(body.contains("请求日志"));
+    assert!(body.contains("log-provider"));
+}
+
+// ==================== Provider CRUD Full Cycle with Update ====================
+
+#[tokio::test]
+async fn test_http_provider_full_lifecycle() {
+    let server = build_test_app().await;
+
+    // 1. Create
+    let create = server.post("/api/v1/providers")
+        .json(&serde_json::json!({
+            "id": "lifecycle",
+            "name": "Lifecycle Provider",
+            "base_url": "https://lc.com/v1",
+            "auth_type": "api_key",
+            "api_key": "sk-initial",
+            "weight": 1
+        }))
+        .await;
+    assert_eq!(create.status_code(), StatusCode::CREATED);
+
+    // 2. Read
+    let get = server.get("/api/v1/providers/lifecycle").await;
+    let body: serde_json::Value = get.json();
+    assert_eq!(body["name"], "Lifecycle Provider");
+    assert_eq!(body["api_key"], "sk-initial");
+
+    // 3. Update
+    let update = server.put("/api/v1/providers/lifecycle")
+        .json(&serde_json::json!({
+            "name": "Updated Lifecycle",
+            "api_key": "sk-updated",
+            "weight": 5
+        }))
+        .await;
+    assert_eq!(update.status_code(), StatusCode::OK);
+
+    // 4. Read again - verify update
+    let get2 = server.get("/api/v1/providers/lifecycle").await;
+    let body2: serde_json::Value = get2.json();
+    assert_eq!(body2["name"], "Updated Lifecycle");
+    assert_eq!(body2["api_key"], "sk-updated");
+    assert_eq!(body2["weight"], 5);
+
+    // 5. Deactivate
+    let deact = server.put("/api/v1/providers/lifecycle")
+        .json(&serde_json::json!({"is_active": false}))
+        .await;
+    assert_eq!(deact.status_code(), StatusCode::OK);
+
+    let body3: serde_json::Value = server.get("/api/v1/providers/lifecycle").await.json();
+    assert_eq!(body3["is_active"], false);
+
+    // 6. Delete
+    let delete = server.delete("/api/v1/providers/lifecycle").await;
+    assert_eq!(delete.status_code(), StatusCode::OK);
+
+    let get4 = server.get("/api/v1/providers/lifecycle").await;
+    assert_eq!(get4.status_code(), StatusCode::NOT_FOUND);
+}
+
+#[tokio::test]
+async fn test_http_dynamic_token_provider_full_lifecycle() {
+    let server = build_test_app().await;
+
+    // 1. Create with dynamic token
+    let create = server.post("/api/v1/providers")
+        .json(&serde_json::json!({
+            "id": "dyn-lc",
+            "name": "Dynamic Lifecycle",
+            "base_url": "https://dlc.com/v1",
+            "auth_type": "dynamic_token",
+            "token_url": "https://auth.dlc.com/login",
+            "token_username": "user1",
+            "token_password": "pass1",
+            "token_field": "access_token",
+            "refresh_token_field": "refresh_token",
+            "token_header_field": "X-Auth-Token",
+            "token_header_prefix": "",
+            "token_expiry_seconds": 7200,
+            "weight": 2
+        }))
+        .await;
+    assert_eq!(create.status_code(), StatusCode::CREATED);
+
+    // 2. Read and verify all fields
+    let body: serde_json::Value = server.get("/api/v1/providers/dyn-lc").await.json();
+    assert_eq!(body["auth_type"], "dynamic_token");
+    assert_eq!(body["token_url"], "https://auth.dlc.com/login");
+    assert_eq!(body["token_username"], "user1");
+    assert_eq!(body["token_field"], "access_token");
+    assert_eq!(body["refresh_token_field"], "refresh_token");
+    assert_eq!(body["token_header_field"], "X-Auth-Token");
+    assert_eq!(body["token_header_prefix"], "");
+    assert_eq!(body["token_expiry_seconds"], 7200);
+    assert_eq!(body["weight"], 2);
+
+    // 3. Update credentials
+    let update = server.put("/api/v1/providers/dyn-lc")
+        .json(&serde_json::json!({
+            "token_username": "user2",
+            "token_password": "pass2",
+            "token_expiry_seconds": 3600
+        }))
+        .await;
+    assert_eq!(update.status_code(), StatusCode::OK);
+
+    // 4. Verify update
+    let body2: serde_json::Value = server.get("/api/v1/providers/dyn-lc").await.json();
+    assert_eq!(body2["token_username"], "user2");
+    assert_eq!(body2["token_expiry_seconds"], 3600);
+    // Other fields should remain
+    assert_eq!(body2["token_url"], "https://auth.dlc.com/login");
+    assert_eq!(body2["token_field"], "access_token");
+
+    // 5. Delete
+    server.delete("/api/v1/providers/dyn-lc").await;
+    assert_eq!(server.get("/api/v1/providers/dyn-lc").await.status_code(), StatusCode::NOT_FOUND);
 }
