@@ -65,6 +65,8 @@ Design and implement a high-performance LLM Gateway service in Rust that:
 - Iteration 3: 96 tests — HTTP API endpoint tests, token refresh task, config template
 - Iteration 4: 109 tests — token refresh tests, usage extraction, README
 - Iteration 5: 124 tests — WebSocket proxy, usage extraction tests, comprehensive coverage
+- Iteration 6: 136 tests — integrated usage extraction into proxy pipeline, WebSocket wired, 0 warnings
 - Key wins: weighted round-robin, per-API-key stats, throttle tracking, time-bucketed stats
-- Fixed: axum 0.7 uses `:id` not `{id}` for path params
+- Key architectural insight: split proxy into forward_and_collect (extracts usage) + forward_streaming (SSE passthrough)
+- Fixed: axum 0.7 uses `:id` not `{id}` for path params; Message::Text needs `.into()`
 - Architecture: SQLite + axum + reqwest, modular design with clear separation
