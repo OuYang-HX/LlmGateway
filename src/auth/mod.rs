@@ -10,6 +10,8 @@ use serde::{Deserialize, Serialize};
 pub struct AuthManager {
     db: Arc<Database>,
     http_client: reqwest::Client,
+    /// HTTP client that bypasses system proxy (for internal networks)
+    no_proxy_client: reqwest::Client,
 }
 
 /// Token response from a dynamic token endpoint
@@ -22,7 +24,11 @@ pub struct TokenResponse {
 impl AuthManager {
     pub fn new(db: Arc<Database>) -> Self {
         let http_client = reqwest::Client::new();
-        Self { db, http_client }
+        let no_proxy_client = reqwest::Client::builder()
+            .no_proxy()
+            .build()
+            .expect("Failed to build no_proxy client");
+        Self { db, http_client, no_proxy_client }
     }
 
     /// Get a valid auth header value for a provider
@@ -90,7 +96,7 @@ impl AuthManager {
             serde_json::json!({ refresh_field: refresh_token }).to_string()
         };
 
-        let response = self.send_token_request(token_url, method, content_type, &body, provider.token_extra_headers.as_deref()).await?;
+        let response = self.send_token_request(token_url, method, content_type, &body, provider.token_extra_headers.as_deref(), provider.bypass_proxy).await?;
 
         if !response.status().is_success() {
             return Err(AuthError::RefreshFailed(response.status().to_string()));
@@ -136,7 +142,7 @@ impl AuthManager {
             let body = template
                 .replace("{{username}}", username)
                 .replace("{{password}}", password);
-            self.send_token_request(token_url, method, content_type, &body, provider.token_extra_headers.as_deref()).await?
+            self.send_token_request(token_url, method, content_type, &body, provider.token_extra_headers.as_deref(), provider.bypass_proxy).await?
         } else {
             // Build body from field names
             if content_type == "form" {
@@ -145,14 +151,14 @@ impl AuthManager {
                     urlencoding::encode(username),
                     urlencoding::encode(password_field),
                     urlencoding::encode(password));
-                self.send_token_request(token_url, method, "form", &body, provider.token_extra_headers.as_deref()).await?
+                self.send_token_request(token_url, method, "form", &body, provider.token_extra_headers.as_deref(), provider.bypass_proxy).await?
             } else {
                 let mut map = serde_json::Map::new();
                 map.insert(username_field.to_string(), serde_json::Value::String(username.to_string()));
                 map.insert(password_field.to_string(), serde_json::Value::String(password.to_string()));
                 let body = serde_json::Value::Object(map);
                 let body_str = serde_json::to_string(&body).map_err(|e| AuthError::ParseError(e.into()))?;
-                self.send_token_request(token_url, method, "json", &body_str, provider.token_extra_headers.as_deref()).await?
+                self.send_token_request(token_url, method, "json", &body_str, provider.token_extra_headers.as_deref(), provider.bypass_proxy).await?
             }
         };
 
@@ -185,13 +191,14 @@ impl AuthManager {
     }
 
     /// Send a token request with the given body and optional extra headers
-    async fn send_token_request(&self, url: &str, method: &str, content_type: &str, body: &str, extra_headers: Option<&str>) -> Result<reqwest::Response, AuthError> {
+    async fn send_token_request(&self, url: &str, method: &str, content_type: &str, body: &str, extra_headers: Option<&str>, bypass_proxy: bool) -> Result<reqwest::Response, AuthError> {
         let method = match method {
             "GET" => reqwest::Method::GET,
             _ => reqwest::Method::POST,
         };
 
-        let mut req = self.http_client.request(method, url);
+        let client = if bypass_proxy { &self.no_proxy_client } else { &self.http_client };
+        let mut req = client.request(method, url);
 
         // Add custom extra headers from provider config
         // Skip Content-Type to avoid duplicate header conflict

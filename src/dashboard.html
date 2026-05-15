@@ -185,6 +185,7 @@
             <div class="form-group"><label>Header 值前缀</label><input id="prov-dyn-header-prefix" value="Bearer "><small style="color:#64748b">如 "Bearer "、""（无前缀）、"Basic " 等</small></div>
         </div>
         <div class="form-group"><label>Token 有效期（秒）</label><input id="prov-token-expiry" type="number" value="86400"></div>
+        <div class="form-group"><label>绕过代理</label><select id="prov-bypass-proxy"><option value="false">否</option><option value="true">是</option></select><small style="color:#64748b">访问内网服务商时绕过系统代理（如华为内网 API）</small></div>
     </div>
 
     <div class="form-actions">
@@ -315,6 +316,7 @@ function openProviderModal(isEdit){
     document.getElementById('prov-dyn-header-field').value='Authorization';
     document.getElementById('prov-dyn-header-prefix').value='Bearer ';
     document.getElementById('prov-token-expiry').value='86400';
+    document.getElementById('prov-bypass-proxy').value='false';
     toggleAuthFields();
     document.getElementById('provider-modal').classList.remove('hidden');
 }
@@ -351,6 +353,7 @@ function editProvider(id){
         document.getElementById('prov-dyn-header-field').value=p.token_header_field;
         document.getElementById('prov-dyn-header-prefix').value=p.token_header_prefix;
         document.getElementById('prov-token-expiry').value=p.token_expiry_seconds;
+        document.getElementById('prov-bypass-proxy').value=p.bypass_proxy ? 'true' : 'false';
     }
     toggleAuthFields();
 }
@@ -385,6 +388,7 @@ async function saveProvider(){
         body.token_header_field=document.getElementById('prov-dyn-header-field').value;
         body.token_header_prefix=document.getElementById('prov-dyn-header-prefix').value;
         body.token_expiry_seconds=parseInt(document.getElementById('prov-token-expiry').value)||86400;
+        body.bypass_proxy=document.getElementById('prov-bypass-proxy').value==='true';
     }
 
     try{

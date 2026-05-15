@@ -16,16 +16,25 @@ pub struct LlmProxy {
     db: Arc<Database>,
     auth_manager: Arc<AuthManager>,
     http_client: reqwest::Client,
+    /// HTTP client that bypasses system proxy (for internal networks)
+    no_proxy_client: reqwest::Client,
     /// Round-robin counter for load balancing
     rr_counter: Arc<RwLock<HashMap<String, usize>>>,
 }
 
 impl LlmProxy {
     pub fn new(db: Arc<Database>, auth_manager: Arc<AuthManager>) -> Self {
+        // Build a client that bypasses proxy
+        let no_proxy_client = reqwest::Client::builder()
+            .no_proxy()
+            .build()
+            .expect("Failed to build no_proxy client");
+
         Self {
             db,
             auth_manager,
             http_client: reqwest::Client::new(),
+            no_proxy_client,
             rr_counter: Arc::new(RwLock::new(HashMap::new())),
         }
     }
@@ -101,14 +110,21 @@ impl LlmProxy {
         let base_url = provider.base_url.trim_end_matches('/');
         let target_url = format!("{}{}", base_url, path);
 
+        // Select HTTP client based on bypass_proxy setting
+        let client = if provider.bypass_proxy {
+            &self.no_proxy_client
+        } else {
+            &self.http_client
+        };
+
         // Build the forwarded request
         let mut req_builder = match method {
-            "GET" => self.http_client.get(&target_url),
-            "POST" => self.http_client.post(&target_url),
-            "PUT" => self.http_client.put(&target_url),
-            "DELETE" => self.http_client.delete(&target_url),
-            "PATCH" => self.http_client.patch(&target_url),
-            _ => self.http_client.post(&target_url),
+            "GET" => client.get(&target_url),
+            "POST" => client.post(&target_url),
+            "PUT" => client.put(&target_url),
+            "DELETE" => client.delete(&target_url),
+            "PATCH" => client.patch(&target_url),
+            _ => client.post(&target_url),
         };
 
         // Copy headers, replacing auth
@@ -206,14 +222,21 @@ impl LlmProxy {
         let base_url = provider.base_url.trim_end_matches('/');
         let target_url = format!("{}{}", base_url, path);
 
+        // Select HTTP client based on bypass_proxy setting
+        let client = if provider.bypass_proxy {
+            &self.no_proxy_client
+        } else {
+            &self.http_client
+        };
+
         // Build the forwarded request
         let mut req_builder = match method {
-            "GET" => self.http_client.get(&target_url),
-            "POST" => self.http_client.post(&target_url),
-            "PUT" => self.http_client.put(&target_url),
-            "DELETE" => self.http_client.delete(&target_url),
-            "PATCH" => self.http_client.patch(&target_url),
-            _ => self.http_client.post(&target_url),
+            "GET" => client.get(&target_url),
+            "POST" => client.post(&target_url),
+            "PUT" => client.put(&target_url),
+            "DELETE" => client.delete(&target_url),
+            "PATCH" => client.patch(&target_url),
+            _ => client.post(&target_url),
         };
 
         // Copy headers, replacing auth

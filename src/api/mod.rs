@@ -198,6 +198,8 @@ pub struct CreateProviderRequest {
     pub token_expiry_seconds: i64,
     #[serde(default = "default_weight")]
     pub weight: i64,
+    #[serde(default)]
+    pub bypass_proxy: bool,
 }
 
 fn default_api_type() -> String { "openai".to_string() }
@@ -241,6 +243,7 @@ pub async fn create_provider(
         &req.token_header_prefix,
         req.token_expiry_seconds,
         req.weight,
+        req.bypass_proxy,
     ).await {
         Ok(()) => (StatusCode::CREATED, Json(serde_json::json!({"id": req.id}))).into_response(),
         Err(e) => {
@@ -353,6 +356,7 @@ pub struct UpdateProviderRequest {
     pub token_header_prefix: Option<String>,
     pub token_expiry_seconds: Option<i64>,
     pub weight: Option<i64>,
+    pub bypass_proxy: Option<bool>,
     pub is_active: Option<bool>,
 }
 
@@ -404,6 +408,7 @@ pub async fn update_provider(
     let token_expiry_seconds = req.token_expiry_seconds.unwrap_or(existing.token_expiry_seconds);
     let weight = req.weight.unwrap_or(existing.weight);
     let is_active = req.is_active.unwrap_or(existing.is_active);
+    let bypass_proxy = req.bypass_proxy.unwrap_or(existing.bypass_proxy);
 
     match state.db.update_provider(
         &id, name, base_url, api_type, auth_type,
@@ -414,7 +419,7 @@ pub async fn update_provider(
         token_extra_headers,
         token_cookies,
         token_field, refresh_token_field, token_header_field, token_header_prefix,
-        token_expiry_seconds, weight, is_active,
+        token_expiry_seconds, weight, is_active, bypass_proxy,
     ).await {
         Ok(()) => (StatusCode::OK, Json(serde_json::json!({"id": id}))).into_response(),
         Err(e) => {

@@ -84,6 +84,7 @@ impl Database {
                 token_expires_at TEXT,
                 is_active BOOLEAN NOT NULL DEFAULT 1,
                 weight INTEGER NOT NULL DEFAULT 1,
+                bypass_proxy BOOLEAN NOT NULL DEFAULT 0,
                 created_at TEXT NOT NULL DEFAULT (datetime('now')),
                 updated_at TEXT NOT NULL DEFAULT (datetime('now'))
             );
@@ -260,10 +261,11 @@ impl Database {
         token_header_prefix: &str,
         token_expiry_seconds: i64,
         weight: i64,
+        bypass_proxy: bool,
     ) -> Result<(), sqlx::Error> {
         sqlx::query(
-            r#"INSERT INTO providers (id, name, base_url, api_type, auth_type, api_key, token_url, token_username, token_password, token_request_method, token_content_type, token_username_field, token_password_field, token_body_template, token_extra_headers, token_cookies, token_field, refresh_token_field, token_header_field, token_header_prefix, token_expiry_seconds, weight)
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)"#
+            r#"INSERT INTO providers (id, name, base_url, api_type, auth_type, api_key, token_url, token_username, token_password, token_request_method, token_content_type, token_username_field, token_password_field, token_body_template, token_extra_headers, token_cookies, token_field, refresh_token_field, token_header_field, token_header_prefix, token_expiry_seconds, weight, bypass_proxy)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)"#
         )
         .bind(id)
         .bind(name)
@@ -287,6 +289,7 @@ impl Database {
         .bind(token_header_prefix)
         .bind(token_expiry_seconds)
         .bind(weight)
+        .bind(bypass_proxy)
         .execute(&self.pool)
         .await?;
 
@@ -318,7 +321,7 @@ impl Database {
             api_key, token_url, token_username, token_password,
             None, None, None, None, None, None, None,
             token_field, refresh_token_field, token_header_field, token_header_prefix,
-            token_expiry_seconds, weight,
+            token_expiry_seconds, weight, false,
         ).await
     }
 
@@ -387,6 +390,7 @@ impl Database {
             token_expires_at: opt_str(r, "token_expires_at"),
             is_active: r.try_get::<i64, _>("is_active").unwrap_or(1) != 0,
             weight: r.try_get::<i64, _>("weight").unwrap_or(1),
+            bypass_proxy: r.try_get::<i64, _>("bypass_proxy").unwrap_or(0) != 0,
             created_at: r.try_get("created_at").unwrap_or_default(),
             updated_at: r.try_get("updated_at").unwrap_or_default(),
         }
@@ -464,6 +468,7 @@ impl Database {
         token_expiry_seconds: i64,
         weight: i64,
         is_active: bool,
+        bypass_proxy: bool,
     ) -> Result<(), sqlx::Error> {
         sqlx::query(
             r#"UPDATE providers SET
@@ -476,6 +481,7 @@ impl Database {
                 token_field = ?, refresh_token_field = ?,
                 token_header_field = ?, token_header_prefix = ?,
                 token_expiry_seconds = ?, weight = ?, is_active = ?,
+                bypass_proxy = ?,
                 updated_at = datetime('now')
                 WHERE id = ?"#
         )
@@ -501,6 +507,7 @@ impl Database {
         .bind(token_expiry_seconds)
         .bind(weight)
         .bind(is_active)
+        .bind(bypass_proxy)
         .bind(id)
         .execute(&self.pool)
         .await?;
@@ -855,6 +862,7 @@ pub struct ProviderRow {
     pub token_expires_at: Option<String>,
     pub is_active: bool,
     pub weight: i64,
+    pub bypass_proxy: bool,
     pub created_at: String,
     pub updated_at: String,
 }

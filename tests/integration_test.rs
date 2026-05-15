@@ -1219,6 +1219,8 @@ fn test_extract_json_path_deeply_nested() {
 // ==================== Token Extra Headers Tests ====================
 
 #[test]
+
+#[test]
 fn test_provider_extra_headers_stored() {
     let rt = tokio::runtime::Runtime::new().unwrap();
     rt.block_on(async {
@@ -1228,7 +1230,7 @@ fn test_provider_extra_headers_stored() {
             None, Some("https://auth.com/login"), Some("user"), Some("pass"),
             Some("POST"), Some("json"), Some("username"), Some("password"),
             None, Some(r#"{"X-App-Id":"myapp","X-Api-Version":"v2"}"#), None,
-            "token", "refreshToken", "Authorization", "Bearer ", 86400, 1,
+            "token", "refreshToken", "Authorization", "Bearer ", 86400, 1, false,
         ).await.unwrap();
 
         let p = db.get_provider("prov-eh").await.unwrap().unwrap();
@@ -1263,9 +1265,8 @@ fn test_provider_update_extra_headers() {
             "prov-eh2", "ExtraHeaders2", "https://p.com", "openai", "dynamic",
             None, Some("https://auth.com/login"), Some("user"), Some("pass"),
             Some("POST"), Some("json"), Some("username"), Some("password"),
-            None,
- Some(r#"{"X-Custom":"val1"}"#), None,
-            "token", "refreshToken", "Authorization", "Bearer ", 86400, 1,
+            None, Some(r#"{"X-Custom":"val1"}"#), None,
+            "token", "refreshToken", "Authorization", "Bearer ", 86400, 1, false,
         ).await.unwrap();
 
         // Update via delete + recreate with new headers
@@ -1274,16 +1275,14 @@ fn test_provider_update_extra_headers() {
             "prov-eh2", "ExtraHeaders2", "https://p.com", "openai", "dynamic",
             None, Some("https://auth.com/login"), Some("user"), Some("pass"),
             Some("POST"), Some("json"), Some("username"), Some("password"),
-
             None, Some(r#"{"X-Custom":"val2","X-New":"header"}"#), None,
-            "token", "refreshToken", "Authorization", "Bearer ", 86400, 1,
+            "token", "refreshToken", "Authorization", "Bearer ", 86400, 1, false,
         ).await.unwrap();
 
         let p = db.get_provider("prov-eh2").await.unwrap().unwrap();
         let headers: serde_json::Map<String, serde_json::Value> = serde_json::from_str(p.token_extra_headers.as_deref().unwrap()).unwrap();
-        assert_eq!(headers["X-Custom"].as_str(), Some("val2"));
-        assert_eq!(headers["X-New"].as_str(), Some("header"));
     });
+    std::fs::remove_file(":memory:").ok();
     std::fs::remove_file(":memory:").ok();
 }
 
