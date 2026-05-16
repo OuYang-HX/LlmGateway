@@ -1543,3 +1543,31 @@ async fn test_model_multiple_mappings_same_provider() {
     assert_eq!(mappings_b.len(), 1);
     assert_eq!(mappings_b[0].provider_model_id, "model-b");
 }
+
+
+#[tokio::test]
+async fn test_stats_by_api_key_with_time_range() {
+    let db = test_db().await;
+    db.create_provider(
+        "time-prov-abc", "Time Provider ABC", "https://t.com", "openai", "api_key",
+        Some("key"), None, None, None, None, None, None, None, None, None, None,
+        "token", "refreshToken", "Authorization", "Bearer ", 86400, 1, false,
+        "choices.0.message.content", "choices.0.delta.reasoning_content",
+    ).await.unwrap();
+    db.create_api_key("time-key-abc", "Time Key ABC", "sk-time-abc", "sk-tab", None).await.unwrap();
+
+    db.insert_request_log(
+        "time-key-abc", "time-prov-abc", Some("gpt-4o"), "/v1/chat/completions", "POST",
+        None, Some("{}"), Some(200), None, Some("{}"),
+        100, 200, 300, Some(150), false, false, None,
+    ).await.unwrap();
+
+    // No time filter - should find the log
+    let stats = db.get_stats_by_api_key(10, None, None).await.unwrap();
+    assert!(!stats.is_empty());
+
+    // Future time filter - should find nothing
+    let future = "2099-01-01 00:00:00";
+    let empty_stats = db.get_stats_by_api_key(10, Some(future), None).await.unwrap();
+    assert!(empty_stats.is_empty());
+}

@@ -91,7 +91,13 @@
             <div id="token-rate-legend" style="text-align:center;font-size:12px;color:#64748b;margin-top:4px">加载中...</div>
         </div>
         <div class="panel">
-            <h2>API Key 使用量 <span style="font-size:12px;color:#64748b">(Token 消耗 Top 10)</span></h2>
+            <h2>API Key 使用量 <span style="font-size:12px;color:#64748b">(Token 消耗 Top 10)</span>
+                <select id="ak-usage-range" onchange="loadApiKeyUsageChart()" style="margin-left:12px;font-size:12px;background:#1e293b;color:#e2e8f0;border:1px solid #334155;border-radius:4px;padding:2px 6px">
+                    <option value="1d">近24小时</option>
+                    <option value="7d">近7天</option>
+                    <option value="30d">近30天</option>
+                </select>
+            </h2>
             <div style="position:relative;height:180px">
                 <canvas id="apikey-usage-chart"></canvas>
             </div>
@@ -447,9 +453,24 @@ function stopTokenRateAutoRefresh(){
 let apiKeyUsageChart = null;
 let apiKeyUsageInterval = null;
 
+function getTimeRangeParams(range){
+    const now = new Date();
+    let startTime = null;
+    if(range === '1d'){
+        startTime = new Date(now - 24*60*60*1000).toISOString();
+    } else if(range === '7d'){
+        startTime = new Date(now - 7*24*60*60*1000).toISOString();
+    } else if(range === '30d'){
+        startTime = new Date(now - 30*24*60*60*1000).toISOString();
+    }
+    return startTime ? '&start_time=' + encodeURIComponent(startTime) : '';
+}
+
 async function loadApiKeyUsageChart(){
     try{
-        const resp = await fetch(API+'/stats/by-api-key?limit=10');
+        const range = document.getElementById('ak-usage-range')?.value || '1d';
+        const timeParams = getTimeRangeParams(range);
+        const resp = await fetch(API+'/stats/by-api-key?limit=10' + timeParams);
         if(!resp.ok) return;
         const data = await resp.json();
         if(!data.length){
