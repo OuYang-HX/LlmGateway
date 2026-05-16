@@ -1056,7 +1056,12 @@ function extractAnswer(responseJson, path) {
             result = result[part];
         }
     }
-    return typeof result === 'string' ? result : null;
+    if (typeof result !== 'string') return null;
+    // Strip thinking tags: <think>...</think> (used by MiniMax, DeepSeek, etc.)
+    result = result.replace(/<think>[\s\S]*?<\/think>/g, '').trim();
+    // Compress 3+ consecutive newlines to 2
+    result = result.replace(/\n{3,}/g, '\n\n');
+    return result;
 }
 
 function escapeHtml(str) {
