@@ -1596,3 +1596,31 @@ async fn test_query_logs_by_model() {
     let gpt_count = db.count_request_logs(None, None, None, None, None, Some("gpt-4o")).await.unwrap();
     assert_eq!(gpt_count, 2);
 }
+
+
+#[tokio::test]
+async fn test_stats_by_api_key_time_range_filter() {
+    let db = test_db().await;
+    db.create_provider(
+        "time-prov-2", "Time Provider 2", "https://t2.com", "openai", "api_key",
+        Some("key"), None, None, None, None, None, None, None, None, None, None,
+        "token", "refreshToken", "Authorization", "Bearer ", 86400, 1, false,
+        "choices.0.message.content", "choices.0.delta.reasoning_content",
+    ).await.unwrap();
+    db.create_api_key("time-key-2", "Time Key 2", "sk-time-2", "sk-t2", None).await.unwrap();
+
+    db.insert_request_log(
+        "time-key-2", "time-prov-2", Some("gpt-4o"), "/v1/chat/completions", "POST",
+        None, Some("{}"), Some(200), None, Some("{}"),
+        100, 200, 300, Some(150), false, false, None,
+    ).await.unwrap();
+
+    // With no time filter, should find 1
+    let stats = db.get_stats_by_api_key(10, None, None).await.unwrap();
+    assert_eq!(stats.len(), 1);
+
+    // With far future start, should find nothing
+    let future = "2099-12-31 23:59:59";
+    let empty = db.get_stats_by_api_key(10, Some(future), None).await.unwrap();
+    assert_eq!(empty.len(), 0);
+}
