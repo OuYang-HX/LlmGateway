@@ -776,6 +776,7 @@ pub async fn get_time_bucketed_stats(
 pub struct RequestLogParams {
     pub api_key_id: Option<String>,
     pub provider_id: Option<String>,
+    pub model: Option<String>,
     pub start_time: Option<String>,
     pub end_time: Option<String>,
     pub search: Option<String>,
@@ -798,6 +799,7 @@ pub async fn get_request_logs(
         params.start_time.as_deref(),
         params.end_time.as_deref(),
         params.search.as_deref(),
+        params.model.as_deref(),
         page_size as i64,
         offset,
     ).await {
@@ -808,6 +810,7 @@ pub async fn get_request_logs(
                 params.start_time.as_deref(),
                 params.end_time.as_deref(),
                 params.search.as_deref(),
+                params.model.as_deref(),
             ).await.unwrap_or(0);
 
             Json(serde_json::json!({

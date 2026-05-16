@@ -166,6 +166,7 @@
     <div id="tab-logs" class="hidden">
         <div class="controls">
             <label>服务商:</label><select id="log-provider"><option value="">全部</option></select>
+            <label>模型:</label><input id="log-model" placeholder="模型名称" style="width:100px">
             <label>关键词:</label><input id="log-search" placeholder="搜索请求/响应..." style="width:140px">
             <label>从:</label><input type="datetime-local" id="log-start">
             <label>到:</label><input type="datetime-local" id="log-end">
@@ -849,6 +850,8 @@ async function exportLogsCsv(){
         if(search)params.set('search',search);
         if(start)params.set('start_time',new Date(start).toISOString());
         if(end)params.set('end_time',new Date(end).toISOString());
+        const model=document.getElementById('log-model').value.trim();
+        if(model)params.set('model',model);
         params.set('page','1');
         params.set('page_size','10000'); // export up to 10k rows
         const data=await(await fetch(API+'/logs?'+params)).json();
@@ -888,6 +891,8 @@ async function loadLogs(){
         if(search)params.set('search',search); // searches request_body AND response_body (via OR)
         if(start)params.set('start_time',new Date(start).toISOString());
         if(end)params.set('end_time',new Date(end).toISOString());
+        const model=document.getElementById('log-model').value.trim();
+        if(model)params.set('model',model);
         params.set('page',currentLogPage);
         params.set('page_size',currentLogPageSize);
         const data=await(await fetch(API+'/logs?'+params)).json();

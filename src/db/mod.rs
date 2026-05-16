@@ -905,6 +905,7 @@ impl Database {
         start_time: Option<&str>,
         end_time: Option<&str>,
         search: Option<&str>,
+        model: Option<&str>,
         limit: i64,
         offset: i64,
     ) -> Result<Vec<RequestLogRow>, sqlx::Error> {
@@ -916,6 +917,7 @@ impl Database {
         if start_time.is_some() { query.push_str(" AND created_at >= ?"); }
         if end_time.is_some() { query.push_str(" AND created_at <= ?"); }
         if search.is_some() { query.push_str(" AND (request_body LIKE ? OR response_body LIKE ?)"); }
+        if model.is_some() { query.push_str(" AND model = ?"); }
         query.push_str(" ORDER BY created_at DESC LIMIT ? OFFSET ?");
 
         let mut q = sqlx::query_as::<_, RequestLogRow>(&query);
@@ -927,6 +929,7 @@ impl Database {
             q = q.bind(format!("%{}%", v));
             q = q.bind(format!("%{}%", v));
         }
+        if let Some(v) = model { q = q.bind(v); }
         q = q.bind(limit).bind(offset);
 
         let rows = q.fetch_all(&self.pool).await?;
@@ -941,6 +944,7 @@ impl Database {
         start_time: Option<&str>,
         end_time: Option<&str>,
         search: Option<&str>,
+        model: Option<&str>,
     ) -> Result<i64, sqlx::Error> {
         let mut query = String::from("SELECT COUNT(*) as count FROM request_logs WHERE 1=1");
         if api_key_id.is_some() { query.push_str(" AND api_key_id = ?"); }
@@ -948,6 +952,7 @@ impl Database {
         if start_time.is_some() { query.push_str(" AND created_at >= ?"); }
         if end_time.is_some() { query.push_str(" AND created_at <= ?"); }
         if search.is_some() { query.push_str(" AND (request_body LIKE ? OR response_body LIKE ?)"); }
+        if model.is_some() { query.push_str(" AND model = ?"); }
 
         let mut q = sqlx::query_scalar::<_, i64>(&query);
         if let Some(v) = api_key_id { q = q.bind(v); }
@@ -958,6 +963,7 @@ impl Database {
             q = q.bind(format!("%{}%", v));
             q = q.bind(format!("%{}%", v));
         }
+        if let Some(v) = model { q = q.bind(v); }
 
         let count = q.fetch_one(&self.pool).await?;
         Ok(count)

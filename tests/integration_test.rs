@@ -254,7 +254,7 @@ async fn test_insert_and_query_request_logs() {
         Some(1500), false, false, None,
     ).await.unwrap();
 
-    let logs = db.query_request_logs(None, None, None, None, None, 10, 0).await.unwrap();
+    let logs = db.query_request_logs(None, None, None, None, None, None,  10, 0).await.unwrap();
     assert_eq!(logs.len(), 1);
     assert_eq!(logs[0].model, Some("gpt-4".to_string()));
     assert_eq!(logs[0].prompt_tokens, 10);
@@ -274,10 +274,10 @@ async fn test_query_logs_by_api_key() {
     db.insert_request_log("key-b", "prov", None, "/v1/chat", "POST", None, None, Some(200), None, None, 5, 10, 15, Some(100), false, false, None).await.unwrap();
     db.insert_request_log("key-a", "prov", None, "/v1/chat", "POST", None, None, Some(200), None, None, 5, 10, 15, Some(100), false, false, None).await.unwrap();
 
-    let logs_a = db.query_request_logs(Some("key-a"), None, None, None, None, 10, 0).await.unwrap();
+    let logs_a = db.query_request_logs(Some("key-a"), None, None, None, None, None,  10, 0).await.unwrap();
     assert_eq!(logs_a.len(), 2);
 
-    let logs_b = db.query_request_logs(Some("key-b"), None, None, None, None, 10, 0).await.unwrap();
+    let logs_b = db.query_request_logs(Some("key-b"), None, None, None, None, None,  10, 0).await.unwrap();
     assert_eq!(logs_b.len(), 1);
 }
 
@@ -291,7 +291,7 @@ async fn test_query_logs_by_provider() {
     db.insert_request_log("key", "prov-1", None, "/v1/chat", "POST", None, None, Some(200), None, None, 5, 10, 15, Some(100), false, false, None).await.unwrap();
     db.insert_request_log("key", "prov-2", None, "/v1/chat", "POST", None, None, Some(200), None, None, 5, 10, 15, Some(100), false, false, None).await.unwrap();
 
-    let logs_1 = db.query_request_logs(None, Some("prov-1"), None, None, None, 10, 0).await.unwrap();
+    let logs_1 = db.query_request_logs(None, Some("prov-1"), None, None, None, None,  10, 0).await.unwrap();
     assert_eq!(logs_1.len(), 1);
 }
 
@@ -305,7 +305,7 @@ async fn test_count_request_logs() {
         db.insert_request_log("key", "prov", None, "/v1/chat", "POST", None, None, Some(200), None, None, 5, 10, 15, Some(100), false, false, None).await.unwrap();
     }
 
-    let count = db.count_request_logs(None, None, None, None, None).await.unwrap();
+    let count = db.count_request_logs(None, None, None, None, None, None).await.unwrap();
     assert_eq!(count, 5);
 }
 
@@ -317,7 +317,7 @@ async fn test_throttled_request_log() {
 
     db.insert_request_log("key", "prov", None, "/v1/chat", "POST", None, None, Some(429), None, None, 0, 0, 0, Some(50), false, true, Some("Rate limit exceeded")).await.unwrap();
 
-    let logs = db.query_request_logs(None, None, None, None, None, 10, 0).await.unwrap();
+    let logs = db.query_request_logs(None, None, None, None, None, None,  10, 0).await.unwrap();
     assert_eq!(logs.len(), 1);
     assert!(logs[0].is_throttled);
     assert_eq!(logs[0].response_status, Some(429));
@@ -332,7 +332,7 @@ async fn test_error_request_log() {
 
     db.insert_request_log("key", "prov", None, "/v1/chat", "POST", None, None, Some(500), None, None, 0, 0, 0, Some(2000), false, false, Some("Internal server error")).await.unwrap();
 
-    let logs = db.query_request_logs(None, None, None, None, None, 10, 0).await.unwrap();
+    let logs = db.query_request_logs(None, None, None, None, None, None,  10, 0).await.unwrap();
     assert_eq!(logs[0].error_message, Some("Internal server error".to_string()));
     assert_eq!(logs[0].response_status, Some(500));
 }
@@ -348,12 +348,12 @@ async fn test_query_logs_with_time_range() {
     // Query with past time range - should find the log
     let past = (chrono::Utc::now() - chrono::Duration::hours(1)).format("%Y-%m-%d %H:%M:%S").to_string();
     let future = (chrono::Utc::now() + chrono::Duration::hours(1)).format("%Y-%m-%d %H:%M:%S").to_string();
-    let logs = db.query_request_logs(None, None, Some(&past), Some(&future), None, 10, 0).await.unwrap();
+    let logs = db.query_request_logs(None, None, Some(&past), Some(&future), None, None,  10, 0).await.unwrap();
     assert_eq!(logs.len(), 1);
 
     // Query with far future start time - should find nothing
     let far_future = (chrono::Utc::now() + chrono::Duration::days(1)).format("%Y-%m-%d %H:%M:%S").to_string();
-    let logs = db.query_request_logs(None, None, Some(&far_future), None, None, 10, 0).await.unwrap();
+    let logs = db.query_request_logs(None, None, Some(&far_future), None, None, None,  10, 0).await.unwrap();
     assert_eq!(logs.len(), 0);
 }
 
@@ -838,7 +838,7 @@ async fn test_streaming_request_log() {
         true, false, None,
     ).await.unwrap();
 
-    let logs = db.query_request_logs(None, None, None, None, None, 10, 0).await.unwrap();
+    let logs = db.query_request_logs(None, None, None, None, None, None,  10, 0).await.unwrap();
     assert_eq!(logs.len(), 1);
     assert!(logs[0].is_streaming);
 }
@@ -856,7 +856,7 @@ async fn test_non_streaming_request_log() {
         false, false, None,
     ).await.unwrap();
 
-    let logs = db.query_request_logs(None, None, None, None, None, 10, 0).await.unwrap();
+    let logs = db.query_request_logs(None, None, None, None, None, None,  10, 0).await.unwrap();
     assert!(!logs[0].is_streaming);
 }
 
@@ -872,16 +872,16 @@ async fn test_log_pagination() {
         db.insert_request_log("key", "prov", None, "/v1/chat", "POST", None, None, Some(200), None, None, i, i*2, i*3, Some(100), false, false, None).await.unwrap();
     }
 
-    let page1 = db.query_request_logs(None, None, None, None, None, 5, 0).await.unwrap();
+    let page1 = db.query_request_logs(None, None, None, None, None, None,  5, 0).await.unwrap();
     assert_eq!(page1.len(), 5);
 
-    let page2 = db.query_request_logs(None, None, None, None, None, 5, 5).await.unwrap();
+    let page2 = db.query_request_logs(None, None, None, None, None, None,  5, 5).await.unwrap();
     assert_eq!(page2.len(), 5);
 
-    let page3 = db.query_request_logs(None, None, None, None, None, 5, 10).await.unwrap();
+    let page3 = db.query_request_logs(None, None, None, None, None, None,  5, 10).await.unwrap();
     assert_eq!(page3.len(), 5);
 
-    let total = db.count_request_logs(None, None, None, None, None).await.unwrap();
+    let total = db.count_request_logs(None, None, None, None, None, None).await.unwrap();
     assert_eq!(total, 15);
 }
 
@@ -972,7 +972,7 @@ async fn test_proxy_log_streaming_request() {
 
     assert!(log_id > 0);
 
-    let logs = db.query_request_logs(None, None, None, None, None, 10, 0).await.unwrap();
+    let logs = db.query_request_logs(None, None, None, None, None, None,  10, 0).await.unwrap();
     assert_eq!(logs.len(), 1);
     assert!(logs[0].is_streaming);
     assert_eq!(logs[0].prompt_tokens, 50);
@@ -996,7 +996,7 @@ async fn test_proxy_log_streaming_with_throttle() {
         true, Some("Rate limit exceeded"),
     ).await.unwrap();
 
-    let logs = db.query_request_logs(None, None, None, None, None, 10, 0).await.unwrap();
+    let logs = db.query_request_logs(None, None, None, None, None, None,  10, 0).await.unwrap();
     assert!(logs[0].is_throttled);
     assert_eq!(logs[0].error_message, Some("Rate limit exceeded".to_string()));
 }
@@ -1474,24 +1474,24 @@ async fn test_request_logs_search() {
     db.insert_request_log("key-s", "prov-s", None, "/v1/chat", "POST", None, Some(r#"{"messages":[{"role":"user","content":"What is Rust?"}]}"#), Some(200), None, None, 10, 20, 30, Some(100), false, false, None).await.unwrap();
 
     // Search for "joke" - should return 1
-    let logs = db.query_request_logs(None, None, None, None, Some("joke"), 20, 0).await.unwrap();
+    let logs = db.query_request_logs(None, None, None, None, Some("joke"), None,  20, 0).await.unwrap();
     assert_eq!(logs.len(), 1);
     assert!(logs[0].request_body.as_ref().unwrap().contains("joke"));
 
     // Search for "What" - should return 1 (case sensitive in LIKE, but SQLite LIKE is case-insensitive by default for ASCII)
-    let logs2 = db.query_request_logs(None, None, None, None, Some("What"), 20, 0).await.unwrap();
+    let logs2 = db.query_request_logs(None, None, None, None, Some("What"), None,  20, 0).await.unwrap();
     assert_eq!(logs2.len(), 1);
 
     // Search for "messages" - should return all 3
-    let logs3 = db.query_request_logs(None, None, None, None, Some("messages"), 20, 0).await.unwrap();
+    let logs3 = db.query_request_logs(None, None, None, None, Some("messages"), None,  20, 0).await.unwrap();
     assert_eq!(logs3.len(), 3);
 
     // No search - should return all 3
-    let all = db.query_request_logs(None, None, None, None, None, 20, 0).await.unwrap();
+    let all = db.query_request_logs(None, None, None, None, None, None, 20, 0).await.unwrap();
     assert_eq!(all.len(), 3);
 
     // Count with search
-    let count = db.count_request_logs(None, None, None, None, Some("Hello")).await.unwrap();
+    let count = db.count_request_logs(None, None, None, None, Some("Hello"), None).await.unwrap();
     assert_eq!(count, 1);
 }
 
@@ -1507,12 +1507,12 @@ async fn test_request_logs_search_response_body() {
     db.insert_request_log("key-rs", "prov-rs", None, "/v1/chat", "POST", None, Some(r#"{"messages":[{"role":"user","content":"Hi"}]}"#), Some(200), None, Some(r#"{"choices":[{"message":{"content":"Greetings!"}}]}"#), 10, 20, 30, Some(100), false, false, None).await.unwrap();
 
     // Search in response body - should find 1
-    let logs = db.query_request_logs(None, None, None, None, Some("Greetings"), 20, 0).await.unwrap();
+    let logs = db.query_request_logs(None, None, None, None, Some("Greetings"), None,  20, 0).await.unwrap();
     assert_eq!(logs.len(), 1);
     assert!(logs[0].response_body.as_ref().unwrap().contains("Greetings"));
 
     // Search in request body - should find 1
-    let logs2 = db.query_request_logs(None, None, None, None, Some("Hello"), 20, 0).await.unwrap();
+    let logs2 = db.query_request_logs(None, None, None, None, Some("Hello"), None,  20, 0).await.unwrap();
     assert_eq!(logs2.len(), 1);
     assert!(logs2[0].request_body.as_ref().unwrap().contains("Hello"));
 }
@@ -1570,4 +1570,29 @@ async fn test_stats_by_api_key_with_time_range() {
     let future = "2099-01-01 00:00:00";
     let empty_stats = db.get_stats_by_api_key(10, Some(future), None).await.unwrap();
     assert!(empty_stats.is_empty());
+}
+
+
+#[tokio::test]
+async fn test_query_logs_by_model() {
+    let db = test_db().await;
+    db.create_api_key("model-key", "Model Key", "hash", "lgk", None).await.unwrap();
+    db.create_provider_simple("model-prov", "Model Provider", "https://m.com", "openai", "api_key", Some("key"), None, None, None, "token", "refreshToken", "Authorization", "Bearer ", 86400, 1).await.unwrap();
+
+    // Insert logs for different models
+    db.insert_request_log("model-key", "model-prov", Some("gpt-4o"), "/v1/chat", "POST", None, None, Some(200), None, None, 10, 20, 30, Some(100), false, false, None).await.unwrap();
+    db.insert_request_log("model-key", "model-prov", Some("gpt-4o"), "/v1/chat", "POST", None, None, Some(200), None, None, 10, 20, 30, Some(100), false, false, None).await.unwrap();
+    db.insert_request_log("model-key", "model-prov", Some("claude-3"), "/v1/chat", "POST", None, None, Some(200), None, None, 5, 10, 15, Some(80), false, false, None).await.unwrap();
+
+    // Filter by gpt-4o
+    let gpt_logs = db.query_request_logs(None, None, None, None, None, Some("gpt-4o"), 10, 0).await.unwrap();
+    assert_eq!(gpt_logs.len(), 2);
+
+    // Filter by claude-3
+    let claude_logs = db.query_request_logs(None, None, None, None, None, Some("claude-3"), 10, 0).await.unwrap();
+    assert_eq!(claude_logs.len(), 1);
+
+    // Count by model
+    let gpt_count = db.count_request_logs(None, None, None, None, None, Some("gpt-4o")).await.unwrap();
+    assert_eq!(gpt_count, 2);
 }
