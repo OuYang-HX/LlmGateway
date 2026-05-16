@@ -815,91 +815,180 @@ function fmtTime(utcStr) {
 }
 
 // ========== 日志详情 (QA) ==========
+let currentLogData = null;
+let currentLogMode = 'qa';
+
 async function showLogDetail(logId) {
     try {
         const log = await (await fetch(API + '/logs/' + logId)).json();
         if (log.error) { alert('获取失败: ' + log.error); return; }
-        
-        // 解析请求和响应体，提取 QA 内容
-        let question = '';  // 用户发送的消息
-        let answer = '';    // 模型返回的内容
-        let reqJson = null;
-        let resJson = null;
-        
-        try { reqJson = JSON.parse(log.request_body || '{}'); } catch(e) {}
-        try { resJson = JSON.parse(log.response_body || '{}'); } catch(e) {}
-        
-        // 提取 Question: 从请求的 messages 中提取用户消息
-        if (reqJson && reqJson.messages) {
-            question = reqJson.messages
-                .filter(m => m.role === 'user' || m.role === 'system')
-                .map(m => {
-                    const roleTag = m.role === 'system' ? '[System]' : '[User]';
-                    return roleTag + ' ' + (typeof m.content === 'string' ? m.content : JSON.stringify(m.content));
-                })
-                .join('\n');
-        }
-        
-        // 提取 Answer: 从响应中提取模型回复
-        if (resJson && resJson.choices && resJson.choices[0]) {
-            const msg = resJson.choices[0].message;
-            if (msg && msg.content) {
-                answer = msg.content;
-            }
-        } else if (log.response_body) {
-            // 流式响应可能不是标准 JSON，尝试直接显示
-            answer = log.response_body;
-        }
-        
-        // 构建详情 HTML
-        let html = '';
-        
-        // 元信息
-        html += `<div class="qa-meta">`;
-        html += `<div class="qa-meta-item">时间: <span>${fmtTime(log.created_at)}</span></div>`;
-        html += `<div class="qa-meta-item">模型: <span>${log.model || '-'}</span></div>`;
-        html += `<div class="qa-meta-item">服务商: <span>${log.provider_id}</span></div>`;
-        html += `<div class="qa-meta-item">状态码: <span>${log.response_status || '-'}</span></div>`;
-        html += `<div class="qa-meta-item">Prompt Tokens: <span>${log.prompt_tokens}</span></div>`;
-        html += `<div class="qa-meta-item">Completion Tokens: <span>${log.completion_tokens}</span></div>`;
-        html += `<div class="qa-meta-item">总 Tokens: <span>${log.total_tokens}</span></div>`;
-        html += `<div class="qa-meta-item">耗时: <span>${log.duration_ms ? log.duration_ms + 'ms' : '-'}</span></div>`;
-        html += `<div class="qa-meta-item">流式: <span>${log.is_streaming ? '是' : '否'}</span></div>`;
-        html += `<div class="qa-meta-item">限流: <span>${log.is_throttled ? '⚠️ 是' : '否'}</span></div>`;
-        html += `</div>`;
-        
-        // Question
-        if (question) {
-            html += `<div class="qa-section"><h4>❓ Question（用户输入）</h4><div class="qa-content">${escapeHtml(question)}</div></div>`;
-        }
-        
-        // Answer
-        if (answer) {
-            html += `<div class="qa-section"><h4>💡 Answer（模型回复）</h4><div class="qa-content">${escapeHtml(answer)}</div></div>`;
-        }
-        
-        // 如果没有提取到 QA，显示原始请求/响应
-        if (!question && log.request_body) {
-            html += `<div class="qa-section"><h4>请求体（原始）</h4><div class="qa-content">${escapeHtml(prettyJson(log.request_body))}</div></div>`;
-        }
-        if (!answer && log.response_body) {
-            html += `<div class="qa-section"><h4>响应体（原始）</h4><div class="qa-content">${escapeHtml(prettyJson(log.response_body))}</div></div>`;
-        }
-        
-        // 错误信息
-        if (log.error_message) {
-            html += `<div class="qa-section"><h4 style="background:#5f1e1e;color:#f87171">❌ 错误信息</h4><div class="qa-content" style="border-color:#991b1b;color:#fca5a5">${escapeHtml(log.error_message)}</div></div>`;
-        }
-        
-        document.getElementById('log-detail-content').innerHTML = html;
+        currentLogData = log;
+        currentLogMode = 'qa';
+        renderLogDetail();
         document.getElementById('log-detail-modal').classList.remove('hidden');
     } catch(e) {
         alert('网络错误: ' + e.message);
     }
 }
 
+function switchLogMode(mode) {
+    currentLogMode = mode;
+    // 更新按钮样式
+    const qaBtn = document.getElementById('log-mode-qa');
+    const rawBtn = document.getElementById('log-mode-raw');
+    if (mode === 'qa') {
+        qaBtn.style.background = '#3b82f6'; qaBtn.style.color = '#fff';
+        rawBtn.style.background = 'transparent'; rawBtn.style.color = '#94a3b8';
+    } else {
+        rawBtn.style.background = '#3b82f6'; rawBtn.style.color = '#fff';
+        qaBtn.style.background = 'transparent'; qaBtn.style.color = '#94a3b8';
+    }
+    renderLogDetail();
+}
+
+function renderLogDetail() {
+    const log = currentLogData;
+    if (!log) return;
+    
+    if (currentLogMode === 'qa') {
+        renderLogDetailQA(log);
+    } else {
+        renderLogDetailRaw(log);
+    }
+}
+
+function renderLogDetailQA(log) {
+    // 解析请求和响应体，提取 QA 内容
+    let question = '';
+    let answer = '';
+    let reqJson = null;
+    let resJson = null;
+    
+    try { reqJson = JSON.parse(log.request_body || '{}'); } catch(e) {}
+    try { resJson = JSON.parse(log.response_body || '{}'); } catch(e) {}
+    
+    // 提取 Question: 从请求的 messages 中提取用户消息
+    if (reqJson && reqJson.messages) {
+        question = reqJson.messages
+            .filter(m => m.role === 'user' || m.role === 'system')
+            .map(m => {
+                const roleTag = m.role === 'system' ? '[System]' : '[User]';
+                return roleTag + ' ' + (typeof m.content === 'string' ? m.content : JSON.stringify(m.content));
+            })
+            .join('\n');
+    }
+    
+    // 提取 Answer: 从响应中提取模型回复
+    if (resJson && resJson.choices && resJson.choices[0]) {
+        const msg = resJson.choices[0].message;
+        if (msg && msg.content) {
+            answer = msg.content;
+        }
+    } else if (log.response_body) {
+        answer = log.response_body;
+    }
+    
+    // 构建详情 HTML
+    let html = '';
+    
+    // 元信息
+    html += `<div class="qa-meta">`;
+    html += `<div class="qa-meta-item">时间: <span>${fmtTime(log.created_at)}</span></div>`;
+    html += `<div class="qa-meta-item">模型: <span>${log.model || '-'}</span></div>`;
+    html += `<div class="qa-meta-item">服务商: <span>${log.provider_id}</span></div>`;
+    html += `<div class="qa-meta-item">状态码: <span>${log.response_status || '-'}</span></div>`;
+    html += `<div class="qa-meta-item">Prompt Tokens: <span>${log.prompt_tokens}</span></div>`;
+    html += `<div class="qa-meta-item">Completion Tokens: <span>${log.completion_tokens}</span></div>`;
+    html += `<div class="qa-meta-item">总 Tokens: <span>${log.total_tokens}</span></div>`;
+    html += `<div class="qa-meta-item">耗时: <span>${log.duration_ms ? log.duration_ms + 'ms' : '-'}</span></div>`;
+    html += `<div class="qa-meta-item">流式: <span>${log.is_streaming ? '是' : '否'}</span></div>`;
+    html += `<div class="qa-meta-item">限流: <span>${log.is_throttled ? '⚠️ 是' : '否'}</span></div>`;
+    html += `</div>`;
+    
+    // Question
+    if (question) {
+        html += `<div class="qa-section"><h4>❓ Question（用户输入）</h4><div class="qa-content">${escapeHtml(question)}</div></div>`;
+    }
+    
+    // Answer
+    if (answer) {
+        html += `<div class="qa-section"><h4>💡 Answer（模型回复）</h4><div class="qa-content">${escapeHtml(answer)}</div></div>`;
+    }
+    
+    // 如果没有提取到 QA，显示原始请求/响应
+    if (!question && log.request_body) {
+        html += `<div class="qa-section"><h4>请求体（原始）</h4><div class="qa-content">${escapeHtml(prettyJson(log.request_body))}</div></div>`;
+    }
+    if (!answer && log.response_body) {
+        html += `<div class="qa-section"><h4>响应体（原始）</h4><div class="qa-content">${escapeHtml(prettyJson(log.response_body))}</div></div>`;
+    }
+    
+    // 错误信息
+    if (log.error_message) {
+        html += `<div class="qa-section"><h4 style="background:#5f1e1e;color:#f87171">❌ 错误信息</h4><div class="qa-content" style="border-color:#991b1b;color:#fca5a5">${escapeHtml(log.error_message)}</div></div>`;
+    }
+    
+    document.getElementById('log-detail-content').innerHTML = html;
+}
+
+function renderLogDetailRaw(log) {
+    let html = '';
+    
+    // 请求信息
+    html += `<div class="qa-section"><h4>📤 请求信息</h4>`;
+    html += `<table style="width:100%;border-collapse:collapse;margin-bottom:8px">`;
+    html += `<tr><td style="padding:4px 8px;color:#94a3b8;width:120px;border-bottom:1px solid #334155">请求路径</td><td style="padding:4px 8px;border-bottom:1px solid #334155;font-family:monospace">${log.request_method} ${log.request_path}</td></tr>`;
+    html += `<tr><td style="padding:4px 8px;color:#94a3b8;border-bottom:1px solid #334155">服务商</td><td style="padding:4px 8px;border-bottom:1px solid #334155">${log.provider_id}</td></tr>`;
+    html += `<tr><td style="padding:4px 8px;color:#94a3b8;border-bottom:1px solid #334155">模型</td><td style="padding:4px 8px;border-bottom:1px solid #334155">${log.model || '-'}</td></tr>`;
+    html += `<tr><td style="padding:4px 8px;color:#94a3b8;border-bottom:1px solid #334155">API Key</td><td style="padding:4px 8px;border-bottom:1px solid #334155;font-family:monospace;font-size:12px">${log.api_key_id}</td></tr>`;
+    html += `<tr><td style="padding:4px 8px;color:#94a3b8;border-bottom:1px solid #334155">状态码</td><td style="padding:4px 8px;border-bottom:1px solid #334155"><span class="badge ${log.response_status && log.response_status < 400 ? 'badge-green' : 'badge-red'}">${log.response_status || '-'}</span></td></tr>`;
+    html += `<tr><td style="padding:4px 8px;color:#94a3b8;border-bottom:1px solid #334155">耗时</td><td style="padding:4px 8px;border-bottom:1px solid #334155">${log.duration_ms ? log.duration_ms + 'ms' : '-'}</td></tr>`;
+    html += `<tr><td style="padding:4px 8px;color:#94a3b8;border-bottom:1px solid #334155">流式</td><td style="padding:4px 8px;border-bottom:1px solid #334155">${log.is_streaming ? '是' : '否'}</td></tr>`;
+    html += `<tr><td style="padding:4px 8px;color:#94a3b8;border-bottom:1px solid #334155">限流</td><td style="padding:4px 8px;border-bottom:1px solid #334155">${log.is_throttled ? '⚠️ 是' : '否'}</td></tr>`;
+    html += `<tr><td style="padding:4px 8px;color:#94a3b8;border-bottom:1px solid #334155">时间</td><td style="padding:4px 8px;border-bottom:1px solid #334155">${fmtTime(log.created_at)}</td></tr>`;
+    html += `</table>`;
+    html += `</div>`;
+    
+    // Token 使用
+    html += `<div class="qa-section"><h4>📊 Token 使用</h4>`;
+    html += `<table style="width:100%;border-collapse:collapse;margin-bottom:8px">`;
+    html += `<tr><td style="padding:4px 8px;color:#94a3b8;width:120px;border-bottom:1px solid #334155">Prompt Tokens</td><td style="padding:4px 8px;border-bottom:1px solid #334155">${log.prompt_tokens}</td></tr>`;
+    html += `<tr><td style="padding:4px 8px;color:#94a3b8;border-bottom:1px solid #334155">Completion Tokens</td><td style="padding:4px 8px;border-bottom:1px solid #334155">${log.completion_tokens}</td></tr>`;
+    html += `<tr><td style="padding:4px 8px;color:#94a3b8;border-bottom:1px solid #334155">总 Tokens</td><td style="padding:4px 8px;border-bottom:1px solid #334155">${log.total_tokens}</td></tr>`;
+    html += `</table>`;
+    html += `</div>`;
+    
+    // 请求头
+    if (log.request_headers) {
+        html += `<div class="qa-section"><h4>📝 请求头</h4><div class="qa-content">${escapeHtml(prettyJson(log.request_headers))}</div></div>`;
+    }
+    
+    // 请求体
+    if (log.request_body) {
+        html += `<div class="qa-section"><h4>📤 请求体</h4><div class="qa-content">${escapeHtml(prettyJson(log.request_body))}</div></div>`;
+    }
+    
+    // 响应头
+    if (log.response_headers) {
+        html += `<div class="qa-section"><h4>📝 响应头</h4><div class="qa-content">${escapeHtml(prettyJson(log.response_headers))}</div></div>`;
+    }
+    
+    // 响应体
+    if (log.response_body) {
+        html += `<div class="qa-section"><h4>📥 响应体</h4><div class="qa-content">${escapeHtml(prettyJson(log.response_body))}</div></div>`;
+    }
+    
+    // 错误信息
+    if (log.error_message) {
+        html += `<div class="qa-section"><h4 style="background:#5f1e1e;color:#f87171">❌ 错误信息</h4><div class="qa-content" style="border-color:#991b1b;color:#fca5a5">${escapeHtml(log.error_message)}</div></div>`;
+    }
+    
+    document.getElementById('log-detail-content').innerHTML = html;
+}
+
 function closeLogDetailModal() {
     document.getElementById('log-detail-modal').classList.add('hidden');
+    currentLogData = null;
 }
 
 function escapeHtml(str) {
@@ -943,7 +1032,13 @@ setInterval(loadSummary,30000);
 <!-- ====== QA 详情 Modal ====== -->
 <div id="log-detail-modal" class="modal-overlay hidden">
 <div class="modal" style="max-width:800px">
-    <h3>📋 请求详情</h3>
+    <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:16px">
+        <h3 style="margin:0">📋 请求详情</h3>
+        <div style="display:flex;gap:4px;background:#0f172a;border-radius:6px;padding:4px">
+            <button id="log-mode-qa" class="btn btn-sm" style="background:#3b82f6" onclick="switchLogMode('qa')">QA 模式</button>
+            <button id="log-mode-raw" class="btn btn-sm" style="background:transparent;color:#94a3b8" onclick="switchLogMode('raw')">原始模式</button>
+        </div>
+    </div>
     <div id="log-detail-content"></div>
     <div class="form-actions" style="margin-top:16px">
         <button class="btn" onclick="closeLogDetailModal()">关闭</button>
