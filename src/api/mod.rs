@@ -364,6 +364,7 @@ pub struct UpdateProviderRequest {
     pub bypass_proxy: Option<bool>,
     pub is_active: Option<bool>,
     pub response_content_path: Option<String>,
+    pub new_id: Option<String>,
 }
 
 pub async fn update_provider(
@@ -416,9 +417,17 @@ pub async fn update_provider(
     let is_active = req.is_active.unwrap_or(existing.is_active);
     let bypass_proxy = req.bypass_proxy.unwrap_or(existing.bypass_proxy);
     let response_content_path = req.response_content_path.as_deref().unwrap_or(&existing.response_content_path);
+    let new_id = req.new_id.as_deref().unwrap_or(&existing.id);
+
+    // Check if new_id conflicts with an existing provider (when ID is changing)
+    if new_id != id {
+        if state.db.get_provider(new_id).await.ok().flatten().is_some() {
+            return (StatusCode::CONFLICT, Json(serde_json::json!({"error": format!("Provider ID '{}' already exists", new_id)}))).into_response();
+        }
+    }
 
     match state.db.update_provider(
-        &id, name, base_url, api_type, auth_type,
+        &id, new_id, name, base_url, api_type, auth_type,
         api_key, token_url, token_username, token_password,
         Some(token_request_method), Some(token_content_type),
         Some(token_username_field), Some(token_password_field),

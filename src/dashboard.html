@@ -354,7 +354,7 @@ function editProvider(id){
     openProviderModal(true);
     document.getElementById('prov-edit-id').value=p.id;
     document.getElementById('prov-id').value=p.id;
-    document.getElementById('prov-id').disabled=true;
+    document.getElementById('prov-id').disabled=false;
     document.getElementById('prov-name').value=p.name;
     document.getElementById('prov-base-url').value=p.base_url;
     document.getElementById('prov-api-type').value=p.api_type;
@@ -422,7 +422,8 @@ async function saveProvider(){
     try{
         let resp;
         if(editId){
-            // Update: use PUT with only changed fields
+            // Update: send new_id if changed
+            if(body.id !== editId) body.new_id = body.id;
             resp=await fetch(API+'/providers/'+editId,{method:'PUT',headers:{'Content-Type':'application/json'},body:JSON.stringify(body)});
         }else{
             resp=await fetch(API+'/providers',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(body)});

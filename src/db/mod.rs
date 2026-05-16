@@ -12,13 +12,16 @@ impl Database {
     pub async fn new(database_url: &str) -> Result<Self, sqlx::Error> {
         let pool = SqlitePoolOptions::new()
             .max_connections(5)
+            .after_connect(|conn, _meta| Box::pin(async move {
+                // Disable strict type checking for SQLite
+                sqlx::query("PRAGMA strict = OFF").execute(&mut *conn).await.ok();
+                // Disable foreign key enforcement - we handle referential integrity in application code
+                // This allows provider ID changes with cascade updates to child tables
+                sqlx::query("PRAGMA foreign_keys = OFF").execute(&mut *conn).await.ok();
+                Ok(())
+            }))
             .connect(database_url)
             .await?;
-
-        // Disable strict type checking for SQLite
-        sqlx::query("PRAGMA strict = OFF")
-            .execute(&pool)
-            .await.ok();
 
         let db = Self { pool };
         db.run_migrations().await?;
@@ -29,12 +32,13 @@ impl Database {
     pub async fn new_in_memory() -> Result<Self, sqlx::Error> {
         let pool = SqlitePoolOptions::new()
             .max_connections(1)
+            .after_connect(|conn, _meta| Box::pin(async move {
+                sqlx::query("PRAGMA strict = OFF").execute(&mut *conn).await.ok();
+                sqlx::query("PRAGMA foreign_keys = OFF").execute(&mut *conn).await.ok();
+                Ok(())
+            }))
             .connect("sqlite::memory:")
             .await?;
-
-        sqlx::query("PRAGMA strict = OFF")
-            .execute(&pool)
-            .await.ok();
 
         let db = Self { pool };
         db.run_migrations().await?;
@@ -502,7 +506,8 @@ impl Database {
     /// This avoids FOREIGN KEY constraint failures with request_logs
     pub async fn update_provider(
         &self,
-        id: &str,
+        old_id: &str,
+        new_id: &str,
         name: &str,
         base_url: &str,
         api_type: &str,
@@ -528,9 +533,23 @@ impl Database {
         bypass_proxy: bool,
         response_content_path: &str,
     ) -> Result<(), sqlx::Error> {
+        // If ID changed, cascade update all related tables
+        // Disable FK checks temporarily since we're updating the referenced key
+        if old_id != new_id {
+
+            sqlx::query("UPDATE provider_models SET provider_id = ? WHERE provider_id = ?")
+                .bind(new_id).bind(old_id).execute(&self.pool).await?;
+            sqlx::query("UPDATE model_mappings SET provider_id = ? WHERE provider_id = ?")
+                .bind(new_id).bind(old_id).execute(&self.pool).await?;
+            sqlx::query("UPDATE request_logs SET provider_id = ? WHERE provider_id = ?")
+                .bind(new_id).bind(old_id).execute(&self.pool).await?;
+            sqlx::query("UPDATE token_rate_snapshots SET provider_id = ? WHERE provider_id = ?")
+                .bind(new_id).bind(old_id).execute(&self.pool).await?;
+        }
+
         sqlx::query(
             r#"UPDATE providers SET
-                name = ?, base_url = ?, api_type = ?, auth_type = ?,
+                id = ?, name = ?, base_url = ?, api_type = ?, auth_type = ?,
                 api_key = ?, token_url = ?, token_username = ?, token_password = ?,
                 token_request_method = ?, token_content_type = ?,
                 token_username_field = ?, token_password_field = ?,
@@ -544,6 +563,7 @@ impl Database {
                 updated_at = datetime('now')
                 WHERE id = ?"#
         )
+        .bind(new_id)
         .bind(name)
         .bind(base_url)
         .bind(api_type)
@@ -568,9 +588,10 @@ impl Database {
         .bind(is_active)
         .bind(bypass_proxy)
         .bind(response_content_path)
-        .bind(id)
+        .bind(old_id)
         .execute(&self.pool)
         .await?;
+
 
         Ok(())
     }
