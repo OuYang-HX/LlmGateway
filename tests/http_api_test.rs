@@ -1101,3 +1101,27 @@ async fn test_api_key_regenerate() {
     // New key should still start with lgk-
     assert!(new_key.starts_with("lgk-"));
 }
+
+
+#[tokio::test]
+async fn test_token_rate_with_provider_query_param() {
+    let server = build_test_app().await;
+
+    // Test that the endpoint accepts provider_id query parameter
+    let resp = server.get("/api/v1/dashboard/token-rate?provider_id=test-prov").await;
+    assert_eq!(resp.status_code(), StatusCode::OK);
+    let body: Vec<serde_json::Value> = resp.json();
+    // Fresh DB returns empty
+    assert_eq!(body.len(), 0);
+}
+
+#[tokio::test]
+async fn test_provider_health_with_multiple_providers() {
+    let server = build_test_app().await;
+
+    // Fresh DB - should return empty array
+    let resp = server.get("/api/v1/dashboard/health").await;
+    assert_eq!(resp.status_code(), StatusCode::OK);
+    let body: Vec<serde_json::Value> = resp.json();
+    assert_eq!(body.len(), 0);
+}

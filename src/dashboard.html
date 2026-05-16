@@ -80,7 +80,11 @@
     <div id="tab-overview">
         <div class="stats-grid" id="summary-stats"></div>
         <div class="panel">
-            <h2>Token 速率曲线 <span style="font-size:12px;color:#64748b">(最近 1 小时)</span></h2>
+            <h2>Token 速率曲线 <span style="font-size:12px;color:#64748b">(最近 1 小时)</span>
+                <select id="tr-provider" onchange="loadTokenRateChart()" style="margin-left:12px;font-size:12px;background:#1e293b;color:#e2e8f0;border:1px solid #334155;border-radius:4px;padding:2px 6px">
+                    <option value="">全部</option>
+                </select>
+            </h2>
             <div style="position:relative;height:200px">
                 <canvas id="token-rate-chart"></canvas>
             </div>
@@ -329,7 +333,9 @@ let tokenRateInterval = null;
 
 async function loadTokenRateChart(){
     try{
-        const data = await(await fetch(API+'/dashboard/token-rate')).json();
+        const provFilter=document.getElementById('tr-provider').value;
+        const url=API+'/dashboard/token-rate'+(provFilter?'?provider_id='+encodeURIComponent(provFilter):'');
+        const data = await(await fetch(url)).json();
         if(!data || data.length === 0){
             document.getElementById('token-rate-legend').textContent = '暂无数据';
             return;
@@ -398,7 +404,16 @@ function getApiKeyName(keyId){
     return k?(k.name+' ('+k.key_prefix+')'):(keyId.slice(0,8)+'...');
 }
 
+async function loadProviderOptionsForTokenRate(){
+    try{
+        const ps=await(await fetch(API+'/providers')).json();
+        const sel=document.getElementById('tr-provider');
+        sel.innerHTML='<option value="">全部</option>'+ps.map(p=>`<option value="${p.id}">${p.name||p.id}</option>`).join('');
+    }catch(e){console.error('Failed to load provider options for token rate:',e)}
+}
+
 function startTokenRateAutoRefresh(){
+    loadProviderOptionsForTokenRate();
     loadTokenRateChart();
     if(tokenRateInterval) clearInterval(tokenRateInterval);
     tokenRateInterval = setInterval(loadTokenRateChart, 10000);
@@ -1250,7 +1265,8 @@ function prettyJson(str) {
 
 // ========== 初始化 ==========
 loadSummary();loadOverviewProviders();loadOverviewApiKeys();loadProviderHealth();startTokenRateAutoRefresh();
-setInterval(loadSummary,30000);
+setInterval(loadSummary,15000);
+setInterval(loadProviderHealth,30000);
 </script>
 
 <!-- ====== 设置对外ID Modal ====== -->
