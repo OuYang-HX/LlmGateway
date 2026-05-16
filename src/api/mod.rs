@@ -828,6 +828,19 @@ pub async fn get_dashboard_summary(
     }
 }
 
+/// Get provider health statistics (last 24h)
+pub async fn get_provider_health(
+    State(state): State<AppState>,
+) -> impl IntoResponse {
+    match state.db.get_provider_health_stats().await {
+        Ok(stats) => Json(stats).into_response(),
+        Err(e) => {
+            tracing::error!("Failed to get provider health: {}", e);
+            (StatusCode::INTERNAL_SERVER_ERROR, Json(serde_json::json!({"error": e.to_string()}))).into_response()
+        }
+    }
+}
+
 /// Get token rate data
 pub async fn get_token_rate(
     State(state): State<AppState>,

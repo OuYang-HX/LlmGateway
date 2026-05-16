@@ -1150,6 +1150,44 @@ impl Database {
         Ok(())
     }
 
+    /// Get health stats for all providers (last 24h)
+    pub async fn get_provider_health_stats(&self) -> Result<Vec<ProviderHealthStats>, sqlx::Error> {
+        let one_day_ago = (chrono::Utc::now() - chrono::Duration::days(1)).format("%Y-%m-%d %H:%M:%S").to_string();
+        let now = chrono::Utc::now().format("%Y-%m-%d %H:%M:%S").to_string();
+
+        let rows = sqlx::query_as::<_, (String, i64, i64, i64, f64, Option<String>)>(
+            r#"
+            SELECT
+                provider_id,
+                COUNT(*) as request_count,
+                SUM(CASE WHEN error_message IS NOT NULL THEN 1 ELSE 0 END) as error_count,
+                SUM(CASE WHEN is_throttled = 1 THEN 1 ELSE 0 END) as throttle_count,
+                COALESCE(AVG(duration_ms), 0.0) as avg_duration_ms,
+                MAX(created_at) as last_request_at
+            FROM request_logs
+            WHERE created_at >= ? AND created_at <= ?
+            GROUP BY provider_id
+            "#
+        )
+        .bind(&one_day_ago)
+        .bind(&now)
+        .fetch_all(&self.pool)
+        .await?;
+
+        let stats = rows.into_iter().map(|(provider_id, request_count, error_count, throttle_count, avg_duration_ms, last_request_at)| {
+            ProviderHealthStats {
+                provider_id,
+                request_count_24h: request_count,
+                error_count_24h: error_count,
+                throttle_count_24h: throttle_count,
+                avg_duration_ms,
+                last_request_at,
+            }
+        }).collect();
+
+        Ok(stats)
+    }
+
     /// Get model by ID
     pub async fn get_model(&self, id: &str) -> Result<Option<ModelRow>, sqlx::Error> {
         let row = sqlx::query_as::<_, ModelRow>(
@@ -1538,6 +1576,17 @@ pub struct TimeBucketStats {
     pub avg_duration_ms: f64,
 }
 
+
+
+#[derive(Debug, Clone, Serialize)]
+pub struct ProviderHealthStats {
+    pub provider_id: String,
+    pub request_count_24h: i64,
+    pub error_count_24h: i64,
+    pub throttle_count_24h: i64,
+    pub avg_duration_ms: f64,
+    pub last_request_at: Option<String>,
+}
 #[derive(Debug, Clone, Serialize)]
 pub struct DashboardSummaryData {
     pub total_api_keys: i64,

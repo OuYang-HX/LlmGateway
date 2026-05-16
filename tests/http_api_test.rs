@@ -38,6 +38,7 @@ async fn build_test_app() -> TestServer {
         .route("/api/v1/stats/bucketed", get(llm_gateway::api::get_time_bucketed_stats))
         .route("/api/v1/logs", get(llm_gateway::api::get_request_logs))
         .route("/api/v1/dashboard/summary", get(llm_gateway::api::get_dashboard_summary))
+        .route("/api/v1/dashboard/health", get(llm_gateway::api::get_provider_health))
         .route("/api/v1/dashboard/token-rate", get(llm_gateway::api::get_token_rate))
         .route("/ws/v1", get(llm_gateway::proxy::ws_handler::ws_proxy_handler))
         .with_state(state)
@@ -1060,4 +1061,16 @@ async fn test_token_rate_endpoint_accepts_provider_filter() {
     assert_eq!(resp.status_code(), StatusCode::OK);
     let body: Vec<serde_json::Value> = resp.json();
     assert!(body.is_empty());
+}
+
+
+#[tokio::test]
+async fn test_provider_health_endpoint_returns_ok() {
+    let server = build_test_app().await;
+
+    // Fresh DB - endpoint should return 200 with empty array
+    let resp = server.get("/api/v1/dashboard/health").await;
+    assert_eq!(resp.status_code(), StatusCode::OK);
+    let body: Vec<serde_json::Value> = resp.json();
+    assert_eq!(body.len(), 0);
 }

@@ -86,6 +86,10 @@
             </div>
             <div id="token-rate-legend" style="text-align:center;font-size:12px;color:#64748b;margin-top:4px">加载中...</div>
         </div>
+        <div class="panel">
+            <h2>服务商健康状态 <span style="font-size:12px;color:#64748b">(近24小时)</span></h2>
+            <table id="provider-health-table"><thead><tr><th>服务商</th><th>24h请求</th><th>错误</th><th>限流</th><th>Avg ms</th><th>最近请求</th></tr></thead><tbody></tbody></table>
+        </div>
         <div class="panel"><h2>服务商状态</h2><table id="overview-provider-table"><thead><tr><th>ID</th><th>名称</th><th>认证方式</th><th>状态</th></tr></thead><tbody></tbody></table></div>
         <div class="panel"><h2>API Keys</h2><table id="overview-apikey-table"><thead><tr><th>名称</th><th>前缀</th><th>允许服务商</th><th>状态</th></tr></thead><tbody></tbody></table></div>
     </div>
@@ -262,7 +266,7 @@ function showTab(name){
     event.target.classList.add('active');
     if(name==='providers') loadProvidersManage();
     if(name==='apikeys') loadApiKeysManage();
-    if(name==='overview'){loadSummary();loadOverviewProviders();loadOverviewApiKeys();startTokenRateAutoRefresh();} else {stopTokenRateAutoRefresh();}
+    if(name==='overview'){loadSummary();loadOverviewProviders();loadOverviewApiKeys();loadProviderHealth();startTokenRateAutoRefresh();} else {stopTokenRateAutoRefresh();}
     if(name==='logs') loadLogProviderOptions();
     if(name==='stats') loadStatsProviderOptions();
 }
@@ -280,6 +284,23 @@ async function loadSummary(){
             <div class="stat-card"><div class="label">24h 限流</div><div class="value red">${d.throttle_count_24h}</div></div>`;
     }catch(e){console.error(e)}
 }
+async function loadProviderHealth(){
+    try{
+        const data=await(await fetch(API+'/dashboard/health')).json();
+        if(!data || data.length===0){
+            document.getElementById('provider-health-table').querySelector('tbody').innerHTML='<tr><td colspan="6" class="empty-state">暂无数据</td></tr>';
+            return;
+        }
+        const rows=data.map(h=>{
+            const errRate=h.request_count_24h>0?(h.error_count_24h/h.request_count_24h*100).toFixed(1)+'%':'0%';
+            const status=h.error_count_24h>0?'<span style="color:red">'+errRate+'</span>':(h.throttle_count_24h>0?'<span style="color:orange">'+h.throttle_count_24h+'</span>':'<span style="color:green">正常</span>');
+            const last=h.last_request_at?new Date(h.last_request_at).toLocaleString():'-';
+            return `<tr><td>${h.provider_id}</td><td>${h.request_count_24h}</td><td>${h.error_count_24h}</td><td>${status}</td><td>${h.avg_duration_ms.toFixed(0)}ms</td><td>${last}</td></tr>`;
+        }).join('');
+        document.getElementById('provider-health-table').querySelector('tbody').innerHTML=rows;
+    }catch(e){console.error('Health load error:', e)}
+}
+
 async function loadOverviewProviders(){
     try{
         const ps=await(await fetch(API+'/providers')).json();
@@ -1195,7 +1216,7 @@ function prettyJson(str) {
 }
 
 // ========== 初始化 ==========
-loadSummary();loadOverviewProviders();loadOverviewApiKeys();startTokenRateAutoRefresh();
+loadSummary();loadOverviewProviders();loadOverviewApiKeys();loadProviderHealth();startTokenRateAutoRefresh();
 setInterval(loadSummary,30000);
 </script>
 

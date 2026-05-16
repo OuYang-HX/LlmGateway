@@ -1354,3 +1354,26 @@ async fn test_time_bucketed_stats_avg_duration() {
     // (100 + 300 + 500) / 3 = 300
     assert_eq!(buckets[0].avg_duration_ms, 300.0);
 }
+
+
+#[tokio::test]
+async fn test_provider_health_stats_returns_data() {
+    let db = test_db().await;
+    db.create_api_key("key-h", "Key", "hash", "lgk", None).await.unwrap();
+    db.create_provider_simple("prov-h", "Provider", "https://p.com", "openai", "api_key", Some("key"), None, None, None, "token", "refreshToken", "Authorization", "Bearer ", 86400, 1).await.unwrap();
+
+    // Insert some request logs
+    db.insert_request_log("key-h", "prov-h", None, "/v1/chat", "POST", None, None, Some(200), None, None, 100, 200, 300, Some(500), false, false, None).await.unwrap();
+    db.insert_request_log("key-h", "prov-h", None, "/v1/chat", "POST", None, None, Some(500), None, None, 50, 100, 150, Some(300), false, false, Some("Some error")).await.unwrap();
+
+    let stats = db.get_provider_health_stats().await.unwrap();
+    // Should have health stats for prov-h
+    let prov_stats = stats.iter().find(|s| s.provider_id == "prov-h");
+    assert!(prov_stats.is_some(), "Should have stats for prov-h");
+    let h = prov_stats.unwrap();
+    assert_eq!(h.request_count_24h, 2);
+    assert_eq!(h.error_count_24h, 1);
+    assert_eq!(h.throttle_count_24h, 0);
+    assert!((h.avg_duration_ms - 400.0).abs() < 0.1, "avg should be 400");
+    assert!(h.last_request_at.is_some());
+}
