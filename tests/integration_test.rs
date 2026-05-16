@@ -1230,7 +1230,7 @@ fn test_provider_extra_headers_stored() {
             None, Some("https://auth.com/login"), Some("user"), Some("pass"),
             Some("POST"), Some("json"), Some("username"), Some("password"),
             None, Some(r#"{"X-App-Id":"myapp","X-Api-Version":"v2"}"#), None,
-            "token", "refreshToken", "Authorization", "Bearer ", 86400, 1, false, "choices.0.message.content",
+            "token", "refreshToken", "Authorization", "Bearer ", 86400, 1, false, "choices.0.message.content", "choices.0.delta.reasoning_content",
         ).await.unwrap();
 
         let p = db.get_provider("prov-eh").await.unwrap().unwrap();
@@ -1266,7 +1266,7 @@ fn test_provider_update_extra_headers() {
             None, Some("https://auth.com/login"), Some("user"), Some("pass"),
             Some("POST"), Some("json"), Some("username"), Some("password"),
             None, Some(r#"{"X-Custom":"val1"}"#), None,
-            "token", "refreshToken", "Authorization", "Bearer ", 86400, 1, false, "choices.0.message.content",
+            "token", "refreshToken", "Authorization", "Bearer ", 86400, 1, false, "choices.0.message.content", "choices.0.delta.reasoning_content",
         ).await.unwrap();
 
         // Update via delete + recreate with new headers
@@ -1276,7 +1276,7 @@ fn test_provider_update_extra_headers() {
             None, Some("https://auth.com/login"), Some("user"), Some("pass"),
             Some("POST"), Some("json"), Some("username"), Some("password"),
             None, Some(r#"{"X-Custom":"val2","X-New":"header"}"#), None,
-            "token", "refreshToken", "Authorization", "Bearer ", 86400, 1, false, "choices.0.message.content",
+            "token", "refreshToken", "Authorization", "Bearer ", 86400, 1, false, "choices.0.message.content", "choices.0.delta.reasoning_content",
         ).await.unwrap();
 
         let p = db.get_provider("prov-eh2").await.unwrap().unwrap();

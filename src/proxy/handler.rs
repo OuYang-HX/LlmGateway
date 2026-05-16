@@ -4,8 +4,28 @@ use axum::{
     http::{HeaderMap, StatusCode},
     response::{IntoResponse, Response},
 };
+use regex::Regex;
 use uuid::Uuid;
 use crate::AppState;
+
+/// Strip thinking/reasoning tags from LLM response content (e.g. <think>...</think>, <tool_call>...</think>)
+fn strip_thinking_tags(content: &str) -> String {
+    // Strip <think>...</think> tags (may appear multiple times)
+    let re_think = Regex::new(r"<think>[\s\S]*?<\/think>").unwrap();
+    // Strip <tool_call>...</think> tags
+    let re_tool = Regex::new(r"<tool_call>[\s\S]*?<\/think>").unwrap();
+    let mut result = re_think.replace_all(content, "").to_string();
+    result = re_tool.replace_all(&result, "").to_string();
+    // For thinking content that spans across accumulated chunks without proper closing:
+    // MiniMax pattern: <tool_call>...\n\nActualResponse
+    // If content starts with thinking marker, strip everything up to first \n\n
+    let re_thought_start = Regex::new(r"^(<tool_call>[^\n]*\n)[\s\S]*?\n\n").unwrap();
+    result = re_thought_start.replace(&result, "").to_string();
+    // Compress multiple newlines to a single one
+    let re_newlines = Regex::new(r"\n{2,}").unwrap();
+    result = re_newlines.replace_all(&result, "\n").to_string();
+    result.trim().to_string()
+}
 
 /// Handler for proxying LLM requests
 pub async fn proxy_request(
@@ -268,6 +288,8 @@ pub async fn proxy_request(
                     // Stream finished - build reconstructed non-streaming response
                     let duration_ms = start.elapsed().as_millis() as i64;
                     let final_model = response_model.clone().or(Some(log_model));
+                    // Strip thinking tags from accumulated delta content
+                    let clean_content = strip_thinking_tags(&all_delta_content);
 
                     // Build a non-streaming style response body for QA
                     let reconstructed = serde_json::json!({
@@ -278,7 +300,7 @@ pub async fn proxy_request(
                             "index": 0,
                             "message": {
                                 "role": "assistant",
-                                "content": all_delta_content
+                                "content": clean_content
                             }
                         }],
                         "usage": {

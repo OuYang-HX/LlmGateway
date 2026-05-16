@@ -343,6 +343,7 @@ function openProviderModal(isEdit){
     document.getElementById('prov-token-expiry').value='86400';
     document.getElementById('prov-bypass-proxy').value='false';
     document.getElementById('prov-response-content-path').value='choices.0.message.content';
+    document.getElementById('prov-response-reasoning-path').value='choices.0.delta.reasoning_content';
     toggleAuthFields();
     document.getElementById('provider-modal').classList.remove('hidden');
 }
@@ -381,6 +382,7 @@ function editProvider(id){
         document.getElementById('prov-token-expiry').value=p.token_expiry_seconds;
         document.getElementById('prov-bypass-proxy').value=p.bypass_proxy ? 'true' : 'false';
         document.getElementById('prov-response-content-path').value=p.response_content_path || 'choices.0.message.content';
+        document.getElementById('prov-response-reasoning-path').value=p.response_reasoning_path || 'choices.0.delta.reasoning_content';
     }
     toggleAuthFields();
 }
@@ -418,6 +420,7 @@ async function saveProvider(){
         body.bypass_proxy=document.getElementById('prov-bypass-proxy').value==='true';
     }
     body.response_content_path=document.getElementById('prov-response-content-path').value || 'choices.0.message.content';
+    body.response_reasoning_path=document.getElementById('prov-response-reasoning-path').value || 'choices.0.delta.reasoning_content';
 
     try{
         let resp;
@@ -1045,7 +1048,19 @@ function closeLogDetailModal() {
     currentLogData = null;
 }
 
-function extractAnswer(responseJson, path) {
+function extractAnswer(responseJson, providerConfig) {
+    const contentPath = providerConfig ? (providerConfig.response_content_path || 'choices.0.message.content') : 'choices.0.message.content';
+    const reasoningPath = providerConfig ? (providerConfig.response_reasoning_path || 'choices.0.delta.reasoning_content') : 'choices.0.delta.reasoning_content';
+    // Try content path first
+    let answer = extractByPath(responseJson, contentPath);
+    // If empty, try reasoning path (for streaming responses)
+    if (!answer) {
+        answer = extractByPath(responseJson, reasoningPath);
+    }
+    return answer;
+}
+
+function extractByPath(responseJson, path) {
     if (!path) path = 'choices.0.message.content';
     const parts = path.split('.');
     let result = responseJson;
@@ -1058,10 +1073,10 @@ function extractAnswer(responseJson, path) {
         }
     }
     if (typeof result !== 'string') return null;
-    // Strip thinking tags: <think>...</think> (single closing tag spanning full content)
+    // Strip thinking tags: <think>...</think> and <tool_call>...</think>
     result = result.replace(/<think>[\s\S]*?<\/think>/g, '');
-    // For thinking content split across chunks: strip from <tool_call> to first \n\n
-    // MiniMax: thinking appears in content, followed by \n\n, then actual response
+    result = result.replace(/<tool_call>[\s\S]*?<\/think>/g, '');
+    // For thinking content split across chunks without proper closing tag
     if (/^<tool_call>/.test(result)) {
         const nl2 = result.indexOf('\n\n');
         if (nl2 > 0) {

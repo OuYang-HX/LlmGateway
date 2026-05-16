@@ -90,6 +90,7 @@ impl Database {
                 weight INTEGER NOT NULL DEFAULT 1,
                 bypass_proxy BOOLEAN NOT NULL DEFAULT 0,
                 response_content_path TEXT DEFAULT 'choices.0.message.content',
+                response_reasoning_path TEXT DEFAULT 'choices.0.delta.reasoning_content',
                 created_at TEXT NOT NULL DEFAULT (datetime('now')),
                 updated_at TEXT NOT NULL DEFAULT (datetime('now'))
             );
@@ -189,6 +190,13 @@ impl Database {
         // Migration: Add response_content_path column to providers table
         let _ = sqlx::query(
             "ALTER TABLE providers ADD COLUMN response_content_path TEXT DEFAULT 'choices.0.message.content'"
+        )
+        .execute(&self.pool)
+        .await;
+
+        // Migration: Add response_reasoning_path column
+        let _ = sqlx::query(
+            "ALTER TABLE providers ADD COLUMN response_reasoning_path TEXT DEFAULT 'choices.0.delta.reasoning_content'"
         )
         .execute(&self.pool)
         .await;
@@ -321,10 +329,11 @@ impl Database {
         weight: i64,
         bypass_proxy: bool,
         response_content_path: &str,
+        response_reasoning_path: &str,
     ) -> Result<(), sqlx::Error> {
         sqlx::query(
-            r#"INSERT INTO providers (id, name, base_url, api_type, auth_type, api_key, token_url, token_username, token_password, token_request_method, token_content_type, token_username_field, token_password_field, token_body_template, token_extra_headers, token_cookies, token_field, refresh_token_field, token_header_field, token_header_prefix, token_expiry_seconds, weight, bypass_proxy, response_content_path)
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)"#
+            r#"INSERT INTO providers (id, name, base_url, api_type, auth_type, api_key, token_url, token_username, token_password, token_request_method, token_content_type, token_username_field, token_password_field, token_body_template, token_extra_headers, token_cookies, token_field, refresh_token_field, token_header_field, token_header_prefix, token_expiry_seconds, weight, bypass_proxy, response_content_path, response_reasoning_path)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)"#
         )
         .bind(id)
         .bind(name)
@@ -350,6 +359,7 @@ impl Database {
         .bind(weight)
         .bind(bypass_proxy)
         .bind(response_content_path)
+        .bind(response_reasoning_path)
         .execute(&self.pool)
         .await?;
 
@@ -381,7 +391,7 @@ impl Database {
             api_key, token_url, token_username, token_password,
             None, None, None, None, None, None, None,
             token_field, refresh_token_field, token_header_field, token_header_prefix,
-            token_expiry_seconds, weight, false, "choices.0.message.content",
+            token_expiry_seconds, weight, false, "choices.0.message.content", "choices.0.delta.reasoning_content",
         ).await
     }
 
@@ -452,6 +462,7 @@ impl Database {
             weight: r.try_get::<i64, _>("weight").unwrap_or(1),
             bypass_proxy: r.try_get::<i64, _>("bypass_proxy").unwrap_or(0) != 0,
             response_content_path: r.try_get("response_content_path").unwrap_or_else(|_| "choices.0.message.content".to_string()),
+            response_reasoning_path: r.try_get("response_reasoning_path").unwrap_or_else(|_| "choices.0.delta.reasoning_content".to_string()),
             created_at: r.try_get("created_at").unwrap_or_default(),
             updated_at: r.try_get("updated_at").unwrap_or_default(),
         }
@@ -532,6 +543,7 @@ impl Database {
         is_active: bool,
         bypass_proxy: bool,
         response_content_path: &str,
+        response_reasoning_path: &str,
     ) -> Result<(), sqlx::Error> {
         // If ID changed, cascade update all related tables
         // Disable FK checks temporarily since we're updating the referenced key
@@ -560,6 +572,7 @@ impl Database {
                 token_expiry_seconds = ?, weight = ?, is_active = ?,
                 bypass_proxy = ?,
                 response_content_path = ?,
+                response_reasoning_path = ?,
                 updated_at = datetime('now')
                 WHERE id = ?"#
         )
@@ -588,6 +601,7 @@ impl Database {
         .bind(is_active)
         .bind(bypass_proxy)
         .bind(response_content_path)
+        .bind(response_reasoning_path)
         .bind(old_id)
         .execute(&self.pool)
         .await?;
@@ -1448,6 +1462,7 @@ pub struct ProviderRow {
     pub weight: i64,
     pub bypass_proxy: bool,
     pub response_content_path: String,
+    pub response_reasoning_path: String,
     pub created_at: String,
     pub updated_at: String,
 }
