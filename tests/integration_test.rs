@@ -1433,3 +1433,30 @@ async fn test_request_logs_search_response_body() {
     assert_eq!(logs2.len(), 1);
     assert!(logs2[0].request_body.as_ref().unwrap().contains("Hello"));
 }
+
+
+#[tokio::test]
+async fn test_model_multiple_mappings_same_provider() {
+    let db = test_db().await;
+    db.create_provider_simple("prov-multi", "Provider", "https://p.com", "openai", "api_key", Some("key"), None, None, None, "token", "refreshToken", "Authorization", "Bearer ", 86400, 1).await.unwrap();
+
+    // Add two provider models (just the model_id, no name/description in this API)
+    db.add_provider_model("prov-multi", "model-a").await.unwrap();
+    db.add_provider_model("prov-multi", "model-b").await.unwrap();
+
+    // Create two unified models, each mapping to different provider models
+    db.create_model("unified-a", "Unified A", None, "unified", 50, None).await.unwrap();
+    db.add_model_mapping("unified-a", "prov-multi", "model-a", 50, 1.0).await.unwrap();
+
+    db.create_model("unified-b", "Unified B", None, "unified", 50, None).await.unwrap();
+    db.add_model_mapping("unified-b", "prov-multi", "model-b", 50, 1.0).await.unwrap();
+
+    // Verify each unified model has exactly one mapping
+    let mappings_a = db.list_model_mappings("unified-a").await.unwrap();
+    assert_eq!(mappings_a.len(), 1);
+    assert_eq!(mappings_a[0].provider_model_id, "model-a");
+
+    let mappings_b = db.list_model_mappings("unified-b").await.unwrap();
+    assert_eq!(mappings_b.len(), 1);
+    assert_eq!(mappings_b[0].provider_model_id, "model-b");
+}

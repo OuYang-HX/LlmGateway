@@ -113,6 +113,14 @@
                 <input id="new-model-id" placeholder="输入模型 ID，如 gpt-4o、deepseek-chat" style="width:260px">
                 <button class="btn btn-success" onclick="addModel()">+ 添加模型</button>
                 <button class="btn" onclick="testAllModels()" id="test-all-btn">🧪 全部测试连接</button>
+                <button class="btn" onclick="showBatchExternalIdArea()">📋 批量设置对外ID</button>
+            </div>
+            <div id="batch-external-id-area" class="controls" style="margin-top:8px;background:#1e293b;padding:8px;border-radius:6px;display:none">
+                <span style="color:#94a3b8;font-size:13px">批量设置对外ID:</span>
+                <input id="batch-ext-id-prefix" placeholder="对外ID前缀，如 my-gpt" style="width:160px;margin-left:8px">
+                <span style="color:#64748b;font-size:12px">+ 模型ID，自动映射如 prefix-model_id</span>
+                <button class="btn btn-sm" onclick="applyBatchExternalId()" style="margin-left:8px">应用</button>
+                <button class="btn btn-sm" onclick="closeBatchExternalId()" style="margin-left:4px">关闭</button>
             </div>
             <table id="model-table">
                 <thead><tr><th>服务商模型ID</th><th>对外ID</th><th>状态</th><th>测试结果</th><th>测试时间</th><th>操作</th></tr></thead>
