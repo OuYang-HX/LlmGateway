@@ -1935,3 +1935,22 @@ async fn test_logs_with_error_status_filtering() {
     let error_log = logs.iter().find(|l| l.response_status == Some(500)).unwrap();
     assert!(error_log.error_message.is_some());
 }
+
+
+#[tokio::test]
+async fn test_logs_model_filter_none_model() {
+    let db = test_db().await;
+    db.create_api_key("nonemodel-key", "No Model Key", "hash", "nmk", None).await.unwrap();
+    db.create_provider_simple("nonemodel-prov", "No Model Provider", "https://nmp.com", "openai", "api_key", Some("key"), None, None, None, "token", "refreshToken", "Authorization", "Bearer ", 86400, 1).await.unwrap();
+
+    // Log with no model
+    db.insert_request_log(
+        "nonemodel-key", "nonemodel-prov", None, "/v1/chat", "POST",
+        None, Some("{}"), Some(200), None, Some("{}"),
+        10, 20, 30, Some(100), false, false, None,
+    ).await.unwrap();
+
+    let logs = db.query_request_logs(None, None, None, None, None, None, 10, 0).await.unwrap();
+    assert_eq!(logs.len(), 1);
+    assert_eq!(logs[0].model, None);
+}
