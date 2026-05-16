@@ -144,7 +144,7 @@
             <button onclick="loadLogs()">搜索</button>
         </div>
         <div class="panel">
-            <table id="logs-table"><thead><tr><th>时间</th><th>API Key</th><th>服务商</th><th>模型</th><th>状态码</th><th>Tokens</th><th>耗时</th><th>流式</th><th>限流</th><th>详情</th></tr></thead><tbody></tbody></table>
+            <table id="logs-table"><thead><tr><th>时间</th><th>API Key</th><th>服务商</th><th>模型</th><th>状态码</th><th>Tokens</th><th>耗时</th><th>流式</th><th>限流</th><th>错误</th><th>详情</th></tr></thead><tbody></tbody></table>
         </div>
     </div>
 
@@ -383,6 +383,12 @@ async function loadTokenRateChart(){
     }catch(e){console.error('Token rate chart error:', e)}
 }
 
+function getApiKeyName(keyId){
+    if(!keyId||!allApiKeys.length)return keyId?keyId.slice(0,8)+'...':'-';
+    const k=allApiKeys.find(a=>a.id===keyId);
+    return k?(k.name+' ('+k.key_prefix+')'):(keyId.slice(0,8)+'...');
+}
+
 function startTokenRateAutoRefresh(){
     loadTokenRateChart();
     if(tokenRateInterval) clearInterval(tokenRateInterval);
@@ -395,10 +401,12 @@ function stopTokenRateAutoRefresh(){
 
 // ========== 服务商管理 ==========
 let allProviders=[];
+let allApiKeys=[];
 
 async function loadProvidersManage(){
     try{
         allProviders=await(await fetch(API+'/providers')).json();
+        allApiKeys=await(await fetch(API+'/api-keys')).json();
         renderProvidersTable();
     }catch(e){console.error(e)}
 }
@@ -659,12 +667,11 @@ async function loadLogs(){
         if(end)params.set('end_time',new Date(end).toISOString());
         const data=await(await fetch(API+'/logs?'+params)).json();
         document.querySelector('#logs-table tbody').innerHTML=(data.logs||[]).map(l=>`<tr>
-            <td>${fmtTime(l.created_at)}</td><td>${l.api_key_id.slice(0,8)}...</td>
+            <td>${fmtTime(l.created_at)}</td><td>${getApiKeyName(l.api_key_id)}</td>
             <td>${l.provider_id}</td><td>${l.model||'-'}</td><td>${l.response_status||'-'}</td>
             <td>${l.total_tokens}</td><td>${l.duration_ms?l.duration_ms+'ms':'-'}</td>
-            <td>${l.is_streaming?'✅':'❌'}</td><td>${l.is_throttled?'⚠️':'✅'}</td>
-            <td><button class="btn btn-sm" onclick='showLogDetail(${l.id})'>📋 QA</button></td>
-        </tr>`).join('')||'<tr><td colspan="10" class="empty-state">暂无日志</td></tr>';
+            <td>${l.is_streaming?'✅':'❌'}</td><td>${l.is_throttled?'⚠️':'✅'}</td><td>${l.error_message?'<span style="color:red" title="'+l.error_message+'">❌</span>':'✅'}</td><td><button class="btn btn-sm" onclick='showLogDetail(${l.id})'>📋 QA</button></td>
+        </tr>`).join('')||'<tr><td colspan="11" class="empty-state">暂无日志</td></tr>';
     }catch(e){console.error(e)}
 }
 
