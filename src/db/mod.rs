@@ -1043,6 +1043,8 @@ impl Database {
     }
 
     /// Get time-bucketed statistics
+    /// For "5h" granularity: groups into 5-hour buckets starting from midnight each day
+    /// (0:00-5:00, 5:00-10:00, 10:00-15:00, 15:00-20:00, 20:00-24:00)
     pub async fn get_time_bucketed_stats(
         &self,
         api_key_id: Option<&str>,
@@ -1051,8 +1053,12 @@ impl Database {
         end_time: &str,
         granularity: &str, // "5h", "day", "week", "month"
     ) -> Result<Vec<TimeBucketStats>, sqlx::Error> {
+        if granularity == "5h" {
+            // Special handling: query by hour, then merge into 5-hour buckets
+            return self.get_5h_bucketed_stats(api_key_id, provider_id, start_time, end_time).await;
+        }
+
         let strftime_format = match granularity {
-            "5h" => "%Y-%m-%d %H",      // Group by hour, then aggregate every 5
             "day" => "%Y-%m-%d",
             "week" => "%Y-W%W",
             "month" => "%Y-%m",
@@ -1083,6 +1089,92 @@ impl Database {
 
         let rows = q.fetch_all(&self.pool).await?;
         Ok(rows)
+    }
+
+    /// Get 5-hour bucketed statistics
+    /// Each day is split into 5-hour buckets starting from midnight:
+    /// 0:00-5:00, 5:00-10:00, 10:00-15:00, 15:00-20:00, 20:00-24:00
+    /// The last bucket is only 4 hours (20-24) since a day has 24 hours.
+    async fn get_5h_bucketed_stats(
+        &self,
+        api_key_id: Option<&str>,
+        provider_id: Option<&str>,
+        start_time: &str,
+        end_time: &str,
+    ) -> Result<Vec<TimeBucketStats>, sqlx::Error> {
+        // First, query hourly stats
+        let mut query = String::from(
+            r#"SELECT
+                strftime('%Y-%m-%d %H', created_at) as period,
+                COUNT(*) as request_count,
+                COALESCE(SUM(prompt_tokens), 0) as prompt_tokens,
+                COALESCE(SUM(completion_tokens), 0) as completion_tokens,
+                COALESCE(SUM(total_tokens), 0) as total_tokens,
+                SUM(CASE WHEN is_throttled = 1 THEN 1 ELSE 0 END) as throttle_count,
+                SUM(CASE WHEN error_message IS NOT NULL THEN 1 ELSE 0 END) as error_count,
+                COALESCE(AVG(duration_ms), 0.0) as avg_duration_ms
+            FROM request_logs WHERE created_at >= ? AND created_at <= ?"#
+        );
+        if api_key_id.is_some() { query.push_str(" AND api_key_id = ?"); }
+        if provider_id.is_some() { query.push_str(" AND provider_id = ?"); }
+        query.push_str(" GROUP BY period ORDER BY period");
+
+        let mut q = sqlx::query_as::<_, TimeBucketStats>(&query);
+        q = q.bind(start_time).bind(end_time);
+        if let Some(v) = api_key_id { q = q.bind(v); }
+        if let Some(v) = provider_id { q = q.bind(v); }
+
+        let hourly_rows = q.fetch_all(&self.pool).await?;
+
+        // Merge hourly rows into 5-hour buckets
+        // Bucket index: hour / 5 => 0(0-4), 1(5-9), 2(10-14), 3(15-19), 4(20-23)
+        let mut buckets: std::collections::BTreeMap<String, TimeBucketStats> = std::collections::BTreeMap::new();
+
+        for row in &hourly_rows {
+            // Parse period like "2026-05-15 15"
+            let parts: Vec<&str> = row.period.split(' ').collect();
+            if parts.len() != 2 { continue; }
+            let date = parts[0];
+            let hour: i64 = parts[1].parse().unwrap_or(0);
+
+            // Determine bucket index (0-4)
+            let bucket_idx = hour / 5;
+            // Bucket start and end hours
+            let bucket_start = bucket_idx * 5;
+            let bucket_end = if bucket_idx == 4 { 24 } else { bucket_start + 5 }; // Last bucket is 20-24
+
+            // Generate period label like "2026-05-15 00:00~05:00"
+            let period_label = format!("{} {:02}:00~{:02}:00", date, bucket_start, bucket_end);
+
+            // Merge into bucket
+            if let Some(existing) = buckets.get_mut(&period_label) {
+                existing.request_count += row.request_count;
+                existing.prompt_tokens += row.prompt_tokens;
+                existing.completion_tokens += row.completion_tokens;
+                existing.total_tokens += row.total_tokens;
+                existing.throttle_count += row.throttle_count;
+                existing.error_count += row.error_count;
+                // Weighted average for duration_ms
+                let total_requests = existing.request_count;
+                if total_requests > 0 {
+                    existing.avg_duration_ms = (existing.avg_duration_ms * (total_requests - row.request_count) as f64 + row.avg_duration_ms * row.request_count as f64) / total_requests as f64;
+                }
+            } else {
+                let label = period_label.clone();
+                buckets.insert(period_label, TimeBucketStats {
+                    period: label,
+                    request_count: row.request_count,
+                    prompt_tokens: row.prompt_tokens,
+                    completion_tokens: row.completion_tokens,
+                    total_tokens: row.total_tokens,
+                    throttle_count: row.throttle_count,
+                    error_count: row.error_count,
+                    avg_duration_ms: row.avg_duration_ms,
+                });
+            }
+        }
+
+        Ok(buckets.into_values().collect())
     }
 
     // ========== Token rate operations ==========
