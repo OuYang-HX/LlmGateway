@@ -1125,3 +1125,22 @@ async fn test_provider_health_with_multiple_providers() {
     let body: Vec<serde_json::Value> = resp.json();
     assert_eq!(body.len(), 0);
 }
+
+
+#[tokio::test]
+async fn test_logs_pagination() {
+    let server = build_test_app().await;
+
+    // Test with page and page_size params - should return 200
+    let resp = server.get("/api/v1/logs?page=1&page_size=10").await;
+    assert_eq!(resp.status_code(), StatusCode::OK);
+    let body: serde_json::Value = resp.json();
+    assert!(body.get("logs").is_some());
+    assert!(body.get("total").is_some());
+    assert!(body.get("page").is_some());
+    assert!(body.get("page_size").is_some());
+
+    // Test with different page sizes
+    let resp2 = server.get("/api/v1/logs?page=2&page_size=50").await;
+    assert_eq!(resp2.status_code(), StatusCode::OK);
+}

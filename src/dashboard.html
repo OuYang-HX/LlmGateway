@@ -154,10 +154,20 @@
             <label>关键词:</label><input id="log-search" placeholder="搜索请求/响应..." style="width:140px">
             <label>从:</label><input type="datetime-local" id="log-start">
             <label>到:</label><input type="datetime-local" id="log-end">
-            <button onclick="loadLogs()">搜索</button>
+            <button onclick="currentLogPage=1;loadLogs()">搜索</button>
         </div>
         <div class="panel">
             <table id="logs-table"><thead><tr><th>时间</th><th>API Key</th><th>服务商</th><th>模型</th><th>状态码</th><th>Tokens</th><th>耗时</th><th>流式</th><th>限流</th><th>错误</th><th>详情</th></tr></thead><tbody></tbody></table>
+            <div class="pagination" id="logs-pagination" style="margin-top:12px;display:flex;align-items:center;gap:8px">
+                <button class="btn btn-sm" onclick="changeLogPage(-1)">← 上一页</button>
+                <span id="logs-page-info" style="color:#94a3b8;font-size:13px">第 1 页</span>
+                <button class="btn btn-sm" onclick="changeLogPage(1)">下一页 →</button>
+                <select id="logs-page-size" onchange="changeLogPageSize()" style="margin-left:12px;background:#1e293b;color:#e2e8f0;border:1px solid #334155;border-radius:4px;padding:2px 6px">
+                    <option value="20">20条/页</option>
+                    <option value="50">50条/页</option>
+                    <option value="100">100条/页</option>
+                </select>
+            </div>
         </div>
     </div>
 
@@ -426,6 +436,9 @@ function stopTokenRateAutoRefresh(){
 // ========== 服务商管理 ==========
 let allProviders=[];
 let allApiKeys=[];
+let currentLogPage=1;
+let currentLogPageSize=20;
+let currentLogTotal=0;
 
 async function loadProvidersManage(){
     try{
@@ -695,6 +708,24 @@ async function loadLogProviderOptions(){
         sel.innerHTML='<option value="">全部</option>'+ps.map(p=>`<option value="${p.id}">${p.name}</option>`).join('');
     }catch(e){console.error(e)}
 }
+function updateLogPagination(){
+    const totalPages=Math.ceil(currentLogTotal/currentLogPageSize)||1;
+    const info=document.getElementById('logs-page-info');
+    if(info)info.textContent=`第 ${currentLogPage}/${totalPages} 页，共 ${currentLogTotal} 条`;
+}
+function changeLogPage(delta){
+    const totalPages=Math.ceil(currentLogTotal/currentLogPageSize)||1;
+    const newPage=currentLogPage+delta;
+    if(newPage<1||newPage>totalPages)return;
+    currentLogPage=newPage;
+    loadLogs();
+}
+function changeLogPageSize(){
+    currentLogPageSize=parseInt(document.getElementById('logs-page-size').value);
+    currentLogPage=1;
+    loadLogs();
+}
+
 async function loadLogs(){
     try{
         const params=new URLSearchParams();
@@ -706,7 +737,11 @@ async function loadLogs(){
         if(search)params.set('search',search); // searches request_body AND response_body (via OR)
         if(start)params.set('start_time',new Date(start).toISOString());
         if(end)params.set('end_time',new Date(end).toISOString());
+        params.set('page',currentLogPage);
+        params.set('page_size',currentLogPageSize);
         const data=await(await fetch(API+'/logs?'+params)).json();
+        currentLogTotal=data.total||0;
+        updateLogPagination();
         document.querySelector('#logs-table tbody').innerHTML=(data.logs||[]).map(l=>`<tr>
             <td>${fmtTime(l.created_at)}</td><td>${getApiKeyName(l.api_key_id)}</td>
             <td>${l.provider_id}</td><td>${l.model||'-'}</td><td>${l.response_status||'-'}</td>
