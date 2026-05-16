@@ -80,6 +80,12 @@ async fn main() -> anyhow::Result<()> {
         .route("/api/v1/models/:id/mappings", post(api::add_model_mapping))
         .route("/api/v1/models/:id/mappings/:provider_id", put(api::update_model_mapping).delete(api::remove_model_mapping))
 
+        // Provider Quota management
+        .route("/api/v1/quotas/usage", get(api::get_all_quota_usage))
+        .route("/api/v1/quotas/:provider_id", post(api::set_provider_quota).get(api::get_provider_quota_usage))
+        .route("/api/v1/quotas/:provider_id/:quota_type", delete(api::delete_provider_quota))
+        .route("/api/v1/quotas/:provider_id/calibration", post(api::set_quota_calibration).get(api::get_provider_calibrations))
+
         // Statistics
         .route("/api/v1/stats", get(api::get_stats))
         .route("/api/v1/stats/bucketed", get(api::get_time_bucketed_stats))

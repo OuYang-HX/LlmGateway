@@ -1171,3 +1171,163 @@ pub async fn remove_model_mapping(
         }
     }
 }
+
+// ========== Provider Quota handlers ==========
+
+#[derive(Debug, Deserialize)]
+pub struct SetQuotaRequest {
+    pub quota_type: String,
+    pub limit_count: i64,
+    #[serde(default = "default_quota_enabled")]
+    pub is_enabled: bool,
+}
+
+fn default_quota_enabled() -> bool { true }
+
+/// Set a quota limit for a provider
+pub async fn set_provider_quota(
+    State(state): State<AppState>,
+    Path(provider_id): Path<String>,
+    Json(req): Json<SetQuotaRequest>,
+) -> impl IntoResponse {
+    // Verify provider exists
+    if state.db.get_provider(&provider_id).await.ok().flatten().is_none() {
+        return (StatusCode::NOT_FOUND, Json(serde_json::json!({"error": "Provider not found"}))).into_response();
+    }
+
+    // Validate quota_type
+    if !["5h", "weekly", "monthly"].contains(&req.quota_type.as_str()) {
+        return (StatusCode::BAD_REQUEST, Json(serde_json::json!({
+            "error": "Invalid quota_type. Must be one of: 5h, weekly, monthly"
+        }))).into_response();
+    }
+
+    if req.limit_count <= 0 {
+        return (StatusCode::BAD_REQUEST, Json(serde_json::json!({
+            "error": "limit_count must be positive"
+        }))).into_response();
+    }
+
+    match state.db.set_provider_quota(
+        &provider_id,
+        &req.quota_type,
+        req.limit_count,
+        req.is_enabled,
+    ).await {
+        Ok(()) => (StatusCode::OK, Json(serde_json::json!({
+            "provider_id": provider_id,
+            "quota_type": req.quota_type,
+            "limit_count": req.limit_count,
+            "is_enabled": req.is_enabled,
+            "message": "Quota set successfully"
+        }))).into_response(),
+        Err(e) => {
+            tracing::error!("Failed to set provider quota: {}", e);
+            (StatusCode::INTERNAL_SERVER_ERROR, Json(serde_json::json!({"error": e.to_string()}))).into_response()
+        }
+    }
+}
+
+/// Get quota usage for a specific provider
+pub async fn get_provider_quota_usage(
+    State(state): State<AppState>,
+    Path(provider_id): Path<String>,
+) -> impl IntoResponse {
+    match state.db.get_provider_quota_usage(&provider_id).await {
+        Ok(usage) => Json(usage).into_response(),
+        Err(e) => {
+            tracing::error!("Failed to get provider quota usage: {}", e);
+            (StatusCode::INTERNAL_SERVER_ERROR, Json(serde_json::json!({"error": e.to_string()}))).into_response()
+        }
+    }
+}
+
+/// Delete a quota for a provider
+pub async fn delete_provider_quota(
+    State(state): State<AppState>,
+    Path((provider_id, quota_type)): Path<(String, String)>,
+) -> impl IntoResponse {
+    match state.db.delete_provider_quota(&provider_id, &quota_type).await {
+        Ok(true) => (StatusCode::OK, Json(serde_json::json!({"message": "Quota deleted"}))).into_response(),
+        Ok(false) => (StatusCode::NOT_FOUND, Json(serde_json::json!({"error": "Quota not found"}))).into_response(),
+        Err(e) => {
+            tracing::error!("Failed to delete provider quota: {}", e);
+            (StatusCode::INTERNAL_SERVER_ERROR, Json(serde_json::json!({"error": e.to_string()}))).into_response()
+        }
+    }
+}
+
+/// Get all quota usage across all providers
+pub async fn get_all_quota_usage(
+    State(state): State<AppState>,
+) -> impl IntoResponse {
+    match state.db.get_all_quota_usage().await {
+        Ok(usage) => Json(usage).into_response(),
+        Err(e) => {
+            tracing::error!("Failed to get all quota usage: {}", e);
+            (StatusCode::INTERNAL_SERVER_ERROR, Json(serde_json::json!({"error": e.to_string()}))).into_response()
+        }
+    }
+}
+
+#[derive(Debug, Deserialize)]
+pub struct SetCalibrationRequest {
+    pub quota_type: String,
+    /// The total number of requests already used OUTSIDE the gateway
+    /// in the current period. This is an offset added to the gateway count.
+    pub calibration_offset: i64,
+    pub note: Option<String>,
+}
+
+/// Set calibration offset for a provider quota
+pub async fn set_quota_calibration(
+    State(state): State<AppState>,
+    Path(provider_id): Path<String>,
+    Json(req): Json<SetCalibrationRequest>,
+) -> impl IntoResponse {
+    // Verify provider exists
+    if state.db.get_provider(&provider_id).await.ok().flatten().is_none() {
+        return (StatusCode::NOT_FOUND, Json(serde_json::json!({"error": "Provider not found"}))).into_response();
+    }
+
+    // Verify quota exists for this type
+    let quotas = state.db.list_provider_quotas(&provider_id).await;
+    let quota_exists = quotas.unwrap_or_default().iter().any(|q| q.quota_type == req.quota_type);
+    if !quota_exists {
+        return (StatusCode::BAD_REQUEST, Json(serde_json::json!({
+            "error": format!("No quota of type '{}' configured for this provider. Please set the quota first.", req.quota_type)
+        }))).into_response();
+    }
+
+    match state.db.set_quota_calibration(
+        &provider_id,
+        &req.quota_type,
+        req.calibration_offset,
+        req.note.as_deref(),
+    ).await {
+        Ok(()) => (StatusCode::OK, Json(serde_json::json!({
+            "provider_id": provider_id,
+            "quota_type": req.quota_type,
+            "calibration_offset": req.calibration_offset,
+            "message": "Calibration set successfully"
+        }))).into_response(),
+        Err(e) => {
+            tracing::error!("Failed to set quota calibration: {}", e);
+            (StatusCode::INTERNAL_SERVER_ERROR, Json(serde_json::json!({"error": e.to_string()}))).into_response()
+        }
+    }
+}
+
+/// Get calibration info for a provider
+pub async fn get_provider_calibrations(
+    State(state): State<AppState>,
+    Path(provider_id): Path<String>,
+) -> impl IntoResponse {
+    match state.db.list_provider_calibrations(&provider_id).await {
+        Ok(calibrations) => Json(calibrations).into_response(),
+        Err(e) => {
+            tracing::error!("Failed to get provider calibrations: {}", e);
+            (StatusCode::INTERNAL_SERVER_ERROR, Json(serde_json::json!({"error": e.to_string()}))).into_response()
+        }
+    }
+}

@@ -1,0 +1,2 @@
+#!/bin/sh
+exec /home/oyhx/.gradle/wrapper/dists/gradle-8.5/bin/gradle "$@"

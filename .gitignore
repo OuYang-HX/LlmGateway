@@ -21,6 +21,13 @@ Thumbs.db
 .env
 .env.local
 
+# Android
+/android/app/build/
+/android/.gradle/
+/android/build/
+/android/local.properties
+*.apk
+
 # Autoresearch artifacts (tracked for research progress)
 # autoresearch.jsonl
 # autoresearch.ideas.md

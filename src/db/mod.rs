@@ -182,6 +182,32 @@ impl Database {
             CREATE INDEX IF NOT EXISTS idx_request_logs_api_key_created ON request_logs(api_key_id, created_at);
             CREATE INDEX IF NOT EXISTS idx_token_rate_snapshots_time ON token_rate_snapshots(snapshot_time);
             CREATE INDEX IF NOT EXISTS idx_token_rate_snapshots_provider_time ON token_rate_snapshots(provider_id, snapshot_time);
+
+            CREATE TABLE IF NOT EXISTS provider_quotas (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                provider_id TEXT NOT NULL,
+                quota_type TEXT NOT NULL,
+                limit_count INTEGER NOT NULL,
+                is_enabled BOOLEAN NOT NULL DEFAULT 1,
+                created_at TEXT NOT NULL DEFAULT (datetime('now')),
+                updated_at TEXT NOT NULL DEFAULT (datetime('now')),
+                FOREIGN KEY (provider_id) REFERENCES providers(id) ON DELETE CASCADE,
+                UNIQUE(provider_id, quota_type)
+            );
+
+            CREATE TABLE IF NOT EXISTS provider_quota_calibrations (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                provider_id TEXT NOT NULL,
+                quota_type TEXT NOT NULL,
+                calibration_offset INTEGER NOT NULL DEFAULT 0,
+                calibrated_at TEXT NOT NULL DEFAULT (datetime('now')),
+                note TEXT,
+                FOREIGN KEY (provider_id) REFERENCES providers(id) ON DELETE CASCADE,
+                UNIQUE(provider_id, quota_type)
+            );
+
+            CREATE INDEX IF NOT EXISTS idx_provider_quotas_provider ON provider_quotas(provider_id);
+            CREATE INDEX IF NOT EXISTS idx_provider_quota_calibrations_provider ON provider_quota_calibrations(provider_id);
             "#
         )
         .execute(&self.pool)
@@ -1478,6 +1504,360 @@ impl Database {
         // If not found, return None (could be extended to search provider_model_id)
         Ok(None)
     }
+
+    // ========== Provider Quota operations ==========
+
+    /// Set (upsert) a quota limit for a provider
+    pub async fn set_provider_quota(
+        &self,
+        provider_id: &str,
+        quota_type: &str,
+        limit_count: i64,
+        is_enabled: bool,
+    ) -> Result<(), sqlx::Error> {
+        sqlx::query(
+            r#"INSERT INTO provider_quotas (provider_id, quota_type, limit_count, is_enabled)
+            VALUES (?, ?, ?, ?)
+            ON CONFLICT(provider_id, quota_type) DO UPDATE SET
+                limit_count = excluded.limit_count,
+                is_enabled = excluded.is_enabled,
+                updated_at = datetime('now')"#
+        )
+        .bind(provider_id)
+        .bind(quota_type)
+        .bind(limit_count)
+        .bind(is_enabled)
+        .execute(&self.pool)
+        .await?;
+
+        Ok(())
+    }
+
+    /// Get all quotas for a provider
+    pub async fn list_provider_quotas(
+        &self,
+        provider_id: &str,
+    ) -> Result<Vec<ProviderQuotaRow>, sqlx::Error> {
+        let rows = sqlx::query_as::<_, ProviderQuotaRow>(
+            "SELECT * FROM provider_quotas WHERE provider_id = ? ORDER BY quota_type"
+        )
+        .bind(provider_id)
+        .fetch_all(&self.pool)
+        .await?;
+
+        Ok(rows)
+    }
+
+    /// Get all quotas across all providers
+    pub async fn list_all_quotas(&self) -> Result<Vec<ProviderQuotaRow>, sqlx::Error> {
+        let rows = sqlx::query_as::<_, ProviderQuotaRow>(
+            "SELECT * FROM provider_quotas ORDER BY provider_id, quota_type"
+        )
+        .fetch_all(&self.pool)
+        .await?;
+
+        Ok(rows)
+    }
+
+    /// Delete a quota for a provider
+    pub async fn delete_provider_quota(
+        &self,
+        provider_id: &str,
+        quota_type: &str,
+    ) -> Result<bool, sqlx::Error> {
+        let result = sqlx::query(
+            "DELETE FROM provider_quotas WHERE provider_id = ? AND quota_type = ?"
+        )
+        .bind(provider_id)
+        .bind(quota_type)
+        .execute(&self.pool)
+        .await?;
+
+        Ok(result.rows_affected() > 0)
+    }
+
+    /// Set (upsert) calibration offset for a provider quota
+    /// calibration_offset represents the number of requests made outside the gateway
+    /// that should be added to the gateway count for accurate total usage.
+    pub async fn set_quota_calibration(
+        &self,
+        provider_id: &str,
+        quota_type: &str,
+        calibration_offset: i64,
+        note: Option<&str>,
+    ) -> Result<(), sqlx::Error> {
+        sqlx::query(
+            r#"INSERT INTO provider_quota_calibrations (provider_id, quota_type, calibration_offset, note)
+            VALUES (?, ?, ?, ?)
+            ON CONFLICT(provider_id, quota_type) DO UPDATE SET
+                calibration_offset = excluded.calibration_offset,
+                calibrated_at = datetime('now'),
+                note = excluded.note"#
+        )
+        .bind(provider_id)
+        .bind(quota_type)
+        .bind(calibration_offset)
+        .bind(note)
+        .execute(&self.pool)
+        .await?;
+
+        Ok(())
+    }
+
+    /// Get calibration for a specific provider quota
+    pub async fn get_quota_calibration(
+        &self,
+        provider_id: &str,
+        quota_type: &str,
+    ) -> Result<Option<ProviderQuotaCalibrationRow>, sqlx::Error> {
+        let row = sqlx::query_as::<_, ProviderQuotaCalibrationRow>(
+            "SELECT * FROM provider_quota_calibrations WHERE provider_id = ? AND quota_type = ?"
+        )
+        .bind(provider_id)
+        .bind(quota_type)
+        .fetch_optional(&self.pool)
+        .await?;
+
+        Ok(row)
+    }
+
+    /// Get all calibrations for a provider
+    pub async fn list_provider_calibrations(
+        &self,
+        provider_id: &str,
+    ) -> Result<Vec<ProviderQuotaCalibrationRow>, sqlx::Error> {
+        let rows = sqlx::query_as::<_, ProviderQuotaCalibrationRow>(
+            "SELECT * FROM provider_quota_calibrations WHERE provider_id = ? ORDER BY quota_type"
+        )
+        .bind(provider_id)
+        .fetch_all(&self.pool)
+        .await?;
+
+        Ok(rows)
+    }
+
+    /// Count gateway requests for a provider in a given time range
+    pub async fn count_provider_requests(
+        &self,
+        provider_id: &str,
+        start_time: &str,
+        end_time: &str,
+    ) -> Result<i64, sqlx::Error> {
+        let count: i64 = sqlx::query_scalar(
+            "SELECT COUNT(*) FROM request_logs WHERE provider_id = ? AND created_at >= ? AND created_at <= ?"
+        )
+        .bind(provider_id)
+        .bind(start_time)
+        .bind(end_time)
+        .fetch_one(&self.pool)
+        .await?;
+
+        Ok(count)
+    }
+
+    /// Get computed quota usage for all providers
+    pub async fn get_all_quota_usage(&self) -> Result<Vec<QuotaUsageInfo>, sqlx::Error> {
+        let quotas = self.list_all_quotas().await?;
+        let mut result = Vec::new();
+
+        let now = chrono::Utc::now();
+        let now_str = now.format("%Y-%m-%d %H:%M:%S").to_string();
+
+        for quota in &quotas {
+            if !quota.is_enabled {
+                // Still include disabled quotas but with zero usage
+                let provider = self.get_provider(&quota.provider_id).await.ok().flatten();
+                result.push(QuotaUsageInfo {
+                    provider_id: quota.provider_id.clone(),
+                    provider_name: provider.map(|p| p.name).unwrap_or_default(),
+                    quota_type: quota.quota_type.clone(),
+                    limit_count: quota.limit_count,
+                    is_enabled: false,
+                    gateway_count: 0,
+                    calibration_offset: 0,
+                    estimated_total: 0,
+                    remaining: quota.limit_count,
+                    usage_percent: 0.0,
+                    period_start: String::new(),
+                    period_current: now_str.clone(),
+                });
+                continue;
+            }
+
+            let (period_start, period_end) = Self::get_quota_period(&quota.quota_type, &now);
+            let period_start_str = period_start.format("%Y-%m-%d %H:%M:%S").to_string();
+            let period_end_str = period_end.format("%Y-%m-%d %H:%M:%S").to_string();
+
+            // Count gateway requests in this period
+            let gateway_count = self.count_provider_requests(
+                &quota.provider_id,
+                &period_start_str,
+                &period_end_str,
+            ).await.unwrap_or(0);
+
+            // Get calibration offset
+            let calibration_offset = self.get_quota_calibration(&quota.provider_id, &quota.quota_type)
+                .await.ok().flatten()
+                .map(|c| c.calibration_offset)
+                .unwrap_or(0);
+
+            let estimated_total = gateway_count + calibration_offset;
+            let remaining = (quota.limit_count - estimated_total).max(0);
+            let usage_percent = if quota.limit_count > 0 {
+                (estimated_total as f64 / quota.limit_count as f64) * 100.0
+            } else {
+                0.0
+            };
+
+            let provider = self.get_provider(&quota.provider_id).await.ok().flatten();
+
+            result.push(QuotaUsageInfo {
+                provider_id: quota.provider_id.clone(),
+                provider_name: provider.map(|p| p.name).unwrap_or_default(),
+                quota_type: quota.quota_type.clone(),
+                limit_count: quota.limit_count,
+                is_enabled: quota.is_enabled,
+                gateway_count,
+                calibration_offset,
+                estimated_total,
+                remaining,
+                usage_percent: usage_percent.min(100.0),
+                period_start: period_start_str,
+                period_current: now_str.clone(),
+            });
+        }
+
+        Ok(result)
+    }
+
+    /// Get computed quota usage for a specific provider
+    pub async fn get_provider_quota_usage(
+        &self,
+        provider_id: &str,
+    ) -> Result<Vec<QuotaUsageInfo>, sqlx::Error> {
+        let quotas = self.list_provider_quotas(provider_id).await?;
+        let mut result = Vec::new();
+
+        let now = chrono::Utc::now();
+        let now_str = now.format("%Y-%m-%d %H:%M:%S").to_string();
+
+        let provider = self.get_provider(provider_id).await.ok().flatten();
+        let provider_name = provider.map(|p| p.name).unwrap_or_default();
+
+        for quota in &quotas {
+            if !quota.is_enabled {
+                result.push(QuotaUsageInfo {
+                    provider_id: quota.provider_id.clone(),
+                    provider_name: provider_name.clone(),
+                    quota_type: quota.quota_type.clone(),
+                    limit_count: quota.limit_count,
+                    is_enabled: false,
+                    gateway_count: 0,
+                    calibration_offset: 0,
+                    estimated_total: 0,
+                    remaining: quota.limit_count,
+                    usage_percent: 0.0,
+                    period_start: String::new(),
+                    period_current: now_str.clone(),
+                });
+                continue;
+            }
+
+            let (period_start, period_end) = Self::get_quota_period(&quota.quota_type, &now);
+            let period_start_str = period_start.format("%Y-%m-%d %H:%M:%S").to_string();
+            let period_end_str = period_end.format("%Y-%m-%d %H:%M:%S").to_string();
+
+            let gateway_count = self.count_provider_requests(
+                &quota.provider_id,
+                &period_start_str,
+                &period_end_str,
+            ).await.unwrap_or(0);
+
+            let calibration_offset = self.get_quota_calibration(&quota.provider_id, &quota.quota_type)
+                .await.ok().flatten()
+                .map(|c| c.calibration_offset)
+                .unwrap_or(0);
+
+            let estimated_total = gateway_count + calibration_offset;
+            let remaining = (quota.limit_count - estimated_total).max(0);
+            let usage_percent = if quota.limit_count > 0 {
+                (estimated_total as f64 / quota.limit_count as f64) * 100.0
+            } else {
+                0.0
+            };
+
+            result.push(QuotaUsageInfo {
+                provider_id: quota.provider_id.clone(),
+                provider_name: provider_name.clone(),
+                quota_type: quota.quota_type.clone(),
+                limit_count: quota.limit_count,
+                is_enabled: quota.is_enabled,
+                gateway_count,
+                calibration_offset,
+                estimated_total,
+                remaining,
+                usage_percent: usage_percent.min(100.0),
+                period_start: period_start_str,
+                period_current: now_str.clone(),
+            });
+        }
+
+        Ok(result)
+    }
+
+    /// Calculate the period start and end times for a quota type
+    /// quota_type: "5h", "weekly", "monthly"
+    /// Returns (period_start, period_end)
+    fn get_quota_period(quota_type: &str, now: &chrono::DateTime<chrono::Utc>) -> (chrono::DateTime<chrono::Utc>, chrono::DateTime<chrono::Utc>) {
+        use chrono::Datelike;
+        match quota_type {
+            "5h" => {
+                // Rolling 5-hour window: from (now - 5h) to now
+                let start = *now - chrono::Duration::hours(5);
+                (start, *now)
+            }
+            "weekly" => {
+                // Current week: Monday 00:00 UTC to next Monday 00:00 UTC
+                let weekday = now.weekday().num_days_from_monday();
+                let week_start_naive = now.date_naive()
+                    .checked_sub_signed(chrono::Duration::days(weekday as i64))
+                    .map(|d| d.and_hms_opt(0, 0, 0).unwrap())
+                    .unwrap_or_else(|| now.date_naive().and_hms_opt(0, 0, 0).unwrap());
+                let start = chrono::DateTime::parse_from_rfc3339(
+                    &format!("{}T00:00:00Z", week_start_naive.format("%Y-%m-%d"))
+                ).unwrap_or_else(|_| chrono::DateTime::parse_from_rfc3339("2000-01-01T00:00:00Z").unwrap()).to_utc();
+                let end = start + chrono::Duration::weeks(1);
+                (start, end)
+            }
+            "monthly" => {
+                // Current month: 1st 00:00 UTC to 1st of next month 00:00 UTC
+                let month_start_date = chrono::NaiveDate::from_ymd_opt(now.year(), now.month(), 1)
+                    .unwrap_or_else(|| chrono::NaiveDate::from_ymd_opt(2000, 1, 1).unwrap());
+                let month_start_naive = month_start_date.and_hms_opt(0, 0, 0).unwrap();
+                let start = chrono::DateTime::parse_from_rfc3339(
+                    &format!("{}T00:00:00Z", month_start_naive.format("%Y-%m-%d"))
+                ).unwrap_or_else(|_| chrono::DateTime::parse_from_rfc3339("2000-01-01T00:00:00Z").unwrap()).to_utc();
+
+                // Next month
+                let next_month = if now.month() == 12 {
+                    chrono::NaiveDate::from_ymd_opt(now.year() + 1, 1, 1)
+                } else {
+                    chrono::NaiveDate::from_ymd_opt(now.year(), now.month() + 1, 1)
+                }.unwrap_or_else(|| chrono::NaiveDate::from_ymd_opt(2000, 1, 1).unwrap());
+                let end_naive = next_month.and_hms_opt(0, 0, 0).unwrap();
+                let end = chrono::DateTime::parse_from_rfc3339(
+                    &format!("{}T00:00:00Z", end_naive.format("%Y-%m-%d"))
+                ).unwrap_or_else(|_| chrono::DateTime::parse_from_rfc3339("2000-01-01T00:00:00Z").unwrap()).to_utc();
+
+                (start, end)
+            }
+            _ => {
+                // Default: rolling 24h
+                let start = *now - chrono::Duration::hours(24);
+                (start, *now)
+            }
+        }
+    }
 }
 
 // ========== Model Row types ==========
@@ -1673,4 +2053,51 @@ pub struct DashboardSummaryData {
     pub total_tokens_24h: i64,
     pub avg_tokens_per_second: f64,
     pub throttle_count_24h: i64,
+}
+
+// ========== Quota Row types ==========
+
+#[derive(Debug, Clone, Serialize, sqlx::FromRow)]
+pub struct ProviderQuotaRow {
+    pub id: i64,
+    pub provider_id: String,
+    pub quota_type: String,
+    pub limit_count: i64,
+    pub is_enabled: bool,
+    pub created_at: String,
+    pub updated_at: String,
+}
+
+#[derive(Debug, Clone, Serialize, sqlx::FromRow)]
+pub struct ProviderQuotaCalibrationRow {
+    pub id: i64,
+    pub provider_id: String,
+    pub quota_type: String,
+    pub calibration_offset: i64,
+    pub calibrated_at: String,
+    pub note: Option<String>,
+}
+
+/// Computed quota usage info for a provider
+#[derive(Debug, Clone, Serialize)]
+pub struct QuotaUsageInfo {
+    pub provider_id: String,
+    pub provider_name: String,
+    pub quota_type: String,
+    pub limit_count: i64,
+    pub is_enabled: bool,
+    /// Requests counted by the gateway in the current period
+    pub gateway_count: i64,
+    /// Manual calibration offset (for requests made outside the gateway)
+    pub calibration_offset: i64,
+    /// Total estimated usage = gateway_count + calibration_offset
+    pub estimated_total: i64,
+    /// Remaining = limit_count - estimated_total
+    pub remaining: i64,
+    /// Usage percentage (0.0 - 100.0)
+    pub usage_percent: f64,
+    /// The start time of the current period
+    pub period_start: String,
+    /// The current time (for reference)
+    pub period_current: String,
 }

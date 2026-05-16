@@ -116,6 +116,54 @@ providers:
     key: lgk-your-gateway-key
 ```
 
+## Android Client
+
+项目包含一个 Android 客户端，支持局域网/公网自动切换。
+
+### 功能
+- 🏠🌐 **双网关配置**：可同时配置局域网和公网地址
+- 🔄 **自动切换**：局域网可达时优先使用局域网，不可达时自动切换公网
+- 📊 **完整 Dashboard**：WebView 加载 Web 管理界面
+- 📋 **下拉刷新**：支持下拉刷新页面
+- 🔍 **连接状态**：顶部显示当前连接类型（局域网/公网）
+- ⚙️ **设置入口**：菜单可随时修改网关地址
+
+### 构建 APK
+
+```bash
+# 前置条件：Android SDK + JDK 21
+# 首次需要安装 Android SDK（已自动配置）
+
+cd android
+
+# 构建 debug APK
+./build_apk.sh
+
+# 构建 release APK
+./build_apk.sh release
+
+# APK 输出路径
+# Debug: android/app/build/outputs/apk/debug/app-debug.apk
+# Release: android/app/build/outputs/apk/release/app-release-unsigned.apk
+```
+
+### 安装到手机
+
+```bash
+# 通过 adb 安装
+adb install android/app/build/outputs/apk/debug/app-debug.apk
+
+# 或直接将 APK 文件传到手机安装
+```
+
+### 使用流程
+1. 首次打开 → 欢迎页 → 点击「配置网关地址」
+2. 输入局域网地址（如 `http://192.168.50.188:49127`）
+3. 输入公网地址（如 `http://47.117.247.155:49127`）
+4. 点击「测试连接」验证地址可用
+5. 保存配置 → 自动进入 Dashboard
+6. 之后打开 App 自动连接，局域网优先
+
 ## Development
 
 ```bash

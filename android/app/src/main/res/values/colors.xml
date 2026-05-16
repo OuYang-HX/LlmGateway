@@ -1,0 +1,18 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <!-- Dark theme colors matching the web dashboard -->
+    <color name="background_dark">#0f172a</color>
+    <color name="card_dark">#1e293b</color>
+    <color name="input_dark">#0f172a</color>
+    <color name="border_dark">#334155</color>
+    <color name="primary_dark">#1e293b</color>
+    <color name="primary">#3b82f6</color>
+    <color name="primary_dark_blue">#2563eb</color>
+    <color name="white">#e2e8f0</color>
+    <color name="text_secondary">#94a3b8</color>
+    <color name="lan_green">#22c55e</color>
+    <color name="public_blue">#3b82f6</color>
+    <color name="error_red">#ef4444</color>
+    <color name="warning_yellow">#fbbf24</color>
+    <color name="success_green">#34d399</color>
+</resources>

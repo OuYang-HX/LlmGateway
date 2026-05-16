@@ -1,0 +1,10 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="app_name">LLM Gateway</string>
+    <string name="settings_title">网关设置</string>
+
+    <string-array name="gateway_hints">
+        <item>局域网: http://192.168.x.x:49127</item>
+        <item>公网: http://x.x.x.x:49127</item>
+    </string-array>
+</resources>
