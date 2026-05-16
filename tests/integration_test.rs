@@ -1855,3 +1855,27 @@ async fn test_stats_by_api_key_throttle_count() {
     assert_eq!(stats[0].throttle_count, 1);
     assert_eq!(stats[0].error_count, 0); // 429 is throttle, not error
 }
+
+
+#[tokio::test]
+async fn test_logs_model_filter_integration() {
+    let db = test_db().await;
+    db.create_api_key("model-filter-key", "Model Filter Key", "hash", "mfk", None).await.unwrap();
+    db.create_provider_simple("model-filter-prov", "Model Filter Provider", "https://mfp.com", "openai", "api_key", Some("key"), None, None, None, "token", "refreshToken", "Authorization", "Bearer ", 86400, 1).await.unwrap();
+
+    db.insert_request_log(
+        "model-filter-key", "model-filter-prov", Some("gpt-4o"), "/v1/chat", "POST",
+        None, Some("{}"), Some(200), None, Some("{}"),
+        10, 20, 30, Some(100), false, false, None,
+    ).await.unwrap();
+    db.insert_request_log(
+        "model-filter-key", "model-filter-prov", Some("claude-3"), "/v1/chat", "POST",
+        None, Some("{}"), Some(200), None, Some("{}"),
+        15, 25, 40, Some(100), false, false, None,
+    ).await.unwrap();
+
+    // Filter by gpt-4o
+    let logs = db.query_request_logs(None, None, None, None, None, Some("gpt-4o"), 10, 0).await.unwrap();
+    assert_eq!(logs.len(), 1);
+    assert_eq!(logs[0].model.as_deref(), Some("gpt-4o"));
+}
