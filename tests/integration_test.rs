@@ -1335,6 +1335,39 @@ async fn test_provider_reasoning_path_field() {
 }
 
 #[tokio::test]
+async fn test_provider_model_list_add_remove() {
+    let db = test_db().await;
+    db.create_provider(
+        "prov-models", "Model Test Provider", "https://api.example.com/v1", "openai", "api_key",
+        Some("key"), None, None, None, None, None, None, None, None, None, None,
+        "token", "refreshToken", "Authorization", "Bearer ", 86400, 1, false,
+        "choices.0.message.content", "choices.0.delta.reasoning_content",
+    ).await.unwrap();
+
+    // List models (should be empty)
+    let models = db.list_provider_models("prov-models").await.unwrap();
+    assert_eq!(models.len(), 0);
+
+    // Add a model
+    db.add_provider_model("prov-models", "gpt-4o").await.unwrap();
+    let models = db.list_provider_models("prov-models").await.unwrap();
+    assert_eq!(models.len(), 1);
+    assert_eq!(models[0].model_id, "gpt-4o");
+
+    // Add another model
+    db.add_provider_model("prov-models", "claude-3-opus").await.unwrap();
+    let models = db.list_provider_models("prov-models").await.unwrap();
+    assert_eq!(models.len(), 2);
+
+    // Remove a model
+    db.remove_provider_model("prov-models", "gpt-4o").await.unwrap();
+    let models = db.list_provider_models("prov-models").await.unwrap();
+    assert_eq!(models.len(), 1);
+    assert_eq!(models[0].model_id, "claude-3-opus");
+}
+
+
+#[tokio::test]
 async fn test_time_bucketed_stats_avg_duration() {
     let db = test_db().await;
     db.create_api_key("key-dur", "Key", "hash", "lgk", None).await.unwrap();

@@ -120,6 +120,7 @@
                 <button class="btn btn-success" onclick="addModel()">+ 添加模型</button>
                 <button class="btn" onclick="testAllModels()" id="test-all-btn">🧪 全部测试连接</button>
                 <button class="btn" onclick="showBatchExternalIdArea()">📋 批量设置对外ID</button>
+                <input id="model-search" placeholder="搜索模型..." style="width:140px;margin-left:16px" oninput="loadModels()">
             </div>
             <div id="batch-external-id-area" class="controls" style="margin-top:8px;background:#1e293b;padding:8px;border-radius:6px;display:none">
                 <span style="color:#94a3b8;font-size:13px">批量设置对外ID:</span>
@@ -876,7 +877,13 @@ async function loadModels() {
             tb.innerHTML = '<tr><td colspan="7" class="empty-state"><p>暂无模型，点击上方按钮添加</p></td></tr>';
             return;
         }
-        tb.innerHTML = models.map(m => {
+        const searchQuery = (document.getElementById('model-search')?.value || '').toLowerCase();
+        const filtered = models.filter(m => !searchQuery || m.model_id.toLowerCase().includes(searchQuery));
+        if (!filtered.length) {
+            tb.innerHTML = '<tr><td colspan="7" class="empty-state"><p>' + (searchQuery ? '没有匹配"' + searchQuery + '"的模型' : '暂无模型，点击上方按钮添加') + '</p></td></tr>';
+            return;
+        }
+        tb.innerHTML = filtered.map(m => {
             const statusBadge = m.is_active
                 ? '<span class="badge badge-green">可用</span>'
                 : '<span class="badge badge-red">不可用</span>';
