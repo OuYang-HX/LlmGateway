@@ -878,7 +878,38 @@ function renderLogDetailQA(log) {
     let resJson = null;
     
     try { reqJson = JSON.parse(log.request_body || '{}'); } catch(e) {}
-    try { resJson = JSON.parse(log.response_body || '{}'); } catch(e) {}
+    
+    // 解析响应体：支持标准 JSON 和 SSE 流式格式
+    const responseBody = log.response_body || '';
+    if (responseBody.trim().startsWith('data:')) {
+        // SSE 流式响应：解析所有 data: 行，拼接 delta content
+        const lines = responseBody.split('\n');
+        let deltaContent = '';
+        let lastFullJson = null;
+        for (const line of lines) {
+            const trimmed = line.trim();
+            if (!trimmed.startsWith('data:') || trimmed === 'data: [DONE]') continue;
+            const jsonStr = trimmed.substring(5).trim();
+            try {
+                const chunk = JSON.parse(jsonStr);
+                // 流式 delta 格式
+                if (chunk.choices && chunk.choices[0] && chunk.choices[0].delta) {
+                    const delta = chunk.choices[0].delta;
+                    if (delta.content) deltaContent += delta.content;
+                }
+                // 保留最后一个完整 JSON（可能包含完整 message）
+                lastFullJson = chunk;
+            } catch(e) {}
+        }
+        // 优先使用拼接的 delta content
+        if (deltaContent) {
+            answer = deltaContent;
+        } else if (lastFullJson) {
+            resJson = lastFullJson;
+        }
+    } else {
+        try { resJson = JSON.parse(responseBody || '{}'); } catch(e) {}
+    }
     
     // 提取 Question: 从请求的 messages 中提取用户消息
     if (reqJson && reqJson.messages) {
