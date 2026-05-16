@@ -305,6 +305,29 @@ pub async fn delete_provider(
     }
 }
 
+#[derive(Deserialize)]
+pub struct BatchUpdateProviderStatusRequest {
+    pub ids: Vec<String>,
+    pub enable: bool,
+}
+
+/// Batch enable or disable providers
+pub async fn batch_update_provider_status(
+    State(state): State<AppState>,
+    Json(req): Json<BatchUpdateProviderStatusRequest>,
+) -> impl IntoResponse {
+    if req.ids.is_empty() {
+        return (StatusCode::BAD_REQUEST, Json(serde_json::json!({"error": "ids cannot be empty"}))).into_response();
+    }
+    match state.db.batch_set_provider_active_status(&req.ids, req.enable).await {
+        Ok(count) => (StatusCode::OK, Json(serde_json::json!({"updated": count}))).into_response(),
+        Err(e) => {
+            tracing::error!("Failed to batch update provider status: {}", e);
+            (StatusCode::INTERNAL_SERVER_ERROR, Json(serde_json::json!({"error": e.to_string()}))).into_response()
+        }
+    }
+}
+
 /// Manually refresh a provider's token
 pub async fn refresh_provider_token(
     State(state): State<AppState>,

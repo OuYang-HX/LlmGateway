@@ -34,6 +34,7 @@ async fn build_test_app() -> TestServer {
         .route("/api/v1/api-keys/:id", get(llm_gateway::api::get_api_key).delete(llm_gateway::api::delete_api_key).post(llm_gateway::api::regenerate_api_key))
         .route("/api/v1/providers", post(llm_gateway::api::create_provider).get(llm_gateway::api::list_providers))
         .route("/api/v1/providers/:id", get(llm_gateway::api::get_provider).delete(llm_gateway::api::delete_provider).put(llm_gateway::api::update_provider))
+        .route("/api/v1/providers/batch-update-status", post(llm_gateway::api::batch_update_provider_status))
         .route("/api/v1/stats", get(llm_gateway::api::get_stats))
         .route("/api/v1/stats/bucketed", get(llm_gateway::api::get_time_bucketed_stats))
         .route("/api/v1/logs", get(llm_gateway::api::get_request_logs))
@@ -282,6 +283,55 @@ async fn test_http_delete_provider() {
 
     let get_response = server.get("/api/v1/providers/del-prov").await;
     assert_eq!(get_response.status_code(), StatusCode::NOT_FOUND);
+}
+
+#[tokio::test]
+async fn test_http_batch_update_provider_status_enable() {
+    let server = build_test_app().await;
+    // Create two providers
+    for id in ["batch-1", "batch-2"] {
+        server.post("/api/v1/providers")
+            .json(&serde_json::json!({
+                "id": id, "name": id, "base_url": "https://example.com",
+                "api_type": "openai", "auth_type": "api_key", "api_key": "key"
+            }))
+            .await;
+    }
+    // Deactivate both
+    server.post("/api/v1/providers/batch-update-status")
+        .json(&serde_json::json!({"ids": ["batch-1", "batch-2"], "enable": false}))
+        .await;
+
+    // Verify deactivated
+    let p1 = server.get("/api/v1/providers/batch-1").await;
+    let p1_body: serde_json::Value = p1.json();
+    assert_eq!(p1_body["is_active"], false);
+
+    // Batch enable
+    let resp = server.post("/api/v1/providers/batch-update-status")
+        .json(&serde_json::json!({"ids": ["batch-1"], "enable": true}))
+        .await;
+    assert_eq!(resp.status_code(), StatusCode::OK);
+    let resp_body: serde_json::Value = resp.json();
+    assert_eq!(resp_body["updated"], 1);
+
+    // Verify batch-1 is active, batch-2 is still inactive
+    let p1_active = server.get("/api/v1/providers/batch-1").await;
+    let p1_active_body: serde_json::Value = p1_active.json();
+    assert_eq!(p1_active_body["is_active"], true);
+
+    let p2_inactive = server.get("/api/v1/providers/batch-2").await;
+    let p2_inactive_body: serde_json::Value = p2_inactive.json();
+    assert_eq!(p2_inactive_body["is_active"], false);
+}
+
+#[tokio::test]
+async fn test_http_batch_update_provider_status_empty_ids() {
+    let server = build_test_app().await;
+    let resp = server.post("/api/v1/providers/batch-update-status")
+        .json(&serde_json::json!({"ids": [], "enable": true}))
+        .await;
+    assert_eq!(resp.status_code(), StatusCode::BAD_REQUEST);
 }
 
 // ==================== Statistics HTTP Tests ====================

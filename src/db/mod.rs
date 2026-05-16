@@ -622,6 +622,23 @@ impl Database {
         Ok(result.rows_affected() > 0)
     }
 
+    /// Batch update provider active status (enable or disable)
+    pub async fn batch_set_provider_active_status(&self, ids: &[String], is_active: bool) -> Result<u64, sqlx::Error> {
+        if ids.is_empty() {
+            return Ok(0);
+        }
+        let ids_json = serde_json::to_string(ids).unwrap_or("[]".to_string());
+        let result = sqlx::query(
+            "UPDATE providers SET is_active = ?, updated_at = datetime('now') WHERE id IN (SELECT value FROM json_each(?))"
+        )
+        .bind(if is_active { 1 } else { 0 })
+        .bind(&ids_json)
+        .execute(&self.pool)
+        .await?;
+
+        Ok(result.rows_affected())
+    }
+
     /// Delete a provider
     pub async fn delete_provider(&self, id: &str) -> Result<bool, sqlx::Error> {
         let result = sqlx::query("DELETE FROM providers WHERE id = ?")

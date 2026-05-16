@@ -94,7 +94,7 @@
             <h2>服务商健康状态 <span style="font-size:12px;color:#64748b">(近24小时)</span></h2>
             <table id="provider-health-table"><thead><tr><th>服务商</th><th>24h请求</th><th>错误</th><th>限流</th><th>Avg ms</th><th>最近请求</th></tr></thead><tbody></tbody></table>
         </div>
-        <div class="panel"><h2>服务商状态</h2><table id="overview-provider-table"><thead><tr><th>ID</th><th>名称</th><th>认证方式</th><th>状态</th></tr></thead><tbody></tbody></table></div>
+        <div class="panel"><h2>服务商状态</h2><table id="overview-provider-table"><thead><tr><th><input type="checkbox" id="overview-select-all" onchange="toggleSelectAllOverviewProviders(this)"></th><th>ID</th><th>名称</th><th>认证方式</th><th>状态</th></tr></thead><tbody></tbody></table></div>
         <div class="panel"><h2>API Keys</h2><table id="overview-apikey-table"><thead><tr><th>名称</th><th>前缀</th><th>允许服务商</th><th>状态</th></tr></thead><tbody></tbody></table></div>
     </div>
 
@@ -102,11 +102,13 @@
     <div id="tab-providers" class="hidden">
         <div class="controls">
             <button class="btn btn-success" onclick="openProviderModal()">+ 添加服务商</button>
+            <button class="btn" onclick="batchEnableProviders()" style="margin-left:16px">✅ 启用选中</button>
+            <button class="btn" onclick="batchDisableProviders()">⛔ 停用选中</button>
         </div>
         <div class="panel">
             <h2>大模型服务商</h2>
             <table id="provider-manage-table">
-                <thead><tr><th>ID</th><th>名称</th><th>Base URL</th><th>认证方式</th><th>权重</th><th>状态</th><th>Token</th><th>操作</th></tr></thead>
+                <thead><tr><th><input type="checkbox" id="provider-select-all" onchange="toggleSelectAllProviders(this)"></th><th>ID</th><th>名称</th><th>Base URL</th><th>认证方式</th><th>权重</th><th>状态</th><th>Token</th><th>操作</th></tr></thead>
                 <tbody></tbody>
             </table>
         </div>
@@ -328,7 +330,7 @@ async function loadProviderHealth(){
 async function loadOverviewProviders(){
     try{
         const ps=await(await fetch(API+'/providers')).json();
-        document.querySelector('#overview-provider-table tbody').innerHTML=ps.map(p=>`<tr><td>${p.id}</td><td>${p.name}</td><td><span class="badge ${p.auth_type==='api_key'?'badge-blue':'badge-yellow'}">${p.auth_type==='api_key'?'API Key':'动态Token'}</span></td><td><span class="badge ${p.is_active?'badge-green':'badge-red'}">${p.is_active?'活跃':'停用'}</span></td></tr>`).join('')||'<tr><td colspan="4" class="empty-state">暂无服务商</td></tr>';
+        document.querySelector('#overview-provider-table tbody').innerHTML=ps.map(p=>`<tr><td><input type="checkbox" class="provider-row-checkbox" value="${p.id}"></td><td>${p.id}</td><td>${p.name}</td><td><span class="badge ${p.auth_type==='api_key'?'badge-blue':'badge-yellow'}">${p.auth_type==='api_key'?'API Key':'动态Token'}</span></td><td><span class="badge ${p.is_active?'badge-green':'badge-red'}">${p.is_active?'活跃':'停用'}</span></td></tr>`).join('')||'<tr><td colspan="5" class="empty-state">暂无服务商</td></tr>';
     }catch(e){console.error(e)}
 }
 async function loadOverviewApiKeys(){
@@ -451,7 +453,7 @@ async function loadProvidersManage(){
 
 function renderProvidersTable(){
     const tb=document.querySelector('#provider-manage-table tbody');
-    if(!allProviders.length){tb.innerHTML='<tr><td colspan="8" class="empty-state"><p>暂无服务商，点击上方按钮添加</p></td></tr>';return;}
+    if(!allProviders.length){tb.innerHTML='<tr><td colspan="9" class="empty-state"><p>暂无服务商，点击上方按钮添加</p></td></tr>';return;}
     tb.innerHTML=allProviders.map(p=>{
         const authBadge=p.auth_type==='api_key'?'<span class="badge badge-blue">API Key</span>':'<span class="badge badge-yellow">动态Token</span>';
         const statusBadge=p.is_active?'<span class="badge badge-green">活跃</span>':'<span class="badge badge-red">停用</span>';
@@ -462,11 +464,34 @@ function renderProvidersTable(){
             tokenStatus='<span class="badge badge-green">-</span>';
         }
         return`<tr>
-            <td>${p.id}</td><td>${p.name}</td><td style="font-size:11px;word-break:break-all">${p.base_url}</td>
+            <td><input type="checkbox" class="provider-row-checkbox" value="${p.id}"></td><td>${p.id}</td><td>${p.name}</td><td style="font-size:11px;word-break:break-all">${p.base_url}</td>
             <td>${authBadge}</td><td>${p.weight}</td><td>${statusBadge}</td><td>${tokenStatus}</td>
             <td><button class="btn btn-sm" onclick='editProvider("${p.id}")'>编辑</button> <button class="btn btn-sm" onclick='showModels("${p.id}")'>🤖 模型</button> ${p.auth_type==='dynamic_token'?'<button class="btn btn-sm btn-success" onclick=\'refreshToken("'+p.id+'\")\'>🔄 刷新Token</button>':''} <button class="btn btn-sm btn-danger" onclick='deleteProvider("${p.id}")'>删除</button></td>
         </tr>`;
     }).join('');
+}
+
+function toggleSelectAllProviders(el){
+    document.querySelectorAll('.provider-row-checkbox').forEach(cb=>cb.checked=el.checked);
+}
+function toggleSelectAllOverviewProviders(el){
+    document.querySelectorAll('#overview-provider-table .provider-row-checkbox').forEach(cb=>cb.checked=el.checked);
+}
+async function batchEnableProviders(){await batchUpdateProviders(true);}
+async function batchDisableProviders(){await batchUpdateProviders(false);}
+async function batchUpdateProviders(enable){
+    const ids=getSelectedProviderIds();
+    if(!ids.length){alert('请先选择服务商');return;}
+    if(!confirm((enable?'启用':'停用')+'选中的 '+ids.length+' 个服务商？'))return;
+    try{
+        const r=await fetch(API+'/providers/batch-update-status',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({ids,enable})});
+        if(!r.ok)throw new Error((await r.json()).error||'失败');
+        await loadProvidersManage();
+        refreshOverview&&refreshOverview();
+    }catch(e){alert('操作失败: '+e.message);}
+}
+function getSelectedProviderIds(){
+    return Array.from(document.querySelectorAll('.provider-row-checkbox:checked')).map(cb=>cb.value);
 }
 
 function toggleAuthFields(){
