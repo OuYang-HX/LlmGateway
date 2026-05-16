@@ -1879,3 +1879,33 @@ async fn test_logs_model_filter_integration() {
     assert_eq!(logs.len(), 1);
     assert_eq!(logs[0].model.as_deref(), Some("gpt-4o"));
 }
+
+
+#[tokio::test]
+async fn test_stats_by_api_key_avg_duration() {
+    let db = test_db().await;
+    db.create_provider(
+        "dur-prov", "Duration Provider", "https://d.com", "openai", "api_key",
+        Some("key"), None, None, None, None, None, None, None, None, None, None,
+        "token", "refreshToken", "Authorization", "Bearer ", 86400, 1, false,
+        "choices.0.message.content", "choices.0.delta.reasoning_content",
+    ).await.unwrap();
+    db.create_api_key("dur-key", "Dur Key", "sk-dur", "sk-d", None).await.unwrap();
+
+    // Two logs: 100ms and 200ms -> avg should be 150ms
+    db.insert_request_log(
+        "dur-key", "dur-prov", Some("gpt-4o"), "/v1/chat", "POST",
+        None, Some("{}"), Some(200), None, Some("{}"),
+        10, 20, 30, Some(100), false, false, None,
+    ).await.unwrap();
+    db.insert_request_log(
+        "dur-key", "dur-prov", Some("gpt-4o"), "/v1/chat", "POST",
+        None, Some("{}"), Some(200), None, Some("{}"),
+        10, 20, 30, Some(200), false, false, None,
+    ).await.unwrap();
+
+    let stats = db.get_stats_by_api_key(10, None, None).await.unwrap();
+    assert_eq!(stats.len(), 1);
+    // Average of 100 and 200 is 150
+    assert!((stats[0].avg_duration_ms - 150.0).abs() < 0.01);
+}
