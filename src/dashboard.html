@@ -168,6 +168,11 @@
             <label>服务商:</label><select id="log-provider"><option value="">全部</option></select>
             <label>模型:</label><input id="log-model" placeholder="模型名称" style="width:100px">
             <label>关键词:</label><input id="log-search" placeholder="搜索请求/响应..." style="width:140px">
+            <div style="display:inline-flex;gap:2px;margin-left:8px">
+                <button class="btn btn-sm" onclick="setLogTimePreset('1h')" style="font-size:11px;padding:2px 6px">1小时</button>
+                <button class="btn btn-sm" onclick="setLogTimePreset('24h')" style="font-size:11px;padding:2px 6px">24小时</button>
+                <button class="btn btn-sm" onclick="setLogTimePreset('7d')" style="font-size:11px;padding:2px 6px">7天</button>
+            </div>
             <label>从:</label><input type="datetime-local" id="log-start">
             <label>到:</label><input type="datetime-local" id="log-end">
             <button onclick="currentLogPage=1;loadLogs()">搜索</button>
@@ -944,6 +949,22 @@ function clearLogFilters(){
     currentLogSort='created_at';
     currentLogSortDir='desc';
     updateSortIndicators();
+    loadLogs();
+}
+
+function setLogTimePreset(preset){
+    const now=new Date();
+    let start;
+    if(preset==='1h'){
+        start=new Date(now.getTime()-60*60*1000);
+    } else if(preset==='24h'){
+        start=new Date(now.getTime()-24*60*60*1000);
+    } else if(preset==='7d'){
+        start=new Date(now.getTime()-7*24*60*60*1000);
+    }
+    document.getElementById('log-start').value=start.toISOString().slice(0,16);
+    document.getElementById('log-end').value='';
+    currentLogPage=1;
     loadLogs();
 }
 
