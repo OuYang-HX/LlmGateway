@@ -1795,3 +1795,33 @@ async fn test_stats_by_api_key_ordering_desc() {
     // First should have more tokens (descending order)
     assert!(stats[0].total_tokens > stats[1].total_tokens);
 }
+
+
+#[tokio::test]
+async fn test_stats_by_api_key_includes_error_count() {
+    let db = test_db().await;
+    db.create_provider(
+        "err-prov", "Error Provider", "https://e.com", "openai", "api_key",
+        Some("key"), None, None, None, None, None, None, None, None, None, None,
+        "token", "refreshToken", "Authorization", "Bearer ", 86400, 1, false,
+        "choices.0.message.content", "choices.0.delta.reasoning_content",
+    ).await.unwrap();
+    db.create_api_key("err-key", "Error Key", "sk-err", "sk-e", None).await.unwrap();
+
+    // One success, one error
+    db.insert_request_log(
+        "err-key", "err-prov", Some("gpt-4o"), "/v1/chat", "POST",
+        None, Some("{}"), Some(200), None, Some("{}"),
+        10, 20, 30, Some(100), false, false, None,
+    ).await.unwrap();
+    db.insert_request_log(
+        "err-key", "err-prov", Some("gpt-4o"), "/v1/chat", "POST",
+        None, Some("{}"), Some(500), None, None,
+        0, 0, 0, Some(50), false, false, Some("Internal error"),
+    ).await.unwrap();
+
+    let stats = db.get_stats_by_api_key(10, None, None).await.unwrap();
+    assert_eq!(stats.len(), 1);
+    assert_eq!(stats[0].request_count, 2);
+    assert_eq!(stats[0].error_count, 1);
+}

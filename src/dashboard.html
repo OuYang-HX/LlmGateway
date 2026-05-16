@@ -372,7 +372,11 @@ async function loadOverviewProviders(){
 async function loadOverviewApiKeys(){
     try{
         const ks=await(await fetch(API+'/api-keys')).json();
-        document.querySelector('#overview-apikey-table tbody').innerHTML=ks.map(k=>`<tr><td>${k.name}</td><td>${k.key_prefix}...</td><td>${k.allowed_providers?k.allowed_providers.join(', '):'全部'}</td><td><span class="badge ${k.is_active?'badge-green':'badge-red'}">${k.is_active?'活跃':'停用'}</span></td></tr>`).join('')||'<tr><td colspan="4" class="empty-state">暂无 API Key</td></tr>';
+        document.querySelector('#overview-apikey-table tbody').innerHTML=ks.map(k=>`<tr>
+            <td>${k.name}</td><td>${k.key_prefix}...</td>
+            <td>${k.allowed_providers?k.allowed_providers.join(', '):'全部'}</td>
+            <td><span class="badge ${k.is_active?'badge-green':'badge-red'}">${k.is_active?'活跃':'停用'}</span></td>
+        </tr>`).join('')||'<tr><td colspan="4" class="empty-state">暂无 API Key</td></tr>';
     }catch(e){console.error(e)}
 }
 
