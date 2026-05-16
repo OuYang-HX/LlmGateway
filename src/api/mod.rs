@@ -200,6 +200,8 @@ pub struct CreateProviderRequest {
     pub weight: i64,
     #[serde(default)]
     pub bypass_proxy: bool,
+    #[serde(default = "default_response_content_path")]
+    pub response_content_path: String,
 }
 
 fn default_api_type() -> String { "openai".to_string() }
@@ -215,6 +217,7 @@ fn default_post() -> String { "POST".to_string() }
 fn default_json() -> String { "json".to_string() }
 fn default_username_field() -> String { "username".to_string() }
 fn default_password_field() -> String { "password".to_string() }
+fn default_response_content_path() -> String { "choices.0.message.content".to_string() }
 
 /// Create a new provider
 pub async fn create_provider(
@@ -245,6 +248,7 @@ pub async fn create_provider(
         req.token_expiry_seconds,
         req.weight,
         req.bypass_proxy,
+        &req.response_content_path,
     ).await {
         Ok(()) => (StatusCode::CREATED, Json(serde_json::json!({"id": req.id}))).into_response(),
         Err(e) => {
@@ -359,6 +363,7 @@ pub struct UpdateProviderRequest {
     pub weight: Option<i64>,
     pub bypass_proxy: Option<bool>,
     pub is_active: Option<bool>,
+    pub response_content_path: Option<String>,
 }
 
 pub async fn update_provider(
@@ -410,6 +415,7 @@ pub async fn update_provider(
     let weight = req.weight.unwrap_or(existing.weight);
     let is_active = req.is_active.unwrap_or(existing.is_active);
     let bypass_proxy = req.bypass_proxy.unwrap_or(existing.bypass_proxy);
+    let response_content_path = req.response_content_path.as_deref().unwrap_or(&existing.response_content_path);
 
     match state.db.update_provider(
         &id, name, base_url, api_type, auth_type,
@@ -421,6 +427,7 @@ pub async fn update_provider(
         token_cookies,
         token_field, refresh_token_field, token_header_field, token_header_prefix,
         token_expiry_seconds, weight, is_active, bypass_proxy,
+        response_content_path,
     ).await {
         Ok(()) => (StatusCode::OK, Json(serde_json::json!({"id": id}))).into_response(),
         Err(e) => {

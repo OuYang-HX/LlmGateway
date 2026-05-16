@@ -207,6 +207,12 @@
         <div class="form-group"><label>绕过代理</label><select id="prov-bypass-proxy"><option value="false">否</option><option value="true">是</option></select><small style="color:#64748b">访问内网服务商时绕过系统代理（如华为内网 API）</small></div>
     </div>
 
+    <div class="auth-section">
+        <h4>📋 响应内容路径</h4>
+        <div class="form-group"><label>响应内容路径</label><input id="prov-response-content-path" value="choices.0.message.content"><small style="color:#64748b">从响应 JSON 提取模型回复的路径，支持点号和数组索引。如 choices.0.message.content、output.text、result.0.content.0.text</small></div>
+    </div>
+    </div>
+
     <div class="form-actions">
         <button class="btn" onclick="closeProviderModal()">取消</button>
         <button class="btn btn-success" onclick="saveProvider()">保存</button>
@@ -336,6 +342,7 @@ function openProviderModal(isEdit){
     document.getElementById('prov-dyn-header-prefix').value='Bearer ';
     document.getElementById('prov-token-expiry').value='86400';
     document.getElementById('prov-bypass-proxy').value='false';
+    document.getElementById('prov-response-content-path').value='choices.0.message.content';
     toggleAuthFields();
     document.getElementById('provider-modal').classList.remove('hidden');
 }
@@ -373,6 +380,7 @@ function editProvider(id){
         document.getElementById('prov-dyn-header-prefix').value=p.token_header_prefix;
         document.getElementById('prov-token-expiry').value=p.token_expiry_seconds;
         document.getElementById('prov-bypass-proxy').value=p.bypass_proxy ? 'true' : 'false';
+        document.getElementById('prov-response-content-path').value=p.response_content_path || 'choices.0.message.content';
     }
     toggleAuthFields();
 }
@@ -409,6 +417,7 @@ async function saveProvider(){
         body.token_expiry_seconds=parseInt(document.getElementById('prov-token-expiry').value)||86400;
         body.bypass_proxy=document.getElementById('prov-bypass-proxy').value==='true';
     }
+    body.response_content_path=document.getElementById('prov-response-content-path').value || 'choices.0.message.content';
 
     try{
         let resp;
@@ -820,6 +829,10 @@ let currentLogMode = 'qa';
 
 async function showLogDetail(logId) {
     try {
+        // 确保 allProviders 已加载（用于 QA 模式提取 response_content_path）
+        if (!allProviders.length) {
+            allProviders = await (await fetch(API + '/providers')).json();
+        }
         const log = await (await fetch(API + '/logs/' + logId)).json();
         if (log.error) { alert('获取失败: ' + log.error); return; }
         currentLogData = log;
@@ -878,13 +891,22 @@ function renderLogDetailQA(log) {
             .join('\n');
     }
     
-    // 提取 Answer: 从响应中提取模型回复
-    if (resJson && resJson.choices && resJson.choices[0]) {
-        const msg = resJson.choices[0].message;
-        if (msg && msg.content) {
-            answer = msg.content;
+    // 提取 Answer: 根据服务商配置的 response_content_path 动态提取
+    let responseContentPath = 'choices.0.message.content';
+    if (log.provider_id && allProviders.length) {
+        const provider = allProviders.find(p => p.id === log.provider_id);
+        if (provider && provider.response_content_path) {
+            responseContentPath = provider.response_content_path;
         }
-    } else if (log.response_body) {
+    }
+    
+    if (resJson) {
+        const extractedAnswer = extractAnswer(resJson, responseContentPath);
+        if (extractedAnswer) {
+            answer = extractedAnswer;
+        }
+    }
+    if (!answer && log.response_body) {
         answer = log.response_body;
     }
     
@@ -989,6 +1011,21 @@ function renderLogDetailRaw(log) {
 function closeLogDetailModal() {
     document.getElementById('log-detail-modal').classList.add('hidden');
     currentLogData = null;
+}
+
+function extractAnswer(responseJson, path) {
+    if (!path) path = 'choices.0.message.content';
+    const parts = path.split('.');
+    let result = responseJson;
+    for (const part of parts) {
+        if (result === undefined || result === null) break;
+        if (/^\d+$/.test(part)) {
+            result = result[parseInt(part)];
+        } else {
+            result = result[part];
+        }
+    }
+    return typeof result === 'string' ? result : null;
 }
 
 function escapeHtml(str) {
