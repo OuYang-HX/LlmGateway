@@ -1303,5 +1303,3 @@ fn test_extra_headers_empty_object() {
     let parsed: serde_json::Map<String, serde_json::Value> = serde_json::from_str(headers_json).unwrap();
     assert_eq!(parsed.len(), 0);
 }
-
-

@@ -1037,3 +1037,27 @@ async fn test_http_dynamic_token_provider_full_lifecycle() {
     server.delete("/api/v1/providers/dyn-lc").await;
     assert_eq!(server.get("/api/v1/providers/dyn-lc").await.status_code(), StatusCode::NOT_FOUND);
 }
+
+// ========== Token Rate API Tests ==========
+
+#[tokio::test]
+async fn test_token_rate_endpoint_returns_ok() {
+    let server = build_test_app().await;
+
+    // Fresh DB - endpoint should return 200 with empty array
+    let resp = server.get("/api/v1/dashboard/token-rate").await;
+    assert_eq!(resp.status_code(), StatusCode::OK);
+    let body: Vec<serde_json::Value> = resp.json();
+    assert_eq!(body.len(), 0);
+}
+
+#[tokio::test]
+async fn test_token_rate_endpoint_accepts_provider_filter() {
+    let server = build_test_app().await;
+
+    // Test with provider filter - returns 200 even with empty data
+    let resp = server.get("/api/v1/dashboard/token-rate?provider_id=test-prov").await;
+    assert_eq!(resp.status_code(), StatusCode::OK);
+    let body: Vec<serde_json::Value> = resp.json();
+    assert!(body.is_empty());
+}
