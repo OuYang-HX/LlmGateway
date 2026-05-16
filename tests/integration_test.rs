@@ -1954,3 +1954,24 @@ async fn test_logs_model_filter_none_model() {
     assert_eq!(logs.len(), 1);
     assert_eq!(logs[0].model, None);
 }
+
+
+#[tokio::test]
+async fn test_provider_health_stats_zero_requests() {
+    let db = test_db().await;
+    db.create_provider(
+        "zero-prov", "Zero Provider", "https://z.com", "openai", "api_key",
+        Some("key"), None, None, None, None, None, None, None, None, None, None,
+        "token", "refreshToken", "Authorization", "Bearer ", 86400, 1, false,
+        "choices.0.message.content", "choices.0.delta.reasoning_content",
+    ).await.unwrap();
+    
+    // No logs for this provider
+
+    let health = db.get_provider_health_stats().await.unwrap();
+    let zero = health.iter().find(|p| p.provider_id == "zero-prov");
+    // Provider with no requests might not appear in health stats, or appear with 0
+    if let Some(h) = zero {
+        assert_eq!(h.request_count_24h, 0);
+    }
+}

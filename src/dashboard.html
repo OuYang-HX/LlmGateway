@@ -350,7 +350,7 @@ async function loadProviderHealth(){
             const errRate=h.request_count_24h>0?(h.error_count_24h/h.request_count_24h*100).toFixed(1)+'%':'0%';
             const status=h.error_count_24h>0?'<span style="color:red">'+errRate+'</span>':(h.throttle_count_24h>0?'<span style="color:orange">'+h.throttle_count_24h+'</span>':'<span style="color:green">正常</span>');
             const last=h.last_request_at?new Date(h.last_request_at).toLocaleString():'-';
-            return `<tr><td>${h.provider_id}</td><td>${h.request_count_24h}</td><td>${h.error_count_24h}</td><td>${status}</td><td>${h.avg_duration_ms.toFixed(0)}ms</td><td>${last}</td><td style="font-size:11px;color:#64748b">${new Date().toLocaleTimeString()}</td></tr>`;
+            return `<tr><td><a href="#" onclick="event.preventDefault();filterLogsByProvider('${h.provider_id}')" style="color:#3b82f6;text-decoration:none">${h.provider_id}</a></td><td>${h.request_count_24h}</td><td>${h.error_count_24h}</td><td>${status}</td><td>${h.avg_duration_ms.toFixed(0)}ms</td><td>${last}</td><td style="font-size:11px;color:#64748b">${new Date().toLocaleTimeString()}</td></tr>`;
         }).join('');
         document.getElementById('provider-health-table').querySelector('tbody').innerHTML=rows;
     }catch(e){console.error('Health load error:', e)}
@@ -970,6 +970,15 @@ function setLogTimePreset(preset){
     }
     document.getElementById('log-start').value=start.toISOString().slice(0,16);
     document.getElementById('log-end').value='';
+    currentLogPage=1;
+    loadLogs();
+}
+
+function filterLogsByProvider(providerId){
+    showTab('logs');
+    document.getElementById('log-provider').value=providerId;
+    document.getElementById('log-model').value='';
+    document.getElementById('log-search').value='';
     currentLogPage=1;
     loadLogs();
 }
