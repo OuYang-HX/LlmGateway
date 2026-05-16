@@ -1366,6 +1366,56 @@ async fn test_provider_model_list_add_remove() {
     assert_eq!(models[0].model_id, "claude-3-opus");
 }
 
+#[tokio::test]
+async fn test_stats_by_api_key_grouping() {
+    let db = test_db().await;
+    // Create provider and API key
+    db.create_provider(
+        "stat-prov-xyz", "Stat Provider XYZ", "https://s.com", "openai", "api_key",
+        Some("key"), None, None, None, None, None, None, None, None, None, None,
+        "token", "refreshToken", "Authorization", "Bearer ", 86400, 1, false,
+        "choices.0.message.content", "choices.0.delta.reasoning_content",
+    ).await.unwrap();
+    db.create_api_key("stat-key-xyz-1", "Stat Key XYZ 1", "sk-xyz-test1", "sk-xyz1", None).await.unwrap();
+    db.create_api_key("stat-key-xyz-2", "Stat Key XYZ 2", "sk-xyz-test2", "sk-xyz2", None).await.unwrap();
+
+    // Insert a request log for key 1
+    db.insert_request_log(
+        "stat-key-xyz-1", "stat-prov-xyz", Some("gpt-4o"), "/v1/chat/completions", "POST",
+        None, Some("{}"), Some(200), None, Some("{}"),
+        100, 200, 300, Some(150), false, false, None,
+    ).await.unwrap();
+    db.insert_request_log(
+        "stat-key-xyz-1", "stat-prov-xyz", Some("gpt-4o"), "/v1/chat/completions", "POST",
+        None, Some("{}"), Some(200), None, Some("{}"),
+        150, 300, 450, Some(200), false, false, None,
+    ).await.unwrap();
+    db.insert_request_log(
+        "stat-key-xyz-2", "stat-prov-xyz", Some("claude-3"), "/v1/chat/completions", "POST",
+        None, Some("{}"), Some(200), None, Some("{}"),
+        80, 160, 240, Some(120), false, false, None,
+    ).await.unwrap();
+
+    // Get stats by API key
+    let stats = db.get_stats_by_api_key(10, None, None).await.unwrap();
+    assert_eq!(stats.len(), 2);
+
+    // stat-key-xyz-1 should have more tokens (750 vs 240)
+    let key1_stats = stats.iter().find(|s| s.api_key_id == "stat-key-xyz-1").unwrap();
+    assert_eq!(key1_stats.request_count, 2);
+    assert_eq!(key1_stats.total_tokens, 750); // 300 + 450
+
+    let key2_stats = stats.iter().find(|s| s.api_key_id == "stat-key-xyz-2").unwrap();
+    assert_eq!(key2_stats.request_count, 1);
+    assert_eq!(key2_stats.total_tokens, 240);
+
+    // Test with limit
+    let limited = db.get_stats_by_api_key(1, None, None).await.unwrap();
+    assert_eq!(limited.len(), 1);
+    assert_eq!(limited[0].api_key_id, "stat-key-xyz-1"); // Most tokens first
+}
+
+
 
 #[tokio::test]
 async fn test_time_bucketed_stats_avg_duration() {
