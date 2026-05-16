@@ -898,7 +898,7 @@ impl Database {
         if provider_id.is_some() { query.push_str(" AND provider_id = ?"); }
         if start_time.is_some() { query.push_str(" AND created_at >= ?"); }
         if end_time.is_some() { query.push_str(" AND created_at <= ?"); }
-        if search.is_some() { query.push_str(" AND request_body LIKE ?"); }
+        if search.is_some() { query.push_str(" AND (request_body LIKE ? OR response_body LIKE ?)"); }
         query.push_str(" ORDER BY created_at DESC LIMIT ? OFFSET ?");
 
         let mut q = sqlx::query_as::<_, RequestLogRow>(&query);
@@ -906,7 +906,10 @@ impl Database {
         if let Some(v) = provider_id { q = q.bind(v); }
         if let Some(v) = start_time { q = q.bind(v); }
         if let Some(v) = end_time { q = q.bind(v); }
-        if let Some(v) = search { q = q.bind(format!("%{}%", v)); }
+        if let Some(ref v) = search {
+            q = q.bind(format!("%{}%", v));
+            q = q.bind(format!("%{}%", v));
+        }
         q = q.bind(limit).bind(offset);
 
         let rows = q.fetch_all(&self.pool).await?;
@@ -927,14 +930,17 @@ impl Database {
         if provider_id.is_some() { query.push_str(" AND provider_id = ?"); }
         if start_time.is_some() { query.push_str(" AND created_at >= ?"); }
         if end_time.is_some() { query.push_str(" AND created_at <= ?"); }
-        if search.is_some() { query.push_str(" AND request_body LIKE ?"); }
+        if search.is_some() { query.push_str(" AND (request_body LIKE ? OR response_body LIKE ?)"); }
 
         let mut q = sqlx::query_scalar::<_, i64>(&query);
         if let Some(v) = api_key_id { q = q.bind(v); }
         if let Some(v) = provider_id { q = q.bind(v); }
         if let Some(v) = start_time { q = q.bind(v); }
         if let Some(v) = end_time { q = q.bind(v); }
-        if let Some(v) = search { q = q.bind(format!("%{}%", v)); }
+        if let Some(ref v) = search {
+            q = q.bind(format!("%{}%", v));
+            q = q.bind(format!("%{}%", v));
+        }
 
         let count = q.fetch_one(&self.pool).await?;
         Ok(count)

@@ -1411,3 +1411,25 @@ async fn test_request_logs_search() {
     let count = db.count_request_logs(None, None, None, None, Some("Hello")).await.unwrap();
     assert_eq!(count, 1);
 }
+
+
+#[tokio::test]
+async fn test_request_logs_search_response_body() {
+    let db = test_db().await;
+    db.create_api_key("key-rs", "Key", "hash", "lgk", None).await.unwrap();
+    db.create_provider_simple("prov-rs", "Provider", "https://p.com", "openai", "api_key", Some("key"), None, None, None, "token", "refreshToken", "Authorization", "Bearer ", 86400, 1).await.unwrap();
+
+    // Insert logs with different response bodies
+    db.insert_request_log("key-rs", "prov-rs", None, "/v1/chat", "POST", None, Some(r#"{"messages":[{"role":"user","content":"Hello"}]}"#), Some(200), None, Some(r#"{"choices":[{"message":{"content":"Hello there!"}}]}"#), 10, 20, 30, Some(100), false, false, None).await.unwrap();
+    db.insert_request_log("key-rs", "prov-rs", None, "/v1/chat", "POST", None, Some(r#"{"messages":[{"role":"user","content":"Hi"}]}"#), Some(200), None, Some(r#"{"choices":[{"message":{"content":"Greetings!"}}]}"#), 10, 20, 30, Some(100), false, false, None).await.unwrap();
+
+    // Search in response body - should find 1
+    let logs = db.query_request_logs(None, None, None, None, Some("Greetings"), 20, 0).await.unwrap();
+    assert_eq!(logs.len(), 1);
+    assert!(logs[0].response_body.as_ref().unwrap().contains("Greetings"));
+
+    // Search in request body - should find 1
+    let logs2 = db.query_request_logs(None, None, None, None, Some("Hello"), 20, 0).await.unwrap();
+    assert_eq!(logs2.len(), 1);
+    assert!(logs2[0].request_body.as_ref().unwrap().contains("Hello"));
+}

@@ -139,7 +139,7 @@
     <div id="tab-logs" class="hidden">
         <div class="controls">
             <label>服务商:</label><select id="log-provider"><option value="">全部</option></select>
-            <label>关键词:</label><input id="log-search" placeholder="搜索请求内容..." style="width:160px">
+            <label>关键词:</label><input id="log-search" placeholder="搜索请求/响应..." style="width:140px">
             <label>从:</label><input type="datetime-local" id="log-start">
             <label>到:</label><input type="datetime-local" id="log-end">
             <button onclick="loadLogs()">搜索</button>
@@ -640,6 +640,21 @@ function copyKey(key){
     });
 }
 function closeApiKeyShowModal(){document.getElementById('apikey-show-modal').classList.add('hidden')}
+async function regenerateApiKey(id){
+    if(!confirm('确定要重新生成此 API Key 吗？旧 Key 将立即失效！'))return;
+    try{
+        const resp=await fetch(API+'/api-keys/'+id+'/regenerate',{method:'POST'});
+        if(resp.ok){
+            const data=await resp.json();
+            document.getElementById('ak-show-key').value=data.key;
+            document.getElementById('apikey-show-modal').classList.remove('hidden');
+            loadApiKeysManage();
+        }else{
+            const err=await resp.json();alert('重新生成失败: '+(err.error||resp.statusText));
+        }
+    }catch(e){alert('网络错误: '+e.message)}
+}
+
 async function deleteApiKey(id){
     if(!confirm('确定要删除此 API Key 吗？'))return;
     try{
@@ -665,7 +680,7 @@ async function loadLogs(){
         const start=document.getElementById('log-start').value;
         const end=document.getElementById('log-end').value;
         if(prov)params.set('provider_id',prov);
-        if(search)params.set('search',search);
+        if(search)params.set('search',search); // searches request_body AND response_body (via OR)
         if(start)params.set('start_time',new Date(start).toISOString());
         if(end)params.set('end_time',new Date(end).toISOString());
         const data=await(await fetch(API+'/logs?'+params)).json();

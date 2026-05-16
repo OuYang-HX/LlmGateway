@@ -31,7 +31,7 @@ async fn build_test_app() -> TestServer {
         .route("/", get(llm_gateway::dashboard::dashboard_page))
         .route("/dashboard", get(llm_gateway::dashboard::dashboard_page))
         .route("/api/v1/api-keys", post(llm_gateway::api::create_api_key).get(llm_gateway::api::list_api_keys))
-        .route("/api/v1/api-keys/:id", get(llm_gateway::api::get_api_key).delete(llm_gateway::api::delete_api_key))
+        .route("/api/v1/api-keys/:id", get(llm_gateway::api::get_api_key).delete(llm_gateway::api::delete_api_key).post(llm_gateway::api::regenerate_api_key))
         .route("/api/v1/providers", post(llm_gateway::api::create_provider).get(llm_gateway::api::list_providers))
         .route("/api/v1/providers/:id", get(llm_gateway::api::get_provider).delete(llm_gateway::api::delete_provider).put(llm_gateway::api::update_provider))
         .route("/api/v1/stats", get(llm_gateway::api::get_stats))
@@ -1073,4 +1073,31 @@ async fn test_provider_health_endpoint_returns_ok() {
     assert_eq!(resp.status_code(), StatusCode::OK);
     let body: Vec<serde_json::Value> = resp.json();
     assert_eq!(body.len(), 0);
+}
+
+
+#[tokio::test]
+async fn test_api_key_regenerate() {
+    let server = build_test_app().await;
+
+    // Create an API key
+    let resp = server.post("/api/v1/api-keys")
+        .json(&serde_json::json!({"name": "Regen Test"}))
+        .await;
+    assert_eq!(resp.status_code(), StatusCode::CREATED);
+    let body: serde_json::Value = resp.json();
+    let key_id = body["id"].as_str().unwrap();
+    let old_key = body["key"].as_str().unwrap();
+
+    // Regenerate the API key (POST to the key's URL calls regenerate)
+    let resp2 = server.post(&format!("/api/v1/api-keys/{}", key_id))
+        .await;
+    assert_eq!(resp2.status_code(), StatusCode::OK);
+    let body2: serde_json::Value = resp2.json();
+    let new_key = body2["key"].as_str().unwrap();
+
+    // Keys should be different
+    assert_ne!(old_key, new_key);
+    // New key should still start with lgk-
+    assert!(new_key.starts_with("lgk-"));
 }
