@@ -1909,3 +1909,29 @@ async fn test_stats_by_api_key_avg_duration() {
     // Average of 100 and 200 is 150
     assert!((stats[0].avg_duration_ms - 150.0).abs() < 0.01);
 }
+
+
+#[tokio::test]
+async fn test_logs_with_error_status_filtering() {
+    let db = test_db().await;
+    db.create_api_key("err-status-key", "Err Status Key", "hash", "esk", None).await.unwrap();
+    db.create_provider_simple("err-status-prov", "Err Status Provider", "https://esp.com", "openai", "api_key", Some("key"), None, None, None, "token", "refreshToken", "Authorization", "Bearer ", 86400, 1).await.unwrap();
+
+    // Success
+    db.insert_request_log(
+        "err-status-key", "err-status-prov", Some("gpt-4o"), "/v1/chat", "POST",
+        None, Some("{}"), Some(200), None, Some("{}"),
+        10, 20, 30, Some(100), false, false, None,
+    ).await.unwrap();
+    // Error
+    db.insert_request_log(
+        "err-status-key", "err-status-prov", Some("gpt-4o"), "/v1/chat", "POST",
+        None, Some("{}"), Some(500), None, Some("{}"),
+        0, 0, 0, Some(50), false, false, Some("Server error"),
+    ).await.unwrap();
+
+    let logs = db.query_request_logs(None, None, None, None, None, None, 10, 0).await.unwrap();
+    assert_eq!(logs.len(), 2);
+    let error_log = logs.iter().find(|l| l.response_status == Some(500)).unwrap();
+    assert!(error_log.error_message.is_some());
+}

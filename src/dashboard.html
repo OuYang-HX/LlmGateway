@@ -1010,12 +1010,15 @@ async function loadLogs(){
             return 0;
         });
         
-        document.querySelector('#logs-table tbody').innerHTML=logs.map(l=>`<tr>
+        document.querySelector('#logs-table tbody').innerHTML=logs.map(l=>{
+            const isError = l.error_message || (l.response_status && l.response_status >= 400);
+            const rowStyle = isError ? 'background:rgba(239,68,68,0.1)' : '';
+            return `<tr style="${rowStyle}">
             <td>${fmtTime(l.created_at)}</td><td>${getApiKeyName(l.api_key_id)}</td>
-            <td>${l.provider_id}</td><td>${l.model||'-'}</td><td>${l.response_status||'-'}</td>
+            <td>${l.provider_id}</td><td>${l.model||'-'}</td><td style="${l.response_status&&l.response_status>=400?'color:#ef4444;font-weight:bold':''}">${l.response_status||'-'}</td>
             <td>${l.total_tokens}</td><td>${l.duration_ms?l.duration_ms+'ms':'-'}</td>
             <td>${l.is_streaming?'✅':'❌'}</td><td>${l.is_throttled?'⚠️':'✅'}</td><td>${l.error_message?'<span style="color:red" title="'+l.error_message+'">❌</span>':'✅'}</td><td><button class="btn btn-sm" onclick='showLogDetail(${l.id})'>📋 QA</button></td>
-        </tr>`).join('')||'<tr><td colspan="11" class="empty-state">暂无日志</td></tr>';
+        </tr>`;}).join('')||'<tr><td colspan="11" class="empty-state">暂无日志</td></tr>';
     }catch(e){console.error(e)}
 }
 
