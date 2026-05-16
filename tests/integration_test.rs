@@ -1680,3 +1680,35 @@ async fn test_list_active_provider_models() {
     let empty = db.list_active_provider_models("non-existent").await.unwrap();
     assert!(empty.is_empty());
 }
+
+
+#[tokio::test]
+async fn test_stats_by_api_key_multiple_keys() {
+    let db = test_db().await;
+    db.create_provider(
+        "multi-prov", "Multi Provider", "https://m.com", "openai", "api_key",
+        Some("key"), None, None, None, None, None, None, None, None, None, None,
+        "token", "refreshToken", "Authorization", "Bearer ", 86400, 1, false,
+        "choices.0.message.content", "choices.0.delta.reasoning_content",
+    ).await.unwrap();
+    
+    db.create_api_key("multi-key-1", "Multi Key 1", "sk-multi1", "sk-m1", None).await.unwrap();
+    db.create_api_key("multi-key-2", "Multi Key 2", "sk-multi2", "sk-m2", None).await.unwrap();
+
+    db.insert_request_log(
+        "multi-key-1", "multi-prov", Some("gpt-4o"), "/v1/chat", "POST",
+        None, Some("{}"), Some(200), None, Some("{}"),
+        50, 100, 150, Some(100), false, false, None,
+    ).await.unwrap();
+    db.insert_request_log(
+        "multi-key-2", "multi-prov", Some("gpt-4o"), "/v1/chat", "POST",
+        None, Some("{}"), Some(200), None, Some("{}"),
+        200, 400, 600, Some(200), false, false, None,
+    ).await.unwrap();
+
+    let stats = db.get_stats_by_api_key(10, None, None).await.unwrap();
+    assert_eq!(stats.len(), 2);
+    
+    // Verify ordering by total tokens (key2 has more)
+    assert!(stats[0].total_tokens >= stats[1].total_tokens);
+}
