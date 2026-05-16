@@ -1058,13 +1058,22 @@ function extractAnswer(responseJson, path) {
         }
     }
     if (typeof result !== 'string') return null;
-    // Strip thinking/reasoning tags: <think>...</think> and <tool_call>...</think> (used by various LLMs)
+    // Strip thinking tags: <think>...</think> (single closing tag spanning full content)
     result = result.replace(/<think>[\s\S]*?<\/think>/g, '');
-    result = result.replace(/<tool_call>[\s\S]*?<\/think>/g, '');
-    // Compress all consecutive newlines (2+) to a single newline
+    // For thinking content split across chunks: strip from <tool_call> to first \n\n
+    // MiniMax: thinking appears in content, followed by \n\n, then actual response
+    if (/^<tool_call>/.test(result)) {
+        const nl2 = result.indexOf('\n\n');
+        if (nl2 > 0) {
+            result = result.substring(nl2 + 2);
+        }
+    }
+    // Compress 2+ consecutive newlines to 1
     result = result.replace(/\n{2,}/g, '\n');
     return result.trim();
 }
+
+function escapeHtml(str) {
 
 function escapeHtml(str) {
     if (!str) return '';
