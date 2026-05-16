@@ -104,7 +104,7 @@
         </div>
         <div class="panel">
             <h2>服务商健康状态 <span style="font-size:12px;color:#64748b">(近24小时)</span></h2>
-            <table id="provider-health-table"><thead><tr><th>服务商</th><th>24h请求</th><th>错误</th><th>限流</th><th>Avg ms</th><th>最近请求</th></tr></thead><tbody></tbody></table>
+            <table id="provider-health-table"><thead><tr><th>服务商</th><th>24h请求</th><th>错误</th><th>限流</th><th>Avg ms</th><th>最近请求</th><th style="font-size:11px;color:#64748b">更新</th></tr></thead><tbody></tbody></table>
         </div>
         <div class="panel"><h2>服务商状态</h2><table id="overview-provider-table"><thead><tr><th><input type="checkbox" id="overview-select-all" onchange="toggleSelectAllOverviewProviders(this)"></th><th>ID</th><th>名称</th><th>认证方式</th><th>状态</th><th>操作</th></tr></thead><tbody></tbody></table></div>
         <div class="panel"><h2>API Keys</h2><table id="overview-apikey-table"><thead><tr><th>名称</th><th>前缀</th><th>允许服务商</th><th>状态</th></tr></thead><tbody></tbody></table></div>
@@ -345,7 +345,7 @@ async function loadProviderHealth(){
             const errRate=h.request_count_24h>0?(h.error_count_24h/h.request_count_24h*100).toFixed(1)+'%':'0%';
             const status=h.error_count_24h>0?'<span style="color:red">'+errRate+'</span>':(h.throttle_count_24h>0?'<span style="color:orange">'+h.throttle_count_24h+'</span>':'<span style="color:green">正常</span>');
             const last=h.last_request_at?new Date(h.last_request_at).toLocaleString():'-';
-            return `<tr><td>${h.provider_id}</td><td>${h.request_count_24h}</td><td>${h.error_count_24h}</td><td>${status}</td><td>${h.avg_duration_ms.toFixed(0)}ms</td><td>${last}</td></tr>`;
+            return `<tr><td>${h.provider_id}</td><td>${h.request_count_24h}</td><td>${h.error_count_24h}</td><td>${status}</td><td>${h.avg_duration_ms.toFixed(0)}ms</td><td>${last}</td><td style="font-size:11px;color:#64748b">${new Date().toLocaleTimeString()}</td></tr>`;
         }).join('');
         document.getElementById('provider-health-table').querySelector('tbody').innerHTML=rows;
     }catch(e){console.error('Health load error:', e)}

@@ -1739,3 +1739,28 @@ async fn test_stats_by_api_key_calculated_correctly() {
     assert_eq!(stats[0].total_completion_tokens, 20);
     assert_eq!(stats[0].total_tokens, 30);
 }
+
+
+#[tokio::test]
+async fn test_provider_health_stats_with_requests() {
+    let db = test_db().await;
+    db.create_provider(
+        "health-prov", "Health Provider", "https://h.com", "openai", "api_key",
+        Some("key"), None, None, None, None, None, None, None, None, None, None,
+        "token", "refreshToken", "Authorization", "Bearer ", 86400, 1, false,
+        "choices.0.message.content", "choices.0.delta.reasoning_content",
+    ).await.unwrap();
+    db.create_api_key("health-key", "Health Key", "sk-health", "sk-h", None).await.unwrap();
+
+    db.insert_request_log(
+        "health-key", "health-prov", Some("gpt-4o"), "/v1/chat", "POST",
+        None, Some("{}"), Some(200), None, Some("{}"),
+        10, 20, 30, Some(100), false, false, None,
+    ).await.unwrap();
+
+    let health = db.get_provider_health_stats().await.unwrap();
+    assert!(!health.is_empty());
+    let h = health.iter().find(|p| p.provider_id == "health-prov").unwrap();
+    assert_eq!(h.request_count_24h, 1);
+    assert_eq!(h.avg_duration_ms, 100.0);
+}
