@@ -171,6 +171,7 @@
             <label>从:</label><input type="datetime-local" id="log-start">
             <label>到:</label><input type="datetime-local" id="log-end">
             <button onclick="currentLogPage=1;loadLogs()">搜索</button>
+            <button onclick="clearLogFilters()" style="margin-left:4px">🔄 重置</button>
             <button onclick="exportLogsCsv()" style="margin-left:8px;background:#059669">📥 CSV</button>
         </div>
         <div class="panel">
@@ -931,6 +932,19 @@ function updateSortIndicators(){
             el.textContent='';
         }
     });
+}
+
+function clearLogFilters(){
+    document.getElementById('log-provider').value='';
+    document.getElementById('log-model').value='';
+    document.getElementById('log-search').value='';
+    document.getElementById('log-start').value='';
+    document.getElementById('log-end').value='';
+    currentLogPage=1;
+    currentLogSort='created_at';
+    currentLogSortDir='desc';
+    updateSortIndicators();
+    loadLogs();
 }
 
 async function loadLogs(){

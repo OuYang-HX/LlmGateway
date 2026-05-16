@@ -1712,3 +1712,30 @@ async fn test_stats_by_api_key_multiple_keys() {
     // Verify ordering by total tokens (key2 has more)
     assert!(stats[0].total_tokens >= stats[1].total_tokens);
 }
+
+
+#[tokio::test]
+async fn test_stats_by_api_key_calculated_correctly() {
+    let db = test_db().await;
+    db.create_provider(
+        "calc-prov", "Calc Provider", "https://c.com", "openai", "api_key",
+        Some("key"), None, None, None, None, None, None, None, None, None, None,
+        "token", "refreshToken", "Authorization", "Bearer ", 86400, 1, false,
+        "choices.0.message.content", "choices.0.delta.reasoning_content",
+    ).await.unwrap();
+    db.create_api_key("calc-key", "Calc Key", "sk-calc", "sk-c", None).await.unwrap();
+
+    // Single log
+    db.insert_request_log(
+        "calc-key", "calc-prov", Some("gpt-4o"), "/v1/chat", "POST",
+        None, Some("{}"), Some(200), None, Some("{}"),
+        10, 20, 30, Some(50), false, false, None,
+    ).await.unwrap();
+
+    let stats = db.get_stats_by_api_key(10, None, None).await.unwrap();
+    assert_eq!(stats.len(), 1);
+    assert_eq!(stats[0].request_count, 1);
+    assert_eq!(stats[0].total_prompt_tokens, 10);
+    assert_eq!(stats[0].total_completion_tokens, 20);
+    assert_eq!(stats[0].total_tokens, 30);
+}
