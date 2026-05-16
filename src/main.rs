@@ -91,6 +91,7 @@ async fn main() -> anyhow::Result<()> {
         // Dashboard API
         .route("/api/v1/dashboard/summary", get(api::get_dashboard_summary))
         .route("/api/v1/dashboard/health", get(api::get_provider_health))
+        .route("/api/v1/stats/by-api-key", get(api::get_stats_by_api_key))
         .route("/api/v1/dashboard/token-rate", get(api::get_token_rate))
 
         // WebSocket proxy

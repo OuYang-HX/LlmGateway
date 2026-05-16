@@ -1179,6 +1179,35 @@ impl Database {
         Ok(())
     }
 
+    /// Get aggregated stats grouped by API key (top N by total tokens)
+    pub async fn get_stats_by_api_key(
+        &self,
+        limit: i64,
+        start_time: Option<&str>,
+        end_time: Option<&str>,
+    ) -> Result<Vec<ApiKeyStatsRow>, sqlx::Error> {
+        let mut query = String::from(
+            r#"SELECT api_key_id, COUNT(*) as request_count,
+            COALESCE(SUM(prompt_tokens), 0) as total_prompt_tokens,
+            COALESCE(SUM(completion_tokens), 0) as total_completion_tokens,
+            COALESCE(SUM(total_tokens), 0) as total_tokens,
+            COALESCE(AVG(duration_ms), 0.0) as avg_duration_ms,
+            SUM(CASE WHEN is_throttled = 1 THEN 1 ELSE 0 END) as throttle_count,
+            SUM(CASE WHEN error_message IS NOT NULL THEN 1 ELSE 0 END) as error_count
+            FROM request_logs WHERE 1=1"#
+        );
+        if start_time.is_some() { query.push_str(" AND created_at >= ?"); }
+        if end_time.is_some() { query.push_str(" AND created_at <= ?"); }
+        query.push_str(" GROUP BY api_key_id ORDER BY total_tokens DESC LIMIT ?");
+
+        let mut q = sqlx::query_as::<_, ApiKeyStatsRow>(&query);
+        if let Some(v) = start_time { q = q.bind(v); }
+        if let Some(v) = end_time { q = q.bind(v); }
+        q = q.bind(limit);
+
+        q.fetch_all(&self.pool).await
+    }
+
     /// Get health stats for all providers (last 24h)
     pub async fn get_provider_health_stats(&self) -> Result<Vec<ProviderHealthStats>, sqlx::Error> {
         let one_day_ago = (chrono::Utc::now() - chrono::Duration::days(1)).format("%Y-%m-%d %H:%M:%S").to_string();
@@ -1585,6 +1614,18 @@ pub struct TokenRateRow {
 #[derive(Debug, Clone, Serialize, sqlx::FromRow)]
 pub struct AggregateStats {
     pub total_requests: i64,
+    pub total_prompt_tokens: i64,
+    pub total_completion_tokens: i64,
+    pub total_tokens: i64,
+    pub avg_duration_ms: f64,
+    pub throttle_count: i64,
+    pub error_count: i64,
+}
+
+#[derive(Debug, Clone, Serialize, sqlx::FromRow)]
+pub struct ApiKeyStatsRow {
+    pub api_key_id: String,
+    pub request_count: i64,
     pub total_prompt_tokens: i64,
     pub total_completion_tokens: i64,
     pub total_tokens: i64,

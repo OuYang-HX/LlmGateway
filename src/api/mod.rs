@@ -867,6 +867,25 @@ pub async fn get_provider_health(
     }
 }
 
+/// Get stats grouped by API key (for usage bar chart)
+pub async fn get_stats_by_api_key(
+    State(state): State<AppState>,
+    Query(params): Query<StatsByApiKeyParams>,
+) -> impl IntoResponse {
+    let limit = params.limit.unwrap_or(10);
+    match state.db.get_stats_by_api_key(
+        limit,
+        params.start_time.as_deref(),
+        params.end_time.as_deref(),
+    ).await {
+        Ok(stats) => Json(stats).into_response(),
+        Err(e) => {
+            tracing::error!("Failed to get stats by API key: {}", e);
+            (StatusCode::INTERNAL_SERVER_ERROR, Json(serde_json::json!({"error": e.to_string()}))).into_response()
+        }
+    }
+}
+
 /// Get token rate data
 pub async fn get_token_rate(
     State(state): State<AppState>,
@@ -886,6 +905,13 @@ pub async fn get_token_rate(
             (StatusCode::INTERNAL_SERVER_ERROR, Json(serde_json::json!({"error": e.to_string()}))).into_response()
         }
     }
+}
+
+#[derive(Debug, Deserialize)]
+pub struct StatsByApiKeyParams {
+    pub limit: Option<i64>,
+    pub start_time: Option<String>,
+    pub end_time: Option<String>,
 }
 
 #[derive(Debug, Deserialize)]

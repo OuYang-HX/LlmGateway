@@ -40,6 +40,7 @@ async fn build_test_app() -> TestServer {
         .route("/api/v1/logs", get(llm_gateway::api::get_request_logs))
         .route("/api/v1/dashboard/summary", get(llm_gateway::api::get_dashboard_summary))
         .route("/api/v1/dashboard/health", get(llm_gateway::api::get_provider_health))
+        .route("/api/v1/stats/by-api-key", get(llm_gateway::api::get_stats_by_api_key))
         .route("/api/v1/dashboard/token-rate", get(llm_gateway::api::get_token_rate))
         .route("/ws/v1", get(llm_gateway::proxy::ws_handler::ws_proxy_handler))
         .with_state(state)
@@ -326,6 +327,39 @@ async fn test_http_batch_update_provider_status_enable() {
 }
 
 #[tokio::test]
+async fn test_http_stats_by_api_key() {
+    let server = build_test_app().await;
+    // Create a provider and API key
+    server.post("/api/v1/providers")
+        .json(&serde_json::json!({
+            "id": "stats-prov", "name": "Stats Provider", "base_url": "https://s.com",
+            "api_type": "openai", "auth_type": "api_key", "api_key": "key"
+        }))
+        .await;
+    let key_resp = server.post("/api/v1/api-keys")
+        .json(&serde_json::json!({"name": "Test Key", "provider_ids": null}))
+        .await;
+    let key_body: serde_json::Value = key_resp.json();
+    let key_id = key_body["id"].as_str().unwrap();
+
+    // Get stats (should be empty)
+    let resp = server.get("/api/v1/stats/by-api-key").await;
+    assert_eq!(resp.status_code(), StatusCode::OK);
+    let stats: Vec<serde_json::Value> = resp.json();
+    // No logs yet, so empty is fine (empty vec or just API key rows with 0)
+}
+
+#[tokio::test]
+async fn test_http_stats_by_api_key_with_limit() {
+    let server = build_test_app().await;
+    // Test with limit param
+    let resp = server.get("/api/v1/stats/by-api-key?limit=5").await;
+    assert_eq!(resp.status_code(), StatusCode::OK);
+    let stats: Vec<serde_json::Value> = resp.json();
+    // Empty DB returns empty list
+    assert!(stats.is_empty());
+}
+
 async fn test_http_batch_update_provider_status_empty_ids() {
     let server = build_test_app().await;
     let resp = server.post("/api/v1/providers/batch-update-status")
