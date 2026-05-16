@@ -1439,22 +1439,22 @@ function renderLogDetailRaw(log) {
     
     // 请求头
     if (log.request_headers) {
-        html += `<div class="qa-section"><h4>📝 请求头</h4><div class="qa-content">${escapeHtml(prettyJson(log.request_headers))}</div></div>`;
+        html += `<div class="qa-section"><div style="display:flex;justify-content:space-between;align-items:center"><h4>📝 请求头</h4><button class="btn btn-sm" onclick="copyJson(this,'${escapeHtml(prettyJson(log.request_headers)).replace(/'/g,"\\'")}')">📋 复制</button></div><pre class="qa-content" style="margin:0">${escapeHtml(prettyJson(log.request_headers))}</pre></div>`;
     }
     
     // 请求体
     if (log.request_body) {
-        html += `<div class="qa-section"><h4>📤 请求体</h4><div class="qa-content">${escapeHtml(prettyJson(log.request_body))}</div></div>`;
+        html += `<div class="qa-section"><div style="display:flex;justify-content:space-between;align-items:center"><h4>📤 请求体</h4><button class="btn btn-sm" onclick="copyJson(this,'${escapeHtml(prettyJson(log.request_body)).replace(/'/g,"\\'")}')">📋 复制</button></div><pre class="qa-content" style="margin:0">${escapeHtml(prettyJson(log.request_body))}</pre></div>`;
     }
     
     // 响应头
     if (log.response_headers) {
-        html += `<div class="qa-section"><h4>📝 响应头</h4><div class="qa-content">${escapeHtml(prettyJson(log.response_headers))}</div></div>`;
+        html += `<div class="qa-section"><div style="display:flex;justify-content:space-between;align-items:center"><h4>📝 响应头</h4><button class="btn btn-sm" onclick="copyJson(this,'${escapeHtml(prettyJson(log.response_headers)).replace(/'/g,"\\'")}')">📋 复制</button></div><pre class="qa-content" style="margin:0">${escapeHtml(prettyJson(log.response_headers))}</pre></div>`;
     }
     
     // 响应体
     if (log.response_body) {
-        html += `<div class="qa-section"><h4>📥 响应体</h4><div class="qa-content">${escapeHtml(prettyJson(log.response_body))}</div></div>`;
+        html += `<div class="qa-section"><div style="display:flex;justify-content:space-between;align-items:center"><h4>📥 响应体</h4><button class="btn btn-sm" onclick="copyJson(this,'${escapeHtml(prettyJson(log.response_body)).replace(/'/g,"\\'")}')">📋 复制</button></div><pre class="qa-content" style="margin:0">${escapeHtml(prettyJson(log.response_body))}</pre></div>`;
     }
     
     // 错误信息
@@ -1463,6 +1463,14 @@ function renderLogDetailRaw(log) {
     }
     
     document.getElementById('log-detail-content').innerHTML = html;
+}
+
+function copyJson(btn, text) {
+    navigator.clipboard.writeText(text).then(() => {
+        const orig = btn.textContent;
+        btn.textContent = '✅ 已复制';
+        setTimeout(() => btn.textContent = orig, 1500);
+    }).catch(() => alert('复制失败'));
 }
 
 function closeLogDetailModal() {

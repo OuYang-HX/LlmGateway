@@ -1658,3 +1658,25 @@ async fn test_stats_by_api_key_empty_db() {
     let stats = db.get_stats_by_api_key(10, None, None).await.unwrap();
     assert!(stats.is_empty());
 }
+
+
+#[tokio::test]
+async fn test_list_active_provider_models() {
+    let db = test_db().await;
+    db.create_provider(
+        "model-prov-2", "Model Provider 2", "https://mp2.com", "openai", "api_key",
+        Some("key"), None, None, None, None, None, None, None, None, None, None,
+        "token", "refreshToken", "Authorization", "Bearer ", 86400, 1, false,
+        "choices.0.message.content", "choices.0.delta.reasoning_content",
+    ).await.unwrap();
+
+    db.add_provider_model("model-prov-2", "gpt-4o-mini").await.unwrap();
+    
+    let active = db.list_active_provider_models("model-prov-2").await.unwrap();
+    assert_eq!(active.len(), 1);
+    assert_eq!(active[0].model_id, "gpt-4o-mini");
+    
+    // Non-existent provider
+    let empty = db.list_active_provider_models("non-existent").await.unwrap();
+    assert!(empty.is_empty());
+}
