@@ -1006,7 +1006,8 @@ impl Database {
                 COALESCE(SUM(completion_tokens), 0) as completion_tokens,
                 COALESCE(SUM(total_tokens), 0) as total_tokens,
                 SUM(CASE WHEN is_throttled = 1 THEN 1 ELSE 0 END) as throttle_count,
-                SUM(CASE WHEN error_message IS NOT NULL THEN 1 ELSE 0 END) as error_count
+                SUM(CASE WHEN error_message IS NOT NULL THEN 1 ELSE 0 END) as error_count,
+                COALESCE(AVG(duration_ms), 0.0) as avg_duration_ms
             FROM request_logs WHERE created_at >= ? AND created_at <= ?"#
         , strftime_format);
 
@@ -1534,6 +1535,7 @@ pub struct TimeBucketStats {
     pub total_tokens: i64,
     pub throttle_count: i64,
     pub error_count: i64,
+    pub avg_duration_ms: f64,
 }
 
 #[derive(Debug, Clone, Serialize)]

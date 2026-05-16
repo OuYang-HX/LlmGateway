@@ -152,7 +152,7 @@
             <label>服务商:</label><select id="st-provider"><option value="">全部</option></select>
             <button onclick="loadStats()">加载</button>
         </div>
-        <div class="panel"><h2>请求统计</h2><table id="stats-table"><thead><tr><th>时段</th><th>请求数</th><th>Prompt Tokens</th><th>Completion Tokens</th><th>总 Tokens</th><th>限流次数</th></tr></thead><tbody></tbody></table></div>
+        <div class="panel"><h2>请求统计</h2><table id="stats-table"><thead><tr><th>时段</th><th>请求数</th><th>Avg ms</th><th>Prompt Tokens</th><th>Completion Tokens</th><th>总 Tokens</th><th>限流次数</th></tr></thead><tbody></tbody></table></div>
     </div>
 </div>
 
@@ -557,7 +557,7 @@ async function loadApiKeysManage(){
     try{
         const ks=await(await fetch(API+'/api-keys')).json();
         const tb=document.querySelector('#apikey-manage-table tbody');
-        if(!ks.length){tb.innerHTML='<tr><td colspan="6" class="empty-state"><p>暂无 API Key，点击上方按钮创建</p></td></tr>';return;}
+        if(!ks.length){tb.innerHTML='<tr><td colspan="7" class="empty-state"><p>暂无 API Key，点击上方按钮创建</p></td></tr>';return;}
         tb.innerHTML=ks.map(k=>`<tr>
             <td>${k.name}</td><td style="font-family:monospace;font-size:12px">${k.key}</td>
             <td>${k.allowed_providers?k.allowed_providers.join(', '):'全部'}</td>
@@ -666,9 +666,9 @@ async function loadStats(){
         if(p)url+='&provider_id='+p;
         const data=await(await fetch(url)).json();
         document.querySelector('#stats-table tbody').innerHTML=data.map(b=>`<tr>
-            <td>${b.period}</td><td>${b.request_count}</td><td>${b.prompt_tokens}</td>
+            <td>${b.period}</td><td>${b.request_count}</td><td>${b.avg_duration_ms ? b.avg_duration_ms.toFixed(0) : 0}</td><td>${b.prompt_tokens}</td>
             <td>${b.completion_tokens}</td><td>${b.total_tokens}</td><td>${b.throttle_count}</td>
-        </tr>`).join('')||'<tr><td colspan="6" class="empty-state">暂无数据</td></tr>';
+        </tr>`).join('')||'<tr><td colspan="7" class="empty-state">暂无数据</td></tr>';
     }catch(e){console.error(e)}
 }
 
@@ -704,7 +704,7 @@ async function loadModels() {
         
         const tb = document.querySelector('#model-table tbody');
         if (!models.length) {
-            tb.innerHTML = '<tr><td colspan="6" class="empty-state"><p>暂无模型，点击上方按钮添加</p></td></tr>';
+            tb.innerHTML = '<tr><td colspan="7" class="empty-state"><p>暂无模型，点击上方按钮添加</p></td></tr>';
             return;
         }
         tb.innerHTML = models.map(m => {
@@ -1014,17 +1014,20 @@ function renderLogDetailQA(log) {
             .join('\n');
     }
     
-    // 提取 Answer: 根据服务商配置的 response_content_path 动态提取
-    let responseContentPath = 'choices.0.message.content';
+    // 提取 Answer: 根据服务商配置的 response_content_path 和 response_reasoning_path 动态提取
+    let providerConfig = null;
     if (log.provider_id && allProviders.length) {
         const provider = allProviders.find(p => p.id === log.provider_id);
-        if (provider && provider.response_content_path) {
-            responseContentPath = provider.response_content_path;
+        if (provider) {
+            providerConfig = {
+                response_content_path: provider.response_content_path || 'choices.0.message.content',
+                response_reasoning_path: provider.response_reasoning_path || 'choices.0.delta.reasoning_content',
+            };
         }
     }
-    
+
     if (resJson) {
-        const extractedAnswer = extractAnswer(resJson, responseContentPath);
+        const extractedAnswer = extractAnswer(resJson, providerConfig);
         if (extractedAnswer) {
             answer = extractedAnswer;
         }

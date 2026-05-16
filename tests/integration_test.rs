@@ -782,6 +782,8 @@ async fn test_time_bucketed_stats() {
     assert!(!buckets.is_empty(), "Should have at least one time bucket");
     assert_eq!(buckets[0].request_count, 3);
     assert_eq!(buckets[0].total_tokens, 900);
+    // avg_duration_ms: 3 requests each with duration_ms=500
+    assert_eq!(buckets[0].avg_duration_ms, 500.0);
 }
 
 #[tokio::test]
@@ -1302,4 +1304,53 @@ fn test_extra_headers_empty_object() {
     let headers_json = "{}";
     let parsed: serde_json::Map<String, serde_json::Value> = serde_json::from_str(headers_json).unwrap();
     assert_eq!(parsed.len(), 0);
+}
+
+
+#[tokio::test]
+async fn test_provider_reasoning_path_field() {
+    let db = test_db().await;
+    db.create_provider(
+        "prov-reason", "Reasoning Provider", "https://r.com", "openai", "api_key",
+        Some("key"), None, None, None, None, None, None, None, None, None, None,
+        "token", "refreshToken", "Authorization", "Bearer ", 86400, 1, false,
+        "choices.0.message.content", "choices.0.delta.reasoning_content",
+    ).await.unwrap();
+
+    let provider = db.get_provider("prov-reason").await.unwrap().unwrap();
+    assert_eq!(provider.response_content_path, "choices.0.message.content");
+    assert_eq!(provider.response_reasoning_path, "choices.0.delta.reasoning_content");
+
+    // Update only the reasoning path
+    db.update_provider(
+        "prov-reason", "prov-reason", "Updated Provider", "https://r.com", "openai", "api_key",
+        Some("key2"), None, None, None, None, None, None, None, None, None, None,
+        "token", "refreshToken", "Authorization", "Bearer ", 86400, 1, true, false,
+        "custom.content.path", "custom.reasoning.path",
+    ).await.unwrap();
+
+    let updated = db.get_provider("prov-reason").await.unwrap().unwrap();
+    assert_eq!(updated.response_content_path, "custom.content.path");
+    assert_eq!(updated.response_reasoning_path, "custom.reasoning.path");
+}
+
+#[tokio::test]
+async fn test_time_bucketed_stats_avg_duration() {
+    let db = test_db().await;
+    db.create_api_key("key-dur", "Key", "hash", "lgk", None).await.unwrap();
+    db.create_provider_simple("prov-dur", "Provider", "https://p.com", "openai", "api_key", Some("key"), None, None, None, "token", "refreshToken", "Authorization", "Bearer ", 86400, 1).await.unwrap();
+
+    // Insert requests with different durations
+    db.insert_request_log("key-dur", "prov-dur", None, "/v1/chat", "POST", None, None, Some(200), None, None, 100, 100, 200, Some(100), false, false, None).await.unwrap();
+    db.insert_request_log("key-dur", "prov-dur", None, "/v1/chat", "POST", None, None, Some(200), None, None, 100, 100, 200, Some(300), false, false, None).await.unwrap();
+    db.insert_request_log("key-dur", "prov-dur", None, "/v1/chat", "POST", None, None, Some(200), None, None, 100, 100, 200, Some(500), false, false, None).await.unwrap();
+
+    let now = chrono::Utc::now();
+    let start = (now - chrono::Duration::days(1)).format("%Y-%m-%d %H:%M:%S").to_string();
+    let end = (now + chrono::Duration::days(1)).format("%Y-%m-%d %H:%M:%S").to_string();
+
+    let buckets = db.get_time_bucketed_stats(None, None, &start, &end, "day").await.unwrap();
+    assert!(!buckets.is_empty());
+    // (100 + 300 + 500) / 3 = 300
+    assert_eq!(buckets[0].avg_duration_ms, 300.0);
 }
