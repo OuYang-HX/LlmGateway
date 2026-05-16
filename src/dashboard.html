@@ -56,6 +56,12 @@
         .badge-blue{background:#1e40af;color:#93c5fd}
         .empty-state{text-align:center;padding:40px;color:#64748b}
         .empty-state p{margin-bottom:12px}
+        .qa-section{margin-bottom:16px}
+        .qa-section h4{font-size:14px;color:#60a5fa;margin-bottom:8px;padding:4px 8px;background:#1e3a5f;border-radius:4px}
+        .qa-content{background:#0f172a;border:1px solid #334155;border-radius:8px;padding:12px;font-family:monospace;font-size:13px;white-space:pre-wrap;word-break:break-word;max-height:400px;overflow-y:auto;line-height:1.5;color:#e2e8f0}
+        .qa-meta{display:grid;grid-template-columns:1fr 1fr;gap:8px;margin-bottom:16px}
+        .qa-meta-item{font-size:12px;color:#94a3b8}
+        .qa-meta-item span{color:#e2e8f0;font-weight:600}
     </style>
 </head>
 <body>
@@ -127,7 +133,7 @@
             <button onclick="loadLogs()">搜索</button>
         </div>
         <div class="panel">
-            <table id="logs-table"><thead><tr><th>时间</th><th>API Key</th><th>服务商</th><th>模型</th><th>状态码</th><th>Tokens</th><th>耗时</th><th>流式</th><th>限流</th></tr></thead><tbody></tbody></table>
+            <table id="logs-table"><thead><tr><th>时间</th><th>API Key</th><th>服务商</th><th>模型</th><th>状态码</th><th>Tokens</th><th>耗时</th><th>流式</th><th>限流</th><th>详情</th></tr></thead><tbody></tbody></table>
         </div>
     </div>
 
@@ -535,7 +541,8 @@ async function loadLogs(){
             <td>${l.provider_id}</td><td>${l.model||'-'}</td><td>${l.response_status||'-'}</td>
             <td>${l.total_tokens}</td><td>${l.duration_ms?l.duration_ms+'ms':'-'}</td>
             <td>${l.is_streaming?'✅':'❌'}</td><td>${l.is_throttled?'⚠️':'✅'}</td>
-        </tr>`).join('')||'<tr><td colspan="9" class="empty-state">暂无日志</td></tr>';
+            <td><button class="btn btn-sm" onclick='showLogDetail(${l.id})'>📋 QA</button></td>
+        </tr>`).join('')||'<tr><td colspan="10" class="empty-state">暂无日志</td></tr>';
     }catch(e){console.error(e)}
 }
 
@@ -807,6 +814,107 @@ function fmtTime(utcStr) {
     }).replace(/\//g, '/');
 }
 
+// ========== 日志详情 (QA) ==========
+async function showLogDetail(logId) {
+    try {
+        const log = await (await fetch(API + '/logs/' + logId)).json();
+        if (log.error) { alert('获取失败: ' + log.error); return; }
+        
+        // 解析请求和响应体，提取 QA 内容
+        let question = '';  // 用户发送的消息
+        let answer = '';    // 模型返回的内容
+        let reqJson = null;
+        let resJson = null;
+        
+        try { reqJson = JSON.parse(log.request_body || '{}'); } catch(e) {}
+        try { resJson = JSON.parse(log.response_body || '{}'); } catch(e) {}
+        
+        // 提取 Question: 从请求的 messages 中提取用户消息
+        if (reqJson && reqJson.messages) {
+            question = reqJson.messages
+                .filter(m => m.role === 'user' || m.role === 'system')
+                .map(m => {
+                    const roleTag = m.role === 'system' ? '[System]' : '[User]';
+                    return roleTag + ' ' + (typeof m.content === 'string' ? m.content : JSON.stringify(m.content));
+                })
+                .join('\n');
+        }
+        
+        // 提取 Answer: 从响应中提取模型回复
+        if (resJson && resJson.choices && resJson.choices[0]) {
+            const msg = resJson.choices[0].message;
+            if (msg && msg.content) {
+                answer = msg.content;
+            }
+        } else if (log.response_body) {
+            // 流式响应可能不是标准 JSON，尝试直接显示
+            answer = log.response_body;
+        }
+        
+        // 构建详情 HTML
+        let html = '';
+        
+        // 元信息
+        html += `<div class="qa-meta">`;
+        html += `<div class="qa-meta-item">时间: <span>${fmtTime(log.created_at)}</span></div>`;
+        html += `<div class="qa-meta-item">模型: <span>${log.model || '-'}</span></div>`;
+        html += `<div class="qa-meta-item">服务商: <span>${log.provider_id}</span></div>`;
+        html += `<div class="qa-meta-item">状态码: <span>${log.response_status || '-'}</span></div>`;
+        html += `<div class="qa-meta-item">Prompt Tokens: <span>${log.prompt_tokens}</span></div>`;
+        html += `<div class="qa-meta-item">Completion Tokens: <span>${log.completion_tokens}</span></div>`;
+        html += `<div class="qa-meta-item">总 Tokens: <span>${log.total_tokens}</span></div>`;
+        html += `<div class="qa-meta-item">耗时: <span>${log.duration_ms ? log.duration_ms + 'ms' : '-'}</span></div>`;
+        html += `<div class="qa-meta-item">流式: <span>${log.is_streaming ? '是' : '否'}</span></div>`;
+        html += `<div class="qa-meta-item">限流: <span>${log.is_throttled ? '⚠️ 是' : '否'}</span></div>`;
+        html += `</div>`;
+        
+        // Question
+        if (question) {
+            html += `<div class="qa-section"><h4>❓ Question（用户输入）</h4><div class="qa-content">${escapeHtml(question)}</div></div>`;
+        }
+        
+        // Answer
+        if (answer) {
+            html += `<div class="qa-section"><h4>💡 Answer（模型回复）</h4><div class="qa-content">${escapeHtml(answer)}</div></div>`;
+        }
+        
+        // 如果没有提取到 QA，显示原始请求/响应
+        if (!question && log.request_body) {
+            html += `<div class="qa-section"><h4>请求体（原始）</h4><div class="qa-content">${escapeHtml(prettyJson(log.request_body))}</div></div>`;
+        }
+        if (!answer && log.response_body) {
+            html += `<div class="qa-section"><h4>响应体（原始）</h4><div class="qa-content">${escapeHtml(prettyJson(log.response_body))}</div></div>`;
+        }
+        
+        // 错误信息
+        if (log.error_message) {
+            html += `<div class="qa-section"><h4 style="background:#5f1e1e;color:#f87171">❌ 错误信息</h4><div class="qa-content" style="border-color:#991b1b;color:#fca5a5">${escapeHtml(log.error_message)}</div></div>`;
+        }
+        
+        document.getElementById('log-detail-content').innerHTML = html;
+        document.getElementById('log-detail-modal').classList.remove('hidden');
+    } catch(e) {
+        alert('网络错误: ' + e.message);
+    }
+}
+
+function closeLogDetailModal() {
+    document.getElementById('log-detail-modal').classList.add('hidden');
+}
+
+function escapeHtml(str) {
+    if (!str) return '';
+    return str.replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;');
+}
+
+function prettyJson(str) {
+    try {
+        return JSON.stringify(JSON.parse(str), null, 2);
+    } catch(e) {
+        return str;
+    }
+}
+
 // ========== 初始化 ==========
 loadSummary();loadOverviewProviders();loadOverviewApiKeys();
 setInterval(loadSummary,30000);
@@ -828,6 +936,17 @@ setInterval(loadSummary,30000);
     <div class="form-actions">
         <button class="btn" onclick="closeExternalIdModal()">取消</button>
         <button class="btn btn-success" onclick="saveExternalId()">保存</button>
+    </div>
+</div>
+</div>
+
+<!-- ====== QA 详情 Modal ====== -->
+<div id="log-detail-modal" class="modal-overlay hidden">
+<div class="modal" style="max-width:800px">
+    <h3>📋 请求详情</h3>
+    <div id="log-detail-content"></div>
+    <div class="form-actions" style="margin-top:16px">
+        <button class="btn" onclick="closeLogDetailModal()">关闭</button>
     </div>
 </div>
 </div>

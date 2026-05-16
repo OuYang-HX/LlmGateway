@@ -186,7 +186,9 @@ impl LlmProxy {
         // Extract model from request body as fallback
         let model = response_model.or_else(|| self.extract_model_from_body(&body));
 
-        // Log the request
+        // Log the request with body content for QA detail view
+        let request_body_str = if !body.is_empty() { Some(String::from_utf8_lossy(&body).to_string()) } else { None };
+        let response_body_str = if !response_body.is_empty() { Some(String::from_utf8_lossy(&response_body).to_string()) } else { None };
         let _ = self.db.insert_request_log(
             api_key_id,
             &provider.id,
@@ -194,10 +196,10 @@ impl LlmProxy {
             path,
             method,
             None,
-            None,
+            request_body_str.as_deref(),
             Some(status_code),
             None,
-            None,
+            response_body_str.as_deref(),
             prompt_tokens,
             completion_tokens,
             total_tokens,
@@ -292,6 +294,7 @@ impl LlmProxy {
         let model = self.extract_model_from_body(&body);
 
         // Log a preliminary entry (token counts will be updated later)
+        let request_body_str = if !body.is_empty() { Some(String::from_utf8_lossy(&body).to_string()) } else { None };
         let _ = self.db.insert_request_log(
             api_key_id,
             &provider.id,
@@ -299,7 +302,7 @@ impl LlmProxy {
             path,
             method,
             None,
-            None,
+            request_body_str.as_deref(),
             Some(response.status().as_u16() as i32),
             None,
             None,

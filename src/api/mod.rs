@@ -775,6 +775,21 @@ pub async fn get_request_logs(
     }
 }
 
+/// Get a single request log by ID (for QA detail view)
+pub async fn get_request_log_detail(
+    State(state): State<AppState>,
+    Path(id): Path<i64>,
+) -> impl IntoResponse {
+    match state.db.get_request_log(id).await {
+        Ok(Some(log)) => Json(log).into_response(),
+        Ok(None) => (StatusCode::NOT_FOUND, Json(serde_json::json!({"error": "Log not found"}))).into_response(),
+        Err(e) => {
+            tracing::error!("Failed to get request log: {}", e);
+            (StatusCode::INTERNAL_SERVER_ERROR, Json(serde_json::json!({"error": e.to_string()}))).into_response()
+        }
+    }
+}
+
 // ========== Dashboard handlers ==========
 
 /// Get dashboard summary

@@ -85,6 +85,7 @@ async fn main() -> anyhow::Result<()> {
 
         // Request logs
         .route("/api/v1/logs", get(api::get_request_logs))
+        .route("/api/v1/logs/:id", get(api::get_request_log_detail))
 
         // Dashboard API
         .route("/api/v1/dashboard/summary", get(api::get_dashboard_summary))

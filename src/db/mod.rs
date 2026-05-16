@@ -885,6 +885,17 @@ impl Database {
         Ok(count)
     }
 
+    /// Get a single request log by ID
+    pub async fn get_request_log(&self, id: i64) -> Result<Option<RequestLogRow>, sqlx::Error> {
+        let row = sqlx::query_as::<_, RequestLogRow>(
+            "SELECT * FROM request_logs WHERE id = ?"
+        )
+        .bind(id)
+        .fetch_optional(&self.pool)
+        .await?;
+        Ok(row)
+    }
+
     // ========== Statistics operations ==========
 
     /// Get aggregate statistics
