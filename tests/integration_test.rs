@@ -1624,3 +1624,29 @@ async fn test_stats_by_api_key_time_range_filter() {
     let empty = db.get_stats_by_api_key(10, Some(future), None).await.unwrap();
     assert_eq!(empty.len(), 0);
 }
+
+
+#[tokio::test]
+async fn test_stats_by_api_key_token_breakdown() {
+    let db = test_db().await;
+    db.create_provider(
+        "breakdown-prov", "Breakdown Provider", "https://b.com", "openai", "api_key",
+        Some("key"), None, None, None, None, None, None, None, None, None, None,
+        "token", "refreshToken", "Authorization", "Bearer ", 86400, 1, false,
+        "choices.0.message.content", "choices.0.delta.reasoning_content",
+    ).await.unwrap();
+    db.create_api_key("breakdown-key", "Breakdown Key", "sk-break", "sk-bk", None).await.unwrap();
+
+    // Insert with specific token counts
+    db.insert_request_log(
+        "breakdown-key", "breakdown-prov", Some("gpt-4o"), "/v1/chat/completions", "POST",
+        None, Some("{}"), Some(200), None, Some("{}"),
+        100, 50, 150, Some(100), false, false, None,
+    ).await.unwrap();
+
+    let stats = db.get_stats_by_api_key(10, None, None).await.unwrap();
+    assert_eq!(stats.len(), 1);
+    assert_eq!(stats[0].total_prompt_tokens, 100);
+    assert_eq!(stats[0].total_completion_tokens, 50);
+    assert_eq!(stats[0].total_tokens, 150);
+}

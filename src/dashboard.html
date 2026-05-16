@@ -479,33 +479,45 @@ async function loadApiKeyUsageChart(){
             return;
         }
         const labels = data.map(d => d.api_key_id.slice(0, 8));
-        const tokens = data.map(d => d.total_tokens);
+        const promptTokens = data.map(d => d.total_prompt_tokens);
+        const completionTokens = data.map(d => d.total_completion_tokens);
         const ctx = document.getElementById('apikey-usage-chart').getContext('2d');
         if(apiKeyUsageChart){
             apiKeyUsageChart.data.labels = labels;
-            apiKeyUsageChart.data.datasets[0].data = tokens;
+            apiKeyUsageChart.data.datasets[0].data = promptTokens;
+            apiKeyUsageChart.data.datasets[1].data = completionTokens;
             apiKeyUsageChart.update('none');
         } else {
             apiKeyUsageChart = new Chart(ctx, {
                 type: 'bar',
                 data: {
                     labels,
-                    datasets: [{
-                        label: 'Total Tokens',
-                        data: tokens,
-                        backgroundColor: 'rgba(34,197,94,0.6)',
-                        borderColor: 'rgba(34,197,94,1)',
-                        borderWidth: 1,
-                        borderRadius: 4,
-                    }]
+                    datasets: [
+                        {
+                            label: 'Prompt Tokens',
+                            data: promptTokens,
+                            backgroundColor: 'rgba(59,130,246,0.7)',
+                            borderColor: 'rgba(59,130,246,1)',
+                            borderWidth: 1,
+                            borderRadius: 2,
+                        },
+                        {
+                            label: 'Completion Tokens',
+                            data: completionTokens,
+                            backgroundColor: 'rgba(34,197,94,0.7)',
+                            borderColor: 'rgba(34,197,94,1)',
+                            borderWidth: 1,
+                            borderRadius: 2,
+                        }
+                    ]
                 },
                 options: {
                     responsive: true,
                     maintainAspectRatio: false,
-                    plugins: { legend: { display: false } },
+                    plugins: { legend: { display: true, labels: { color: '#94a3b8', font: { size: 11 } } } },
                     scales: {
                         x: { ticks: { color: '#94a3b8', font: { size: 10 } }, grid: { display: false } },
-                        y: { beginAtZero: true, ticks: { color: '#94a3b8', font: { size: 10 } }, title: { display: true, text: 'Tokens', color: '#64748b' } }
+                        y: { beginAtZero: true, stacked: true, ticks: { color: '#94a3b8', font: { size: 10 } }, title: { display: true, text: 'Tokens', color: '#64748b' } }
                     }
                 }
             });
