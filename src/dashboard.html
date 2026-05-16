@@ -155,6 +155,7 @@
             <label>从:</label><input type="datetime-local" id="log-start">
             <label>到:</label><input type="datetime-local" id="log-end">
             <button onclick="currentLogPage=1;loadLogs()">搜索</button>
+            <button onclick="exportLogsCsv()" style="margin-left:8px;background:#059669">📥 CSV</button>
         </div>
         <div class="panel">
             <table id="logs-table"><thead><tr><th>时间</th><th>API Key</th><th>服务商</th><th>模型</th><th>状态码</th><th>Tokens</th><th>耗时</th><th>流式</th><th>限流</th><th>错误</th><th>详情</th></tr></thead><tbody></tbody></table>
@@ -724,6 +725,45 @@ function changeLogPageSize(){
     currentLogPageSize=parseInt(document.getElementById('logs-page-size').value);
     currentLogPage=1;
     loadLogs();
+}
+
+async function exportLogsCsv(){
+    try{
+        const params=new URLSearchParams();
+        const prov=document.getElementById('log-provider').value;
+        const search=document.getElementById('log-search').value.trim();
+        const start=document.getElementById('log-start').value;
+        const end=document.getElementById('log-end').value;
+        if(prov)params.set('provider_id',prov);
+        if(search)params.set('search',search);
+        if(start)params.set('start_time',new Date(start).toISOString());
+        if(end)params.set('end_time',new Date(end).toISOString());
+        params.set('page','1');
+        params.set('page_size','10000'); // export up to 10k rows
+        const data=await(await fetch(API+'/logs?'+params)).json();
+        const logs=data.logs||[];
+        if(!logs.length){alert('暂无数据可导出');return;}
+        const headers=['时间','API Key','服务商','模型','状态码','Prompt Tokens','Completion Tokens','总Tokens','耗时(ms)','流式','限流','错误'];
+        const rows=logs.map(l=>[
+            l.created_at||'',
+            l.api_key_id||'',
+            l.provider_id||'',
+            l.model||'',
+            l.response_status||0,
+            l.prompt_tokens||0,
+            l.completion_tokens||0,
+            l.total_tokens||0,
+            l.duration_ms||0,
+            l.is_streaming?'是':'否',
+            l.is_throttled?'是':'否',
+            (l.error_message||'').replace(/"/g,'""')
+        ]);
+        const csv=[headers.join(','),...rows.map(r=>r.map(v=>'"'+v+'"').join(','))].join('\n');
+        const blob=new Blob(['\ufeff'+csv],{type:'text/csv;charset=utf-8'});
+        const url=URL.createObjectURL(blob);
+        const a=document.createElement('a');a.href=url;a.download='llm-gateway-logs-'+new Date().toISOString().slice(0,10)+'.csv';a.click();
+        URL.revokeObjectURL(url);
+    }catch(e){alert('导出失败: '+e.message)}
 }
 
 async function loadLogs(){

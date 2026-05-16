@@ -1144,3 +1144,27 @@ async fn test_logs_pagination() {
     let resp2 = server.get("/api/v1/logs?page=2&page_size=50").await;
     assert_eq!(resp2.status_code(), StatusCode::OK);
 }
+
+
+#[tokio::test]
+async fn test_logs_export_api() {
+    let server = build_test_app().await;
+
+    // Test that the logs API accepts page_size up to a large value
+    let resp = server.get("/api/v1/logs?page=1&page_size=1000").await;
+    assert_eq!(resp.status_code(), StatusCode::OK);
+    let body: serde_json::Value = resp.json();
+    assert!(body.get("logs").is_some());
+    assert!(body.get("total").is_some());
+}
+
+#[tokio::test]
+async fn test_logs_with_search_and_provider_filter() {
+    let server = build_test_app().await;
+
+    // Test combined filters
+    let resp = server.get("/api/v1/logs?provider_id=test-prov&search=hello&page=1&page_size=10").await;
+    assert_eq!(resp.status_code(), StatusCode::OK);
+    let body: serde_json::Value = resp.json();
+    assert!(body.get("logs").is_some());
+}
