@@ -1975,3 +1975,27 @@ async fn test_provider_health_stats_zero_requests() {
         assert_eq!(h.request_count_24h, 0);
     }
 }
+
+
+#[tokio::test]
+async fn test_stats_by_api_key_with_time_filter() {
+    let db = test_db().await;
+    db.create_provider(
+        "timef-prov", "TimeFilter Provider", "https://tf.com", "openai", "api_key",
+        Some("key"), None, None, None, None, None, None, None, None, None, None,
+        "token", "refreshToken", "Authorization", "Bearer ", 86400, 1, false,
+        "choices.0.message.content", "choices.0.delta.reasoning_content",
+    ).await.unwrap();
+    db.create_api_key("timef-key", "TimeFilter Key", "sk-tf", "sk-timef", None).await.unwrap();
+
+    db.insert_request_log(
+        "timef-key", "timef-prov", Some("gpt-4o"), "/v1/chat", "POST",
+        None, Some("{}"), Some(200), None, Some("{}"),
+        10, 20, 30, Some(100), false, false, None,
+    ).await.unwrap();
+
+    // With time filter starting from now, should return nothing
+    let future = "2099-01-01 00:00:00";
+    let empty = db.get_stats_by_api_key(10, Some(future), None).await.unwrap();
+    assert!(empty.is_empty());
+}
