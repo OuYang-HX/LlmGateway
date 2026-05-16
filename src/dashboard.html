@@ -1058,11 +1058,12 @@ function extractAnswer(responseJson, path) {
         }
     }
     if (typeof result !== 'string') return null;
-    // Strip thinking tags: <think>...</think> (used by MiniMax, DeepSeek, etc.)
-    result = result.replace(/<think>[\s\S]*?<\/think>/g, '').trim();
-    // Compress 3+ consecutive newlines to 2
-    result = result.replace(/\n{3,}/g, '\n\n');
-    return result;
+    // Strip thinking/reasoning tags: <think>...</think> and <tool_call>...</think> (used by various LLMs)
+    result = result.replace(/<think>[\s\S]*?<\/think>/g, '');
+    result = result.replace(/<tool_call>[\s\S]*?<\/think>/g, '');
+    // Compress all consecutive newlines (2+) to a single newline
+    result = result.replace(/\n{2,}/g, '\n');
+    return result.trim();
 }
 
 function escapeHtml(str) {

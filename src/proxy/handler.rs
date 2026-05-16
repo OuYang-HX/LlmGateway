@@ -4,6 +4,7 @@ use axum::{
     http::{HeaderMap, StatusCode},
     response::{IntoResponse, Response},
 };
+use uuid::Uuid;
 use crate::AppState;
 
 /// Handler for proxying LLM requests
@@ -197,36 +198,62 @@ pub async fn proxy_request(
                 tokio::spawn(async move {
                     use futures::StreamExt;
                     let mut stream = Box::pin(stream);
-                    let mut collected_bytes = Vec::new();
+                    let mut all_delta_content = String::new();
                     let mut prompt_tokens: i64 = 0;
                     let mut completion_tokens: i64 = 0;
                     let mut total_tokens: i64 = 0;
+                    let mut response_id: Option<String> = None;
                     let mut response_model: Option<String> = None;
+                    let mut finish_reason: Option<String> = None;
                     let start = std::time::Instant::now();
+                    let mut raw_sse = String::new();
 
                     while let Some(chunk) = stream.next().await {
                         match chunk {
                             Ok(bytes) => {
-                                collected_bytes.extend_from_slice(&bytes);
-                                // Try to extract usage from SSE chunks
-                                let chunk_str = String::from_utf8_lossy(&bytes);
+                                let chunk_str = String::from_utf8_lossy(&bytes).to_string();
+                                raw_sse.push_str(&chunk_str);
+
+                                // Parse SSE lines and accumulate content
                                 for line in chunk_str.split('\n') {
-                                    let (p, c, t) = crate::usage::extract_streaming_usage(line);
-                                    if p > 0 || c > 0 || t > 0 {
-                                        prompt_tokens = p;
-                                        completion_tokens = c;
-                                        total_tokens = t;
-                                    }
-                                    // Try to extract model from streaming chunks
-                                    if response_model.is_none() {
-                                        let json_str = line.trim().strip_prefix("data: ").unwrap_or(line.trim());
-                                        if json_str != "[DONE]" {
-                                            if let Ok(v) = serde_json::from_str::<serde_json::Value>(json_str) {
-                                                response_model = crate::usage::extract_model_from_response(&v);
+                                    let trimmed = line.trim();
+                                    if !trimmed.starts_with("data: ") { continue; }
+                                    let json_str = &trimmed[6..];
+                                    if json_str == "[DONE]" { continue; }
+
+                                    if let Ok(v) = serde_json::from_str::<serde_json::Value>(json_str) {
+                                        // Extract usage from final chunk
+                                        if let Some(u) = v.get("usage") {
+                                            prompt_tokens = u.get("prompt_tokens").and_then(|v| v.as_i64()).unwrap_or(0);
+                                            completion_tokens = u.get("completion_tokens").and_then(|v| v.as_i64()).unwrap_or(0);
+                                            total_tokens = u.get("total_tokens").and_then(|v| v.as_i64()).unwrap_or(prompt_tokens + completion_tokens);
+                                        }
+                                        // Extract ID and model from first chunk
+                                        if response_id.is_none() {
+                                            response_id = v.get("id").and_then(|v| v.as_str()).map(String::from);
+                                        }
+                                        if response_model.is_none() {
+                                            response_model = v.get("model").and_then(|v| v.as_str()).map(String::from);
+                                        }
+                                        // Accumulate delta content
+                                        if let Some(choices) = v.get("choices").and_then(|v| v.as_array()) {
+                                            for choice in choices {
+                                                if let Some(delta) = choice.get("delta") {
+                                                    if let Some(content) = delta.get("content").and_then(|v| v.as_str()) {
+                                                        all_delta_content.push_str(content);
+                                                    }
+                                                }
+                                                // Extract finish_reason if present
+                                                if let Some(fr) = choice.get("finish_reason").and_then(|v| v.as_str()) {
+                                                    if finish_reason.is_none() {
+                                                        finish_reason = Some(fr.to_string());
+                                                    }
+                                                }
                                             }
                                         }
                                     }
                                 }
+
                                 if tx.send(Ok::<_, std::convert::Infallible>(bytes)).await.is_err() {
                                     break;
                                 }
@@ -238,10 +265,28 @@ pub async fn proxy_request(
                         }
                     }
 
-                    // Stream finished - log the complete request
+                    // Stream finished - build reconstructed non-streaming response
                     let duration_ms = start.elapsed().as_millis() as i64;
-                    let final_model = response_model.or(Some(log_model));
-                    let response_body_str = if !collected_bytes.is_empty() { Some(String::from_utf8_lossy(&collected_bytes).to_string()) } else { None };
+                    let final_model = response_model.clone().or(Some(log_model));
+
+                    // Build a non-streaming style response body for QA
+                    let reconstructed = serde_json::json!({
+                        "id": response_id.unwrap_or_else(|| format!("chatcmpl-{}", uuid::Uuid::new_v4())),
+                        "model": final_model.as_deref().unwrap_or("unknown"),
+                        "choices": [{
+                            "finish_reason": finish_reason.unwrap_or_else(|| "stop".to_string()),
+                            "index": 0,
+                            "message": {
+                                "role": "assistant",
+                                "content": all_delta_content
+                            }
+                        }],
+                        "usage": {
+                            "prompt_tokens": prompt_tokens,
+                            "completion_tokens": completion_tokens,
+                            "total_tokens": total_tokens
+                        }
+                    });
 
                     let _ = db.insert_request_log(
                         &api_key_id,
@@ -253,7 +298,7 @@ pub async fn proxy_request(
                         request_body_str.as_deref(),
                         Some(status_code),
                         None,
-                        response_body_str.as_deref(),
+                        Some(&reconstructed.to_string()),
                         prompt_tokens,
                         completion_tokens,
                         total_tokens,
