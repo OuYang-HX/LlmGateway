@@ -318,6 +318,76 @@ impl LlmProxy {
         Ok(response)
     }
 
+    /// Forward a streaming request without logging (handler will log after collecting all chunks)
+    pub async fn forward_streaming_no_log(
+        &self,
+        provider: &ProviderRow,
+        path: &str,
+        method: &str,
+        headers: axum::http::HeaderMap,
+        body: axum::body::Bytes,
+    ) -> Result<reqwest::Response, ProxyError> {
+        // Get auth header
+        let (auth_header_name, auth_header_value) = self.auth_manager.get_auth_header(provider).await
+            .map_err(|e| ProxyError::AuthError(e.to_string()))?;
+
+        // Build the target URL
+        let base_url = provider.base_url.trim_end_matches('/');
+        let suffix_path = if let Some(stripped) = path.strip_prefix("/v1") {
+            stripped.to_string()
+        } else if let Some(stripped) = path.strip_prefix("/v2") {
+            stripped.to_string()
+        } else {
+            path.to_string()
+        };
+        let target_url = format!("{}{}", base_url, suffix_path);
+
+        // Select HTTP client based on bypass_proxy setting
+        let client = if provider.bypass_proxy {
+            &self.no_proxy_client
+        } else {
+            &self.http_client
+        };
+
+        // Build the forwarded request
+        let mut req_builder = match method {
+            "GET" => client.get(&target_url),
+            "POST" => client.post(&target_url),
+            "PUT" => client.put(&target_url),
+            "DELETE" => client.delete(&target_url),
+            "PATCH" => client.patch(&target_url),
+            _ => client.post(&target_url),
+        };
+
+        // Copy headers, replacing auth and skipping content-length (reqwest auto-sets it)
+        for (name, value) in headers.iter() {
+            if name.as_str() != "authorization" && name.as_str() != "host" && name.as_str() != "content-length" {
+                if let Ok(v) = value.to_str() {
+                    req_builder = req_builder.header(name.as_str(), v);
+                }
+            }
+        }
+        req_builder = req_builder.header(&auth_header_name, &auth_header_value);
+
+        // Add stored cookies from auth response
+        if let Some(cookies) = &provider.token_cookies {
+            if !cookies.is_empty() {
+                req_builder = req_builder.header("Cookie", cookies.as_str());
+            }
+        }
+
+        // Set body
+        if !body.is_empty() {
+            req_builder = req_builder.body(body.clone());
+        }
+
+        // Send request and return the response (no logging here)
+        let response = req_builder.send().await
+            .map_err(|e| ProxyError::UpstreamError(e.to_string()))?;
+
+        Ok(response)
+    }
+
     /// Extract model name from request body
     pub fn extract_model_from_body(&self, body: &[u8]) -> Option<String> {
         serde_json::from_slice::<serde_json::Value>(body)

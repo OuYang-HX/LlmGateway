@@ -148,29 +148,28 @@ pub async fn proxy_request(
         }
     };
 
-    // Replace model name in body: unified model ID -> provider model ID
-    let final_body = if let Ok(mut body_json) = serde_json::from_slice::<serde_json::Value>(&body_bytes) {
-        if let Some(obj) = body_json.as_object_mut() {
-            obj.insert("model".to_string(), serde_json::Value::String(selected_mapping.provider_model_id.clone()));
-            let new_body_str = serde_json::to_string(&body_json).unwrap_or_default();
-            axum::body::Bytes::from(new_body_str)
-        } else {
-            body_bytes.clone()
-        }
-    } else {
-        body_bytes.clone()
-    };
-
-    // Check if this is a streaming request
+    // Replace model name in body and inject stream_options for streaming
     let is_streaming = serde_json::from_slice::<serde_json::Value>(&body_bytes)
         .ok()
         .and_then(|v| v.get("stream")?.as_bool())
         .unwrap_or(false);
 
+    let final_body = if let Ok(mut body_json) = serde_json::from_slice::<serde_json::Value>(&body_bytes) {
+        if let Some(obj) = body_json.as_object_mut() {
+            obj.insert("model".to_string(), serde_json::Value::String(selected_mapping.provider_model_id.clone()));
+            // For streaming, inject stream_options to get usage stats in final SSE chunk
+            if is_streaming {
+                obj.insert("stream_options".to_string(), serde_json::json!({"include_usage": true}));
+            }
+        }
+        axum::body::Bytes::from(serde_json::to_string(&body_json).unwrap_or_default())
+    } else {
+        body_bytes.clone()
+    };
+
     if is_streaming {
-        // Streaming path: forward and stream the response
-        let response = state.proxy.forward_streaming(
-            &api_key_row.id,
+        // Streaming path: forward, collect chunks, and stream to client
+        let response = state.proxy.forward_streaming_no_log(
             &provider,
             &path,
             &method,
@@ -181,14 +180,53 @@ pub async fn proxy_request(
         match response {
             Ok(upstream_response) => {
                 let status = upstream_response.status();
+                let status_code = status.as_u16() as i32;
+                let is_throttled = status_code == 429;
                 let stream = upstream_response.bytes_stream();
                 let (tx, rx) = tokio::sync::mpsc::channel(100);
+
+                // Clone needed data for the collector task
+                let db = state.db.clone();
+                let api_key_id = api_key_row.id.clone();
+                let provider_id = provider.id.clone();
+                let log_path = path.clone();
+                let log_model = model.id.clone();
+                let request_body_str = if !body_bytes.is_empty() { Some(String::from_utf8_lossy(&body_bytes).to_string()) } else { None };
+
+                // Spawn a task that collects all chunks for logging while forwarding to client
                 tokio::spawn(async move {
                     use futures::StreamExt;
                     let mut stream = Box::pin(stream);
+                    let mut collected_bytes = Vec::new();
+                    let mut prompt_tokens: i64 = 0;
+                    let mut completion_tokens: i64 = 0;
+                    let mut total_tokens: i64 = 0;
+                    let mut response_model: Option<String> = None;
+                    let start = std::time::Instant::now();
+
                     while let Some(chunk) = stream.next().await {
                         match chunk {
                             Ok(bytes) => {
+                                collected_bytes.extend_from_slice(&bytes);
+                                // Try to extract usage from SSE chunks
+                                let chunk_str = String::from_utf8_lossy(&bytes);
+                                for line in chunk_str.split('\n') {
+                                    let (p, c, t) = crate::usage::extract_streaming_usage(line);
+                                    if p > 0 || c > 0 || t > 0 {
+                                        prompt_tokens = p;
+                                        completion_tokens = c;
+                                        total_tokens = t;
+                                    }
+                                    // Try to extract model from streaming chunks
+                                    if response_model.is_none() {
+                                        let json_str = line.trim().strip_prefix("data: ").unwrap_or(line.trim());
+                                        if json_str != "[DONE]" {
+                                            if let Ok(v) = serde_json::from_str::<serde_json::Value>(json_str) {
+                                                response_model = crate::usage::extract_model_from_response(&v);
+                                            }
+                                        }
+                                    }
+                                }
                                 if tx.send(Ok::<_, std::convert::Infallible>(bytes)).await.is_err() {
                                     break;
                                 }
@@ -199,6 +237,31 @@ pub async fn proxy_request(
                             }
                         }
                     }
+
+                    // Stream finished - log the complete request
+                    let duration_ms = start.elapsed().as_millis() as i64;
+                    let final_model = response_model.or(Some(log_model));
+                    let response_body_str = if !collected_bytes.is_empty() { Some(String::from_utf8_lossy(&collected_bytes).to_string()) } else { None };
+
+                    let _ = db.insert_request_log(
+                        &api_key_id,
+                        &provider_id,
+                        final_model.as_deref(),
+                        &log_path,
+                        "POST",
+                        None,
+                        request_body_str.as_deref(),
+                        Some(status_code),
+                        None,
+                        response_body_str.as_deref(),
+                        prompt_tokens,
+                        completion_tokens,
+                        total_tokens,
+                        Some(duration_ms),
+                        true,
+                        is_throttled,
+                        None,
+                    ).await;
                 });
 
                 let body_stream = tokio_stream::wrappers::ReceiverStream::new(rx);
