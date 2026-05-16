@@ -69,11 +69,11 @@
     <h1>🚀 LLM Gateway Dashboard</h1>
 
     <div class="tabs">
-        <button class="tab active" onclick="showTab('overview')">概览</button>
-        <button class="tab" onclick="showTab('providers')">服务商管理</button>
-        <button class="tab" onclick="showTab('apikeys')">API Key 管理</button>
-        <button class="tab" onclick="showTab('logs')">请求日志</button>
-        <button class="tab" onclick="showTab('stats')">统计分析</button>
+        <button class="tab active" onclick="showTab('overview', this)">概览</button>
+        <button class="tab" onclick="showTab('providers', this)">服务商管理</button>
+        <button class="tab" onclick="showTab('apikeys', this)">API Key 管理</button>
+        <button class="tab" onclick="showTab('logs', this)">请求日志</button>
+        <button class="tab" onclick="showTab('stats', this)">统计分析</button>
     </div>
 
     <!-- ====== 概览 ====== -->
@@ -314,11 +314,11 @@
 <script>
 const API='/api/v1';
 
-function showTab(name){
+function showTab(name, btn){
     document.querySelectorAll('[id^="tab-"]').forEach(el=>el.classList.add('hidden'));
     document.getElementById('tab-'+name).classList.remove('hidden');
     document.querySelectorAll('.tab').forEach(el=>el.classList.remove('active'));
-    event.target.classList.add('active');
+    if(btn) btn.classList.add('active');
     if(name==='providers') loadProvidersManage();
     if(name==='apikeys') loadApiKeysManage();
     if(name==='overview'){loadSummary();loadOverviewProviders();loadOverviewApiKeys();loadProviderHealth();startTokenRateAutoRefresh();startApiKeyUsageAutoRefresh();} else {stopTokenRateAutoRefresh();stopApiKeyUsageAutoRefresh();}
@@ -975,7 +975,7 @@ function setLogTimePreset(preset){
 }
 
 function filterLogsByProvider(providerId){
-    showTab('logs');
+    showTab('logs', null);
     document.getElementById('log-provider').value=providerId;
     document.getElementById('log-model').value='';
     document.getElementById('log-search').value='';
@@ -1541,7 +1541,7 @@ function closeLogDetailModal() {
 function filterLogsByThisModel() {
     if (!currentLogData || !currentLogData.model) return;
     closeLogDetailModal();
-    showTab('logs');
+    showTab('logs', null);
     document.getElementById('log-model').value = currentLogData.model;
     currentLogPage = 1;
     loadLogs();
@@ -1595,8 +1595,6 @@ function extractByPath(responseJson, path) {
     result = result.replace(/\n{2,}/g, '\n');
     return result.trim();
 }
-
-function escapeHtml(str) {
 
 function escapeHtml(str) {
     if (!str) return '';
