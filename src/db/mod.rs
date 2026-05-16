@@ -887,6 +887,7 @@ impl Database {
         provider_id: Option<&str>,
         start_time: Option<&str>,
         end_time: Option<&str>,
+        search: Option<&str>,
         limit: i64,
         offset: i64,
     ) -> Result<Vec<RequestLogRow>, sqlx::Error> {
@@ -897,6 +898,7 @@ impl Database {
         if provider_id.is_some() { query.push_str(" AND provider_id = ?"); }
         if start_time.is_some() { query.push_str(" AND created_at >= ?"); }
         if end_time.is_some() { query.push_str(" AND created_at <= ?"); }
+        if search.is_some() { query.push_str(" AND request_body LIKE ?"); }
         query.push_str(" ORDER BY created_at DESC LIMIT ? OFFSET ?");
 
         let mut q = sqlx::query_as::<_, RequestLogRow>(&query);
@@ -904,6 +906,7 @@ impl Database {
         if let Some(v) = provider_id { q = q.bind(v); }
         if let Some(v) = start_time { q = q.bind(v); }
         if let Some(v) = end_time { q = q.bind(v); }
+        if let Some(v) = search { q = q.bind(format!("%{}%", v)); }
         q = q.bind(limit).bind(offset);
 
         let rows = q.fetch_all(&self.pool).await?;
@@ -917,18 +920,21 @@ impl Database {
         provider_id: Option<&str>,
         start_time: Option<&str>,
         end_time: Option<&str>,
+        search: Option<&str>,
     ) -> Result<i64, sqlx::Error> {
         let mut query = String::from("SELECT COUNT(*) as count FROM request_logs WHERE 1=1");
         if api_key_id.is_some() { query.push_str(" AND api_key_id = ?"); }
         if provider_id.is_some() { query.push_str(" AND provider_id = ?"); }
         if start_time.is_some() { query.push_str(" AND created_at >= ?"); }
         if end_time.is_some() { query.push_str(" AND created_at <= ?"); }
+        if search.is_some() { query.push_str(" AND request_body LIKE ?"); }
 
         let mut q = sqlx::query_scalar::<_, i64>(&query);
         if let Some(v) = api_key_id { q = q.bind(v); }
         if let Some(v) = provider_id { q = q.bind(v); }
         if let Some(v) = start_time { q = q.bind(v); }
         if let Some(v) = end_time { q = q.bind(v); }
+        if let Some(v) = search { q = q.bind(format!("%{}%", v)); }
 
         let count = q.fetch_one(&self.pool).await?;
         Ok(count)

@@ -755,6 +755,7 @@ pub struct RequestLogParams {
     pub provider_id: Option<String>,
     pub start_time: Option<String>,
     pub end_time: Option<String>,
+    pub search: Option<String>,
     pub page: Option<u32>,
     pub page_size: Option<u32>,
 }
@@ -773,6 +774,7 @@ pub async fn get_request_logs(
         params.provider_id.as_deref(),
         params.start_time.as_deref(),
         params.end_time.as_deref(),
+        params.search.as_deref(),
         page_size as i64,
         offset,
     ).await {
@@ -782,6 +784,7 @@ pub async fn get_request_logs(
                 params.provider_id.as_deref(),
                 params.start_time.as_deref(),
                 params.end_time.as_deref(),
+                params.search.as_deref(),
             ).await.unwrap_or(0);
 
             Json(serde_json::json!({
