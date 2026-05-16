@@ -1650,3 +1650,11 @@ async fn test_stats_by_api_key_token_breakdown() {
     assert_eq!(stats[0].total_completion_tokens, 50);
     assert_eq!(stats[0].total_tokens, 150);
 }
+
+
+#[tokio::test]
+async fn test_stats_by_api_key_empty_db() {
+    let db = test_db().await;
+    let stats = db.get_stats_by_api_key(10, None, None).await.unwrap();
+    assert!(stats.is_empty());
+}

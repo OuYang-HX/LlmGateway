@@ -174,7 +174,16 @@
             <button onclick="exportLogsCsv()" style="margin-left:8px;background:#059669">📥 CSV</button>
         </div>
         <div class="panel">
-            <table id="logs-table"><thead><tr><th>时间</th><th>API Key</th><th>服务商</th><th>模型</th><th>状态码</th><th>Tokens</th><th>耗时</th><th>流式</th><th>限流</th><th>错误</th><th>详情</th></tr></thead><tbody></tbody></table>
+            <table id="logs-table"><thead><tr>
+                <th style="cursor:pointer" onclick="toggleLogSort('created_at')">时间 <span id="sort-created_at"></span></th>
+                <th>API Key</th>
+                <th>服务商</th>
+                <th>模型</th>
+                <th style="cursor:pointer" onclick="toggleLogSort('response_status')">状态码 <span id="sort-response_status"></span></th>
+                <th style="cursor:pointer" onclick="toggleLogSort('total_tokens')">Tokens <span id="sort-total_tokens"></span></th>
+                <th style="cursor:pointer" onclick="toggleLogSort('duration_ms')">耗时 <span id="sort-duration_ms"></span></th>
+                <th>流式</th><th>限流</th><th>错误</th><th>详情</th>
+            </tr></thead><tbody></tbody></table>
             <div class="pagination" id="logs-pagination" style="margin-top:12px;display:flex;align-items:center;gap:8px">
                 <button class="btn btn-sm" onclick="changeLogPage(-1)">← 上一页</button>
                 <span id="logs-page-info" style="color:#94a3b8;font-size:13px">第 1 页</span>
@@ -541,6 +550,8 @@ let allApiKeys=[];
 let currentLogPage=1;
 let currentLogPageSize=20;
 let currentLogTotal=0;
+let currentLogSort='created_at';
+let currentLogSortDir='desc';
 
 async function loadProvidersManage(){
     try{
@@ -892,6 +903,29 @@ async function exportLogsCsv(){
     }catch(e){alert('导出失败: '+e.message)}
 }
 
+function toggleLogSort(col){
+    if(currentLogSort===col){
+        currentLogSortDir=currentLogSortDir==='asc'?'desc':'asc';
+    } else {
+        currentLogSort=col;
+        currentLogSortDir='desc';
+    }
+    updateSortIndicators();
+    currentLogPage=1;
+    loadLogs();
+}
+function updateSortIndicators(){
+    ['created_at','response_status','total_tokens','duration_ms'].forEach(c=>{
+        const el=document.getElementById('sort-'+c);
+        if(!el)return;
+        if(c===currentLogSort){
+            el.textContent=currentLogSortDir==='asc'?'↑':'↓';
+        } else {
+            el.textContent='';
+        }
+    });
+}
+
 async function loadLogs(){
     try{
         const params=new URLSearchParams();
@@ -910,7 +944,25 @@ async function loadLogs(){
         const data=await(await fetch(API+'/logs?'+params)).json();
         currentLogTotal=data.total||0;
         updateLogPagination();
-        document.querySelector('#logs-table tbody').innerHTML=(data.logs||[]).map(l=>`<tr>
+        
+        // Sort logs in JavaScript
+        let logs = data.logs || [];
+        logs.sort((a, b) => {
+            let aVal = a[currentLogSort] ?? '';
+            let bVal = b[currentLogSort] ?? '';
+            if (currentLogSort === 'created_at') {
+                aVal = new Date(aVal).getTime();
+                bVal = new Date(bVal).getTime();
+            } else {
+                aVal = Number(aVal) || 0;
+                bVal = Number(bVal) || 0;
+            }
+            if (aVal < bVal) return currentLogSortDir === 'asc' ? -1 : 1;
+            if (aVal > bVal) return currentLogSortDir === 'asc' ? 1 : -1;
+            return 0;
+        });
+        
+        document.querySelector('#logs-table tbody').innerHTML=logs.map(l=>`<tr>
             <td>${fmtTime(l.created_at)}</td><td>${getApiKeyName(l.api_key_id)}</td>
             <td>${l.provider_id}</td><td>${l.model||'-'}</td><td>${l.response_status||'-'}</td>
             <td>${l.total_tokens}</td><td>${l.duration_ms?l.duration_ms+'ms':'-'}</td>
