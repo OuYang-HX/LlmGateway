@@ -202,6 +202,11 @@
             <button onclick="currentLogPage=1;loadLogs()">搜索</button>
             <button onclick="clearLogFilters()" style="margin-left:4px">🔄 重置</button>
             <button onclick="exportLogsCsv()" style="margin-left:8px;background:#059669">📥 CSV</button>
+            <span style="margin-left:12px;border-left:1px solid #334155;padding-left:12px">
+                <button onclick="deleteLogsByProvider()" style="background:#b45309">🗑 按服务商清理</button>
+                <button onclick="deleteLogsByApiKey()" style="background:#b45309;margin-left:4px">🗑 按API Key清理</button>
+                <button onclick="deleteAllLogs()" style="background:#dc2626;margin-left:4px">⚠️ 清理全部</button>
+            </span>
         </div>
         <div class="panel">
             <table id="logs-table"><thead><tr>
@@ -212,7 +217,7 @@
                 <th style="cursor:pointer" onclick="toggleLogSort('response_status')">状态码 <span id="sort-response_status"></span></th>
                 <th style="cursor:pointer" onclick="toggleLogSort('total_tokens')">Tokens <span id="sort-total_tokens"></span></th>
                 <th style="cursor:pointer" onclick="toggleLogSort('duration_ms')">耗时 <span id="sort-duration_ms"></span></th>
-                <th>流式</th><th>限流</th><th>错误</th><th>详情</th>
+                <th>流式</th><th>限流</th><th>错误</th><th>详情</th><th>删除</th>
             </tr></thead><tbody></tbody></table>
             <div class="pagination" id="logs-pagination" style="margin-top:12px;display:flex;align-items:center;gap:8px">
                 <button class="btn btn-sm" onclick="changeLogPage(-1)">← 上一页</button>
@@ -1001,6 +1006,57 @@ function clearLogFilters(){
     loadLogs();
 }
 
+// ========== 日志清理 ==========
+function deleteSingleLog(id){
+    if(!confirm('确定删除这条日志？'))return;
+    fetch(API+'/logs/'+id,{method:'DELETE'}).then(r=>r.json()).then(d=>{
+        if(d.error){alert('删除失败: '+d.error);return;}
+        loadLogs();
+    }).catch(e=>alert('请求失败: '+e));
+}
+
+function deleteLogsByProvider(){
+    const providerId=document.getElementById('log-provider').value;
+    if(!providerId){alert('请先在服务商下拉框中选择一个服务商');return;}
+    const providerName=document.getElementById('log-provider').selectedOptions[0]?.textContent||providerId;
+    if(!confirm(`确定清理服务商「${providerName}」的所有请求日志？\n此操作不可恢复！`))return;
+    fetch(API+'/logs/batch-delete',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({provider_id:providerId})}).then(r=>r.json()).then(d=>{
+        if(d.error){alert('清理失败: '+d.error);return;}
+        alert(`已清理 ${d.deleted} 条日志`);
+        loadLogs();
+    }).catch(e=>alert('请求失败: '+e));
+}
+
+function deleteLogsByApiKey(){
+    // Build a selector for API keys
+    const apiKeyOptions=allApiKeys.map(k=>`<option value="${k.id}">${k.name} (${k.key_prefix})</option>`).join('');
+    const html=`<div class="modal"><h3>按 API Key 清理日志</h3><div class="form-group"><label>选择 API Key</label><select id="delete-ak-select"><option value="">选择...</option>${apiKeyOptions}</select></div><div class="form-actions"><button class="btn" onclick="document.getElementById('temp-modal').classList.add('hidden');document.getElementById('temp-modal').remove()">取消</button><button class="btn btn-danger" onclick="doDeleteLogsByApiKey()">确认清理</button></div></div>`;
+    const overlay=document.createElement('div');overlay.id='temp-modal';overlay.className='modal-overlay';overlay.innerHTML=html;document.body.appendChild(overlay);
+}
+
+function doDeleteLogsByApiKey(){
+    const apiKeyId=document.getElementById('delete-ak-select').value;
+    if(!apiKeyId){alert('请选择一个 API Key');return;}
+    const akName=document.getElementById('delete-ak-select').selectedOptions[0]?.textContent||apiKeyId;
+    if(!confirm(`确定清理 API Key「${akName}」的所有请求日志？\n此操作不可恢复！`))return;
+    fetch(API+'/logs/batch-delete',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({api_key_id:apiKeyId})}).then(r=>r.json()).then(d=>{
+        document.getElementById('temp-modal').classList.add('hidden');document.getElementById('temp-modal').remove();
+        if(d.error){alert('清理失败: '+d.error);return;}
+        alert(`已清理 ${d.deleted} 条日志`);
+        loadLogs();
+    }).catch(e=>{document.getElementById('temp-modal').classList.add('hidden');document.getElementById('temp-modal').remove();alert('请求失败: '+e);});
+}
+
+function deleteAllLogs(){
+    if(!confirm('⚠️ 确定清理所有请求日志？\n此操作不可恢复！所有统计数据将归零！'))return;
+    if(!confirm('再次确认：真的要删除全部日志吗？'))return;
+    fetch(API+'/logs/delete-all',{method:'POST'}).then(r=>r.json()).then(d=>{
+        if(d.error){alert('清理失败: '+d.error);return;}
+        alert(`已清理全部 ${d.deleted} 条日志`);
+        loadLogs();
+    }).catch(e=>alert('请求失败: '+e));
+}
+
 function setLogTimePreset(preset){
     const now=new Date();
     let start;
@@ -1069,8 +1125,8 @@ async function loadLogs(){
             <td>${fmtTime(l.created_at)}</td><td>${getApiKeyName(l.api_key_id)}</td>
             <td>${l.provider_id}</td><td>${l.model||'-'}</td><td style="${l.response_status&&l.response_status>=400?'color:#ef4444;font-weight:bold':''}">${l.response_status||'-'}</td>
             <td>${l.total_tokens}</td><td>${l.duration_ms?l.duration_ms+'ms':'-'}</td>
-            <td>${l.is_streaming?'✅':'❌'}</td><td>${l.is_throttled?'⚠️':'✅'}</td><td>${l.error_message?'<span style="color:red" title="'+l.error_message+'">❌</span>':'✅'}</td><td><button class="btn btn-sm" onclick='showLogDetail(${l.id})'>📋 QA</button></td>
-        </tr>`;}).join('')||'<tr><td colspan="11" class="empty-state">暂无日志</td></tr>';
+            <td>${l.is_streaming?'✅':'❌'}</td><td>${l.is_throttled?'⚠️':'✅'}</td><td>${l.error_message?'<span style="color:red" title="'+l.error_message+'">❌</span>':'✅'}</td><td><button class="btn btn-sm" onclick='showLogDetail(${l.id})'>📋 QA</button></td><td><button class="btn btn-sm btn-danger" onclick='deleteSingleLog(${l.id})'>🗑</button></td>
+        </tr>`;}).join('')||'<tr><td colspan="12" class="empty-state">暂无日志</td></tr>';
     }catch(e){console.error(e)}
 }
 

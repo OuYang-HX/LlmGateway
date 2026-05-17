@@ -842,6 +842,60 @@ pub async fn get_request_log_detail(
     }
 }
 
+/// Delete a single request log by ID
+pub async fn delete_request_log(
+    State(state): State<AppState>,
+    Path(id): Path<i64>,
+) -> impl IntoResponse {
+    match state.db.delete_request_log(id).await {
+        Ok(true) => (StatusCode::OK, Json(serde_json::json!({"message": "Log deleted"}))).into_response(),
+        Ok(false) => (StatusCode::NOT_FOUND, Json(serde_json::json!({"error": "Log not found"}))).into_response(),
+        Err(e) => {
+            tracing::error!("Failed to delete request log: {}", e);
+            (StatusCode::INTERNAL_SERVER_ERROR, Json(serde_json::json!({"error": e.to_string()}))).into_response()
+        }
+    }
+}
+
+#[derive(Debug, Deserialize)]
+pub struct DeleteLogsRequest {
+    pub provider_id: Option<String>,
+    pub api_key_id: Option<String>,
+}
+
+/// Delete request logs by provider or API key (batch)
+pub async fn delete_request_logs_batch(
+    State(state): State<AppState>,
+    Json(req): Json<DeleteLogsRequest>,
+) -> impl IntoResponse {
+    let result = match (req.provider_id, req.api_key_id) {
+        (Some(provider_id), None) => state.db.delete_request_logs_by_provider(&provider_id).await,
+        (None, Some(api_key_id)) => state.db.delete_request_logs_by_api_key(&api_key_id).await,
+        _ => return (StatusCode::BAD_REQUEST, Json(serde_json::json!({"error": "Must specify exactly one of: provider_id or api_key_id"}))).into_response(),
+    };
+
+    match result {
+        Ok(count) => (StatusCode::OK, Json(serde_json::json!({"deleted": count, "message": format!("Deleted {} log entries", count)}))).into_response(),
+        Err(e) => {
+            tracing::error!("Failed to delete request logs: {}", e);
+            (StatusCode::INTERNAL_SERVER_ERROR, Json(serde_json::json!({"error": e.to_string()}))).into_response()
+        }
+    }
+}
+
+/// Delete all request logs
+pub async fn delete_all_request_logs(
+    State(state): State<AppState>,
+) -> impl IntoResponse {
+    match state.db.delete_all_request_logs().await {
+        Ok(count) => (StatusCode::OK, Json(serde_json::json!({"deleted": count, "message": format!("Deleted all {} log entries", count)}))).into_response(),
+        Err(e) => {
+            tracing::error!("Failed to delete all request logs: {}", e);
+            (StatusCode::INTERNAL_SERVER_ERROR, Json(serde_json::json!({"error": e.to_string()}))).into_response()
+        }
+    }
+}
+
 // ========== Dashboard handlers ==========
 
 /// Get dashboard summary

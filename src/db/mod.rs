@@ -1006,6 +1006,41 @@ impl Database {
         Ok(row)
     }
 
+    /// Delete a single request log by ID
+    pub async fn delete_request_log(&self, id: i64) -> Result<bool, sqlx::Error> {
+        let result = sqlx::query("DELETE FROM request_logs WHERE id = ?")
+            .bind(id)
+            .execute(&self.pool)
+            .await?;
+        Ok(result.rows_affected() > 0)
+    }
+
+    /// Delete request logs by provider ID
+    pub async fn delete_request_logs_by_provider(&self, provider_id: &str) -> Result<u64, sqlx::Error> {
+        let result = sqlx::query("DELETE FROM request_logs WHERE provider_id = ?")
+            .bind(provider_id)
+            .execute(&self.pool)
+            .await?;
+        Ok(result.rows_affected())
+    }
+
+    /// Delete request logs by API key ID
+    pub async fn delete_request_logs_by_api_key(&self, api_key_id: &str) -> Result<u64, sqlx::Error> {
+        let result = sqlx::query("DELETE FROM request_logs WHERE api_key_id = ?")
+            .bind(api_key_id)
+            .execute(&self.pool)
+            .await?;
+        Ok(result.rows_affected())
+    }
+
+    /// Delete all request logs
+    pub async fn delete_all_request_logs(&self) -> Result<u64, sqlx::Error> {
+        let result = sqlx::query("DELETE FROM request_logs")
+            .execute(&self.pool)
+            .await?;
+        Ok(result.rows_affected())
+    }
+
     // ========== Statistics operations ==========
 
     /// Get aggregate statistics

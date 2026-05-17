@@ -92,7 +92,9 @@ async fn main() -> anyhow::Result<()> {
 
         // Request logs
         .route("/api/v1/logs", get(api::get_request_logs))
-        .route("/api/v1/logs/:id", get(api::get_request_log_detail))
+        .route("/api/v1/logs/batch-delete", post(api::delete_request_logs_batch))
+        .route("/api/v1/logs/delete-all", post(api::delete_all_request_logs))
+        .route("/api/v1/logs/:id", get(api::get_request_log_detail).delete(api::delete_request_log))
 
         // Dashboard API
         .route("/api/v1/dashboard/summary", get(api::get_dashboard_summary))
