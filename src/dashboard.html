@@ -569,11 +569,8 @@ async function loadTokenRateChart(){
                     }
                 }
             });
-        }
-        const maxPrompt = Math.max(...promptRates);
-        const maxCompletion = Math.max(...completionRates);
-        document.getElementById('token-rate-legend').textContent =
             updateTokenRateLegend(tokenRateChart);
+        }
     }catch(e){console.error('Token rate chart error:', e)}
 }
 
