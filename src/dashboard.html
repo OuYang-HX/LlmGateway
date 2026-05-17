@@ -143,6 +143,7 @@
             <div style="position:relative;height:180px">
                 <canvas id="apikey-usage-chart"></canvas>
             </div>
+            <div id="apikey-usage-detail" style="margin-top:12px"></div>
         </div>
         <div class="panel">
             <h2>服务商健康状态 <span style="font-size:12px;color:#64748b">(近24小时)</span></h2>
@@ -359,12 +360,19 @@
 <!-- ====== API Key 创建 Modal ====== -->
 <div id="apikey-modal" class="modal-overlay hidden">
 <div class="modal">
-    <h3>创建 API Key</h3>
+    <h3 id="ak-modal-title">创建 API Key</h3>
+    <input type="hidden" id="ak-edit-id">
     <div class="form-group"><label>名称</label><input id="ak-name" placeholder="如 my-app-key"></div>
     <div class="form-group"><label>允许的服务商（留空=全部）</label><div id="ak-providers-checks"></div></div>
+    <div class="form-group"><label>状态</label>
+        <select id="ak-is-active" style="background:#0f172a;border:1px solid #334155;color:#e2e8f0;padding:8px 12px;border-radius:6px;font-size:14px;width:100%">
+            <option value="true">活跃</option>
+            <option value="false">停用</option>
+        </select>
+    </div>
     <div class="form-actions">
         <button class="btn" onclick="closeApiKeyModal()">取消</button>
-        <button class="btn btn-success" onclick="createApiKey()">创建</button>
+        <button class="btn btn-success" id="ak-save-btn" onclick="createApiKey()">创建</button>
     </div>
 </div>
 </div>
@@ -461,6 +469,7 @@ async function loadOverviewProviders(){
 async function loadOverviewApiKeys(){
     try{
         const ks=await(await fetch(API+'/api-keys')).json();
+        allApiKeys=ks;
         document.querySelector('#overview-apikey-table tbody').innerHTML=ks.map(k=>`<tr>
             <td>${k.name}</td><td>${k.key_prefix}...</td>
             <td class="hide-mobile">${k.allowed_providers?k.allowed_providers.join(', '):'全部'}</td>
@@ -484,29 +493,44 @@ async function loadTokenRateChart(){
         }
         const labels = data.map(d => {
             const t = new Date(d.snapshot_time);
-            return t.getHours().toString().padStart(2,'0')+':'+t.getMinutes().toString().padStart(2,'0');
+            return t.toLocaleTimeString('zh-CN', {hour: '2-digit', minute: '2-digit', hour12: false, timeZoneName: undefined});
         });
-        const totalTokens = data.map(d => d.tokens_per_second || 0);
         const ctx = document.getElementById('token-rate-chart').getContext('2d');
+        // Use elapsed_seconds from backend for accurate rate calculation
+        const promptRates = data.map(d => d.prompt_tokens / (d.elapsed_seconds || 10));
+        const completionRates = data.map(d => d.completion_tokens / (d.elapsed_seconds || 10));
         if(tokenRateChart){
             tokenRateChart.data.labels = labels;
-            tokenRateChart.data.datasets[0].data = totalTokens;
+            tokenRateChart.data.datasets[0].data = promptRates;
+            tokenRateChart.data.datasets[1].data = completionRates;
             tokenRateChart.update('none');
         } else {
             tokenRateChart = new Chart(ctx, {
                 type: 'line',
                 data: {
                     labels: labels,
-                    datasets: [{
-                        label: 'Tokens/s',
-                        data: totalTokens,
-                        borderColor: 'rgba(249,115,22,1)',
-                        backgroundColor: 'rgba(249,115,22,0.1)',
-                        fill: true,
-                        tension: 0.3,
-                        pointRadius: 0,
-                        borderWidth: 2,
-                    }]
+                    datasets: [
+                        {
+                            label: 'Input Tokens/s',
+                            data: promptRates,
+                            borderColor: 'rgba(59,130,246,1)',
+                            backgroundColor: 'rgba(59,130,246,0.1)',
+                            fill: true,
+                            tension: 0.3,
+                            pointRadius: 0,
+                            borderWidth: 2,
+                        },
+                        {
+                            label: 'Output Tokens/s',
+                            data: completionRates,
+                            borderColor: 'rgba(34,197,94,1)',
+                            backgroundColor: 'rgba(34,197,94,0.1)',
+                            fill: true,
+                            tension: 0.3,
+                            pointRadius: 0,
+                            borderWidth: 2,
+                        }
+                    ]
                 },
                 options: {
                     responsive: true,
@@ -514,7 +538,7 @@ async function loadTokenRateChart(){
                     animation: false,
                     interaction: { mode: 'index', intersect: false },
                     plugins: {
-                        legend: { display: false },
+                        legend: { display: true, labels: { color: '#94a3b8', font: { size: 11 } } },
                         tooltip: {
                             callbacks: {
                                 label: ctx => ctx.dataset.label + ': ' + ctx.parsed.y.toFixed(2)
@@ -535,8 +559,10 @@ async function loadTokenRateChart(){
                 }
             });
         }
-        const maxTotal = Math.max(...totalTokens);
-        document.getElementById('token-rate-legend').textContent = '峰值: ' + maxTotal.toFixed(1) + ' tokens/s';
+        const maxPrompt = Math.max(...promptRates);
+        const maxCompletion = Math.max(...completionRates);
+        document.getElementById('token-rate-legend').textContent =
+            'Input 峰值: ' + maxPrompt.toFixed(1) + ' | Output 峰值: ' + maxCompletion.toFixed(1) + ' tokens/s';
     }catch(e){console.error('Token rate chart error:', e)}
 }
 
@@ -590,10 +616,18 @@ async function loadApiKeyUsageChart(){
         if(!resp.ok) return;
         const data = await resp.json();
         if(!data.length){
-            document.getElementById('apikey-usage-chart')?.parentElement?.insertAdjacentHTML('afterend','<p style="color:#64748b;font-size:13px;text-align:center">暂无数据</p>');
+            const chartDiv = document.getElementById('apikey-usage-chart')?.parentElement;
+            if(chartDiv) chartDiv.style.display='none';
+            document.getElementById('apikey-usage-detail').innerHTML='<p style="color:#64748b;font-size:13px;text-align:center;padding:12px">暂无数据</p>';
             return;
         }
-        const labels = data.map(d => d.api_key_id.slice(0, 8));
+        const chartDiv = document.getElementById('apikey-usage-chart')?.parentElement;
+        if(chartDiv) chartDiv.style.display='';
+
+        const labels = data.map(d => {
+            const name = getApiKeyName(d.api_key_id);
+            return name;
+        });
         const promptTokens = data.map(d => d.total_prompt_tokens);
         const completionTokens = data.map(d => d.total_completion_tokens);
         const ctx = document.getElementById('apikey-usage-chart').getContext('2d');
@@ -637,6 +671,37 @@ async function loadApiKeyUsageChart(){
                 }
             });
         }
+
+        // Render API key usage detail table
+        const rangeLabel = {'1d':'近24小时','7d':'近7天','30d':'近30天'}[range] || range;
+        const rows = data.map(d => {
+            const name = getApiKeyName(d.api_key_id);
+            const errRate = d.request_count > 0 ? ((d.error_count || 0) / d.request_count * 100).toFixed(1) + '%' : '0%';
+            return `<tr>
+                <td style="font-weight:600">${escapeHtml(name)}</td>
+                <td>${d.request_count.toLocaleString()}</td>
+                <td>${(d.total_prompt_tokens||0).toLocaleString()}</td>
+                <td>${(d.total_completion_tokens||0).toLocaleString()}</td>
+                <td>${(d.total_tokens||0).toLocaleString()}</td>
+                <td class="hide-mobile">${(d.avg_duration_ms||0).toFixed(0)}ms</td>
+                <td class="hide-mobile">${errRate}</td>
+                <td class="hide-mobile">${d.throttle_count||0}</td>
+            </tr>`;
+        }).join('');
+        document.getElementById('apikey-usage-detail').innerHTML = `
+            <table style="width:100%;border-collapse:collapse;font-size:12px">
+                <thead><tr style="background:#1e293b">
+                    <th style="padding:6px 8px;text-align:left;color:#94a3b8;font-weight:600">API Key</th>
+                    <th style="padding:6px 8px;text-align:right;color:#94a3b8;font-weight:600">请求数</th>
+                    <th style="padding:6px 8px;text-align:right;color:#94a3b8;font-weight:600">Prompt Tokens</th>
+                    <th style="padding:6px 8px;text-align:right;color:#94a3b8;font-weight:600">Completion Tokens</th>
+                    <th style="padding:6px 8px;text-align:right;color:#94a3b8;font-weight:600">总 Tokens</th>
+                    <th class="hide-mobile" style="padding:6px 8px;text-align:right;color:#94a3b8;font-weight:600">Avg ms</th>
+                    <th class="hide-mobile" style="padding:6px 8px;text-align:right;color:#94a3b8;font-weight:600">错误率</th>
+                    <th class="hide-mobile" style="padding:6px 8px;text-align:right;color:#94a3b8;font-weight:600">限流</th>
+                </tr></thead>
+                <tbody>${rows}</tbody>
+            </table>`;
     }catch(e){console.error('API key usage chart error:', e)}
 }
 
@@ -871,39 +936,80 @@ async function loadApiKeysManage(){
             <td class="hide-mobile">${k.allowed_providers?k.allowed_providers.join(', '):'全部'}</td>
             <td><span class="badge ${k.is_active?'badge-green':'badge-red'}">${k.is_active?'活跃':'停用'}</span></td>
             <td class="hide-mobile">${fmtTime(k.created_at)}</td>
-            <td><button class="btn btn-sm" onclick='copyKey("${k.key}")' title='复制 Key'>📋</button> <button class="btn btn-sm btn-danger" onclick='deleteApiKey("${k.id}")'>删除</button></td>
+            <td><button class="btn btn-sm" onclick='copyKey("${k.key}")' title='复制 Key'>📋</button> <button class="btn btn-sm" onclick='openApiKeyModal("${k.id}")'>编辑</button> <button class="btn btn-sm btn-danger" onclick='deleteApiKey("${k.id}")'>删除</button></td>
         </tr>`).join('');
     }catch(e){console.error(e)}
 }
 
-async function openApiKeyModal(){
+async function openApiKeyModal(editId){
     document.getElementById('ak-name').value='';
+    document.getElementById('ak-edit-id').value='';
+    document.getElementById('ak-is-active').value='true';
+    if(editId){
+        // Edit mode: pre-fill form
+        const ks=await(await fetch(API+'/api-keys')).json();
+        const k=ks.find(x=>x.id===editId);
+        if(k){
+            document.getElementById('ak-modal-title').textContent='编辑 API Key';
+            document.getElementById('ak-name').value=k.name||'';
+            document.getElementById('ak-is-active').value=k.is_active?'true':'false';
+            document.getElementById('ak-edit-id').value=k.id;
+        }
+    } else {
+        document.getElementById('ak-modal-title').textContent='创建 API Key';
+    }
     try{
         const ps=await(await fetch(API+'/providers')).json();
-        document.getElementById('ak-providers-checks').innerHTML=ps.map(p=>`<label style="display:inline-block;margin-right:12px;font-size:13px;color:#e2e8f0"><input type="checkbox" value="${p.id}" class="ak-prov-cb"> ${p.name} (${p.id})</label>`).join('')||'<span style="color:#64748b">暂无服务商</span>';
+        const isEdit=!!editId;
+        const ksAll=isEdit?(await(await fetch(API+'/api-keys')).json()):null;
+        const editK=isEdit?ksAll.find(x=>x.id===editId):null;
+        const checkedProv=editK&&editK.allowed_providers?editK.allowed_providers:[];
+        document.getElementById('ak-providers-checks').innerHTML=ps.map(p=>{
+            const chk=checkedProv.includes(p.id)?'checked':'';
+            return `<label style="display:inline-block;margin-right:12px;font-size:13px;color:#e2e8f0"><input type="checkbox" value="${p.id}" class="ak-prov-cb" ${chk}> ${p.name} (${p.id})</label>`;
+        }).join('')||'<span style="color:#64748b">暂无服务商</span>';
     }catch(e){document.getElementById('ak-providers-checks').innerHTML='<span style="color:#64748b">加载失败</span>';}
     document.getElementById('apikey-modal').classList.remove('hidden');
 }
 function closeApiKeyModal(){document.getElementById('apikey-modal').classList.add('hidden')}
 
 async function createApiKey(){
+    const editId=document.getElementById('ak-edit-id').value;
     const name=document.getElementById('ak-name').value.trim();
     if(!name){alert('请输入名称');return;}
     const allowed=[...document.querySelectorAll('.ak-prov-cb:checked')].map(cb=>cb.value);
-    const body={name};
-    if(allowed.length)body.allowed_providers=allowed;
-    try{
-        const resp=await fetch(API+'/api-keys',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(body)});
-        if(resp.ok){
-            const data=await resp.json();
-            closeApiKeyModal();
-            document.getElementById('ak-show-key').value=data.key;
-            document.getElementById('apikey-show-modal').classList.remove('hidden');
-            loadApiKeysManage();
-        }else{
-            const err=await resp.json();alert('创建失败: '+(err.error||resp.statusText));
-        }
-    }catch(e){alert('网络错误: '+e.message)}
+    const isActive=document.getElementById('ak-is-active').value==='true';
+
+    if(editId){
+        // Update existing API key
+        const body={name, is_active:isActive};
+        if(allowed.length)body.allowed_providers=allowed;
+        try{
+            const resp=await fetch(API+'/api-keys/'+editId,{method:'PUT',headers:{'Content-Type':'application/json'},body:JSON.stringify(body)});
+            if(resp.ok){
+                closeApiKeyModal();
+                loadApiKeysManage();
+            }else{
+                const err=await resp.json();alert('更新失败: '+(err.error||resp.statusText));
+            }
+        }catch(e){alert('网络错误: '+e.message)}
+    } else {
+        // Create new API key
+        const body={name};
+        if(allowed.length)body.allowed_providers=allowed;
+        try{
+            const resp=await fetch(API+'/api-keys',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(body)});
+            if(resp.ok){
+                const data=await resp.json();
+                closeApiKeyModal();
+                document.getElementById('ak-show-key').value=data.key;
+                document.getElementById('apikey-show-modal').classList.remove('hidden');
+                loadApiKeysManage();
+            }else{
+                const err=await resp.json();alert('创建失败: '+(err.error||resp.statusText));
+            }
+        }catch(e){alert('网络错误: '+e.message)}
+    }
 }
 function copyApiKey(){
     const inp=document.getElementById('ak-show-key');

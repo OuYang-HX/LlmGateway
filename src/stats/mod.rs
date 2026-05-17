@@ -63,6 +63,7 @@ impl StatsCollector {
             window.prompt_tokens,
             window.completion_tokens,
             window.request_count,
+            elapsed,
         ).await?;
 
         // Reset window
@@ -77,7 +78,7 @@ impl StatsCollector {
     /// Get real-time token rate for the last N seconds
     pub async fn get_current_rate(&self, provider_id: Option<&str>) -> Result<Vec<crate::db::TokenRateRow>, sqlx::Error> {
         let one_hour_ago = chrono::Utc::now() - chrono::Duration::hours(1);
-        let start_time = one_hour_ago.format("%Y-%m-%d %H:%M:%S").to_string();
+        let start_time = one_hour_ago.format("%Y-%m-%dT%H:%M:%SZ").to_string();
 
         self.db.get_token_rate_snapshots(provider_id, &start_time, 3600).await
     }
@@ -108,7 +109,7 @@ impl StatsCollector {
             loop {
                 interval.tick().await;
                 let one_hour_ago = chrono::Utc::now() - chrono::Duration::hours(1);
-                let before_time = one_hour_ago.format("%Y-%m-%d %H:%M:%S").to_string();
+                let before_time = one_hour_ago.format("%Y-%m-%dT%H:%M:%SZ").to_string();
                 if let Err(e) = db.cleanup_old_snapshots(&before_time).await {
                     tracing::error!("Failed to cleanup old snapshots: {}", e);
                 }

@@ -28,8 +28,8 @@ async fn main() -> anyhow::Result<()> {
 
     // Initialize components
     let auth_manager = Arc::new(auth::AuthManager::new(db.clone()));
-    let llm_proxy = Arc::new(proxy::LlmProxy::new(db.clone(), auth_manager.clone()));
     let stats_collector = Arc::new(stats::StatsCollector::new(db.clone()));
+    let llm_proxy = Arc::new(proxy::LlmProxy::new(db.clone(), auth_manager.clone(), stats_collector.clone()));
 
     // Start background tasks
     stats_collector.start_snapshot_task(10); // Snapshot every 10 seconds
@@ -61,7 +61,7 @@ async fn main() -> anyhow::Result<()> {
 
         // API Key management
         .route("/api/v1/api-keys", post(api::create_api_key).get(api::list_api_keys))
-        .route("/api/v1/api-keys/:id", get(api::get_api_key).delete(api::delete_api_key).post(api::regenerate_api_key))
+        .route("/api/v1/api-keys/:id", get(api::get_api_key).delete(api::delete_api_key).post(api::regenerate_api_key).put(api::update_api_key))
 
         // Provider management
         .route("/api/v1/providers", post(api::create_provider).get(api::list_providers))

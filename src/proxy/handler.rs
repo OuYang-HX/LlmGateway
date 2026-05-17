@@ -3,9 +3,9 @@ use axum::{
     extract::{State, Request},
     http::{HeaderMap, StatusCode},
     response::{IntoResponse, Response},
+    Json,
 };
 use regex::Regex;
-use uuid::Uuid;
 use crate::AppState;
 
 /// Strip thinking/reasoning tags from LLM response content (e.g. <think>...</think>, <tool_call>...</think>)
@@ -25,6 +25,52 @@ fn strip_thinking_tags(content: &str) -> String {
     let re_newlines = Regex::new(r"\n{2,}").unwrap();
     result = re_newlines.replace_all(&result, "\n").to_string();
     result.trim().to_string()
+}
+
+/// Standard OpenAI-compatible /v1/models endpoint.
+/// Lists all active unified models that are accessible by the given API key.
+async fn list_models_for_api_key(
+    state: &AppState,
+    _api_key_row: &crate::db::ApiKeyRow,
+    allowed_providers: &Option<Vec<String>>,
+) -> impl IntoResponse {
+    let models = match state.db.list_models_with_mappings().await {
+        Ok(m) => m,
+        Err(e) => {
+            tracing::error!("Failed to list models for /v1/models: {}", e);
+            return (StatusCode::INTERNAL_SERVER_ERROR, Json(serde_json::json!({"error": e.to_string()}))).into_response();
+        }
+    };
+
+    let now = chrono::Utc::now().timestamp();
+    let data: Vec<serde_json::Value> = models
+        .into_iter()
+        .filter(|model| model.model.is_active)
+        .filter_map(|model| {
+            let has_valid_mapping = model.mappings.iter().any(|m| {
+                let provider_ok = allowed_providers.as_ref()
+                    .map(|ap| ap.is_empty() || ap.contains(&m.mapping.provider_id))
+                    .unwrap_or(true);
+                m.mapping.is_active && provider_ok
+            });
+            if !has_valid_mapping {
+                return None;
+            }
+            Some(serde_json::json!({
+                "id": model.model.id,
+                "object": "model",
+                "created": now,
+                "owned_by": model.model.name,
+                "permission": [],
+                "root": model.model.id,
+            }))
+        })
+        .collect();
+
+    (StatusCode::OK, Json(serde_json::json!({
+        "object": "list",
+        "data": data,
+    }))).into_response()
 }
 
 /// Handler for proxying LLM requests
@@ -60,6 +106,11 @@ pub async fn proxy_request(
     let allowed_providers: Option<Vec<String>> = api_key_row.allowed_providers
         .as_ref()
         .and_then(|s| serde_json::from_str(s).ok());
+
+    // === Standard /v1/models API (OpenAI-compatible) ===
+    if path == "/v1/models" && method == "GET" {
+        return list_models_for_api_key(&state, &api_key_row, &allowed_providers).await.into_response();
+    }
 
     // Read body bytes
     let body_bytes = axum::body::to_bytes(body, 10 * 1024 * 1024) // 10MB max
@@ -208,6 +259,7 @@ pub async fn proxy_request(
 
                 // Clone needed data for the collector task
                 let db = state.db.clone();
+                let stats_collector = state.stats_collector.clone();
                 let api_key_id = api_key_row.id.clone();
                 let provider_id = provider.id.clone();
                 let log_path = path.clone();
@@ -329,6 +381,9 @@ pub async fn proxy_request(
                         is_throttled,
                         None,
                     ).await;
+
+                    // Record usage for token rate tracking
+                    let _ = stats_collector.record_usage(prompt_tokens, completion_tokens).await;
                 });
 
                 let body_stream = tokio_stream::wrappers::ReceiverStream::new(rx);

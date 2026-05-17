@@ -126,6 +126,7 @@ impl Database {
                 prompt_tokens INTEGER DEFAULT 0,
                 completion_tokens INTEGER DEFAULT 0,
                 request_count INTEGER DEFAULT 0,
+                elapsed_seconds REAL DEFAULT 10,
                 snapshot_time TEXT NOT NULL DEFAULT (datetime('now')),
                 FOREIGN KEY (provider_id) REFERENCES providers(id)
             );
@@ -295,6 +296,27 @@ impl Database {
         let result = sqlx::query(
             "UPDATE api_keys SET is_active = 0, updated_at = datetime('now') WHERE id = ?"
         )
+        .bind(id)
+        .execute(&self.pool)
+        .await?;
+
+        Ok(result.rows_affected() > 0)
+    }
+
+    /// Update an API key's name and allowed_providers
+    pub async fn update_api_key(
+        &self,
+        id: &str,
+        name: &str,
+        allowed_providers: Option<&str>,
+        is_active: bool,
+    ) -> Result<bool, sqlx::Error> {
+        let result = sqlx::query(
+            "UPDATE api_keys SET name = ?, allowed_providers = ?, is_active = ?, updated_at = datetime('now') WHERE id = ?"
+        )
+        .bind(name)
+        .bind(allowed_providers)
+        .bind(is_active)
         .bind(id)
         .execute(&self.pool)
         .await?;
@@ -1222,15 +1244,20 @@ impl Database {
         prompt_tokens: i64,
         completion_tokens: i64,
         request_count: i64,
+        elapsed_seconds: f64,
     ) -> Result<(), sqlx::Error> {
+        // Use UTC ISO 8601 format for consistent timezone handling
+        let snapshot_time = chrono::Utc::now().format("%Y-%m-%dT%H:%M:%SZ").to_string();
         sqlx::query(
-            "INSERT INTO token_rate_snapshots (provider_id, tokens_per_second, prompt_tokens, completion_tokens, request_count) VALUES (?, ?, ?, ?, ?)"
+            "INSERT INTO token_rate_snapshots (provider_id, tokens_per_second, prompt_tokens, completion_tokens, request_count, elapsed_seconds, snapshot_time) VALUES (?, ?, ?, ?, ?, ?, ?)"
         )
         .bind(provider_id)
         .bind(tokens_per_second)
         .bind(prompt_tokens)
         .bind(completion_tokens)
         .bind(request_count)
+        .bind(elapsed_seconds)
+        .bind(&snapshot_time)
         .execute(&self.pool)
         .await?;
 
@@ -2121,6 +2148,7 @@ pub struct TokenRateRow {
     pub prompt_tokens: i64,
     pub completion_tokens: i64,
     pub request_count: i64,
+    pub elapsed_seconds: f64,
     pub snapshot_time: String,
 }
 

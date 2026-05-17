@@ -159,6 +159,58 @@ pub async fn regenerate_api_key(
     }
 }
 
+#[derive(Debug, Deserialize)]
+pub struct UpdateApiKeyRequest {
+    pub name: Option<String>,
+    pub allowed_providers: Option<Vec<String>>,
+    pub is_active: Option<bool>,
+}
+
+/// Update an API key (name, allowed_providers, is_active)
+pub async fn update_api_key(
+    State(state): State<AppState>,
+    Path(id): Path<String>,
+    Json(req): Json<UpdateApiKeyRequest>,
+) -> impl IntoResponse {
+    let existing = match state.db.get_api_key_by_id(&id).await {
+        Ok(Some(k)) => k,
+        Ok(None) => return (StatusCode::NOT_FOUND, Json(serde_json::json!({"error": "API key not found"}))).into_response(),
+        Err(e) => {
+            tracing::error!("Failed to get API key: {}", e);
+            return (StatusCode::INTERNAL_SERVER_ERROR, Json(serde_json::json!({"error": e.to_string()}))).into_response();
+        }
+    };
+
+    let name = req.name.unwrap_or(existing.name);
+    let allowed_providers = req.allowed_providers
+        .as_ref()
+        .map(|v| serde_json::to_string(v).ok())
+        .unwrap_or(existing.allowed_providers.clone());
+    let is_active = req.is_active.unwrap_or(existing.is_active);
+
+    match state.db.update_api_key(&id, &name, allowed_providers.as_deref(), is_active).await {
+        Ok(true) => {
+            let response = ApiKeyResponse {
+                id: id.clone(),
+                name: name.clone(),
+                key: existing.api_key,
+                key_prefix: existing.key_prefix,
+                allowed_providers: allowed_providers
+                    .as_ref()
+                    .and_then(|s| serde_json::from_str(s).ok()),
+                is_active,
+                created_at: existing.created_at,
+            };
+            (StatusCode::OK, Json(response)).into_response()
+        }
+        Ok(false) => (StatusCode::NOT_FOUND, Json(serde_json::json!({"error": "API key not found"}))).into_response(),
+        Err(e) => {
+            tracing::error!("Failed to update API key: {}", e);
+            (StatusCode::INTERNAL_SERVER_ERROR, Json(serde_json::json!({"error": e.to_string()}))).into_response()
+        }
+    }
+}
+
 // ========== Provider handlers ==========
 
 #[derive(Debug, Deserialize)]
@@ -949,7 +1001,7 @@ pub async fn get_token_rate(
     Query(params): Query<TokenRateParams>,
 ) -> impl IntoResponse {
     let one_hour_ago = chrono::Utc::now() - chrono::Duration::hours(1);
-    let start_time = one_hour_ago.format("%Y-%m-%d %H:%M:%S").to_string();
+    let start_time = one_hour_ago.format("%Y-%m-%dT%H:%M:%SZ").to_string();
 
     match state.db.get_token_rate_snapshots(
         params.provider_id.as_deref(),

@@ -3,6 +3,7 @@ pub mod ws_handler;
 
 use crate::db::{Database, ProviderRow};
 use crate::auth::AuthManager;
+use crate::stats::StatsCollector;
 use crate::usage;
 use std::sync::Arc;
 use tokio::sync::RwLock;
@@ -15,6 +16,7 @@ pub use handler::proxy_request;
 pub struct LlmProxy {
     db: Arc<Database>,
     auth_manager: Arc<AuthManager>,
+    stats_collector: Arc<StatsCollector>,
     http_client: reqwest::Client,
     /// HTTP client that bypasses system proxy (for internal networks)
     no_proxy_client: reqwest::Client,
@@ -23,7 +25,7 @@ pub struct LlmProxy {
 }
 
 impl LlmProxy {
-    pub fn new(db: Arc<Database>, auth_manager: Arc<AuthManager>) -> Self {
+    pub fn new(db: Arc<Database>, auth_manager: Arc<AuthManager>, stats_collector: Arc<StatsCollector>) -> Self {
         // Build a client that bypasses proxy
         let no_proxy_client = reqwest::Client::builder()
             .no_proxy()
@@ -33,6 +35,7 @@ impl LlmProxy {
         Self {
             db,
             auth_manager,
+            stats_collector,
             http_client: reqwest::Client::builder()
                 .no_proxy()
                 .build()
@@ -177,6 +180,9 @@ impl LlmProxy {
         let (prompt_tokens, completion_tokens, total_tokens) = serde_json::from_slice::<serde_json::Value>(&response_body)
             .map(|v| usage::extract_openai_usage(&v))
             .unwrap_or((0, 0, 0));
+
+        // Record usage for token rate tracking
+        let _ = self.stats_collector.record_usage(prompt_tokens, completion_tokens).await;
 
         // Extract model from response
         let response_model = serde_json::from_slice::<serde_json::Value>(&response_body)
