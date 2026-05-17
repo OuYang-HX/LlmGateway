@@ -10,7 +10,7 @@
         .container{max-width:1400px;margin:0 auto;padding:20px}
         h1{text-align:center;margin:20px 0;font-size:2em;background:linear-gradient(135deg,#60a5fa,#a78bfa);-webkit-background-clip:text;-webkit-text-fill-color:transparent}
         .tabs{display:flex;gap:4px;margin-bottom:20px;background:#1e293b;border-radius:8px;padding:4px;flex-wrap:wrap}
-        .tab{padding:10px 20px;border:none;background:transparent;color:#94a3b8;cursor:pointer;border-radius:6px;font-size:14px}
+        .tab{padding:10px 20px;border:none;background:transparent;color:#94a3b8;cursor:pointer;border-radius:6px;font-size:14px;white-space:nowrap}
         .tab.active{background:#3b82f6;color:#fff}
         .tab:hover{background:#334155}
         .tab.active:hover{background:#3b82f6}
@@ -24,8 +24,9 @@
         .stat-card .value.red{color:#f87171}
         .panel{background:#1e293b;border-radius:12px;padding:20px;border:1px solid #334155;margin-bottom:24px}
         .panel h2{font-size:16px;margin-bottom:16px;color:#e2e8f0}
+        .table-wrap{overflow-x:auto;-webkit-overflow-scrolling:touch}
         table{width:100%;border-collapse:collapse}
-        th,td{padding:10px 12px;text-align:left;border-bottom:1px solid #334155;font-size:13px}
+        th,td{padding:10px 12px;text-align:left;border-bottom:1px solid #334155;font-size:13px;white-space:nowrap}
         th{color:#94a3b8;font-weight:600}
         .controls{display:flex;gap:12px;margin-bottom:16px;flex-wrap:wrap;align-items:center}
         .controls label{font-size:13px;color:#94a3b8}
@@ -62,6 +63,46 @@
         .qa-meta{display:grid;grid-template-columns:1fr 1fr;gap:8px;margin-bottom:16px}
         .qa-meta-item{font-size:12px;color:#94a3b8}
         .qa-meta-item span{color:#e2e8f0;font-weight:600}
+
+        /* ====== 手机端响应式适配 ====== */
+        @media(max-width:768px){
+            .container{padding:10px}
+            h1{font-size:1.3em;margin:10px 0}
+            .tabs{gap:2px;padding:3px}
+            .tab{padding:7px 10px;font-size:12px;white-space:nowrap}
+            .stats-grid{grid-template-columns:1fr 1fr;gap:8px}
+            .stat-card{padding:12px}
+            .stat-card .value{font-size:20px}
+            .stat-card .label{font-size:10px}
+            .panel{padding:12px;border-radius:8px}
+            .panel h2{font-size:14px;margin-bottom:10px}
+            .controls{gap:6px}
+            .controls label{font-size:11px}
+            .controls select,.controls input{padding:4px 6px;font-size:12px;max-width:120px}
+            .controls button,.btn{padding:4px 10px;font-size:12px}
+            .btn-sm{padding:3px 7px;font-size:11px}
+            .form-row{grid-template-columns:1fr}
+            .modal{padding:14px;width:96%;max-height:88vh}
+            .modal h3{font-size:15px}
+            .qa-meta{grid-template-columns:1fr}
+            /* 表格：允许换行，取消固定宽度 */
+            th,td{padding:5px 6px;font-size:11px;white-space:normal;word-break:break-word}
+            /* 手机上隐藏次要列 */
+            .hide-mobile{display:none!important}
+        }
+        @media(max-width:480px){
+            .container{padding:6px}
+            h1{font-size:1.1em;margin:6px 0}
+            .stats-grid{gap:6px}
+            .stat-card{padding:8px}
+            .stat-card .value{font-size:16px}
+            .tab{padding:5px 7px;font-size:11px}
+            .panel{padding:8px}
+            .panel h2{font-size:13px}
+            .controls button,.btn{padding:3px 8px;font-size:11px}
+            .btn-sm{padding:2px 5px;font-size:10px}
+            th,td{padding:3px 4px;font-size:10px}
+        }
     </style>
 </head>
 <body>
@@ -105,10 +146,10 @@
         </div>
         <div class="panel">
             <h2>服务商健康状态 <span style="font-size:12px;color:#64748b">(近24小时)</span></h2>
-            <table id="provider-health-table"><thead><tr><th>服务商</th><th>24h请求</th><th>错误</th><th>限流</th><th>Avg ms</th><th>最近请求</th><th style="font-size:11px;color:#64748b">更新</th></tr></thead><tbody></tbody></table>
+            <div class="table-wrap"><table id="provider-health-table"><thead><tr><th>服务商</th><th>24h请求</th><th class="hide-mobile">错误</th><th class="hide-mobile">限流</th><th class="hide-mobile">Avg ms</th><th class="hide-mobile">最近请求</th><th style="font-size:11px;color:#64748b">更新</th></tr></thead><tbody></tbody></table></div>
         </div>
-        <div class="panel"><h2>服务商状态</h2><table id="overview-provider-table"><thead><tr><th><input type="checkbox" id="overview-select-all" onchange="toggleSelectAllOverviewProviders(this)"></th><th>ID</th><th>名称</th><th>认证方式</th><th>状态</th><th>操作</th></tr></thead><tbody></tbody></table></div>
-        <div class="panel"><h2>API Keys</h2><table id="overview-apikey-table"><thead><tr><th>名称</th><th>前缀</th><th>允许服务商</th><th>状态</th></tr></thead><tbody></tbody></table></div>
+        <div class="panel"><h2>服务商状态</h2><div class="table-wrap"><table id="overview-provider-table"><thead><tr><th><input type="checkbox" id="overview-select-all" onchange="toggleSelectAllOverviewProviders(this)"></th><th>ID</th><th>名称</th><th>认证方式</th><th>状态</th><th>操作</th></tr></thead><tbody></tbody></table></div></div>
+        <div class="panel"><h2>API Keys</h2><div class="table-wrap"><table id="overview-apikey-table"><thead><tr><th>名称</th><th>前缀</th><th>允许服务商</th><th>状态</th></tr></thead><tbody></tbody></table></div></div>
     </div>
 
     <!-- ====== 服务商管理 ====== -->
@@ -121,7 +162,7 @@
         <div class="panel">
             <h2>大模型服务商</h2>
             <table id="provider-manage-table">
-                <thead><tr><th><input type="checkbox" id="provider-select-all" onchange="toggleSelectAllProviders(this)"></th><th>ID</th><th>名称</th><th>Base URL</th><th>认证方式</th><th>权重</th><th>状态</th><th>Token</th><th>操作</th></tr></thead>
+                <thead><tr><th><input type="checkbox" id="provider-select-all" onchange="toggleSelectAllProviders(this)"></th><th>ID</th><th>名称</th><th class="hide-mobile">Base URL</th><th>认证方式</th><th class="hide-mobile">权重</th><th>状态</th><th class="hide-mobile">Token</th><th>操作</th></tr></thead>
                 <tbody></tbody>
             </table>
         </div>
@@ -143,7 +184,7 @@
                 <button class="btn btn-sm" onclick="closeBatchExternalId()" style="margin-left:4px">关闭</button>
             </div>
             <table id="model-table">
-                <thead><tr><th>服务商模型ID</th><th>对外ID</th><th>状态</th><th>测试结果</th><th>测试时间</th><th>操作</th></tr></thead>
+                <thead><tr><th>服务商模型ID</th><th>对外ID</th><th>状态</th><th class="hide-mobile">测试结果</th><th class="hide-mobile">测试时间</th><th>操作</th></tr></thead>
                 <tbody></tbody>
             </table>
         </div>
@@ -157,7 +198,7 @@
         <div class="panel">
             <h2>API Keys</h2>
             <table id="apikey-manage-table">
-                <thead><tr><th>名称</th><th>Key</th><th>允许服务商</th><th>状态</th><th>创建时间</th><th>操作</th></tr></thead>
+                <thead><tr><th>名称</th><th>Key</th><th class="hide-mobile">允许服务商</th><th>状态</th><th class="hide-mobile">创建时间</th><th>操作</th></tr></thead>
                 <tbody></tbody>
             </table>
         </div>
@@ -170,7 +211,7 @@
                 <button class="btn btn-sm" onclick="loadAllQuotaUsage()" style="margin-left:12px">🔄 刷新</button>
             </h2>
             <table id="quota-usage-table">
-                <thead><tr><th>服务商</th><th>配额类型</th><th>限制次数</th><th>网关请求</th><th>校准偏移</th><th>预估已用</th><th>剩余可用</th><th>用量占比</th><th>周期起始</th><th>状态</th><th>操作</th></tr></thead>
+                <thead><tr><th>服务商</th><th>配额类型</th><th>限制次数</th><th>网关请求</th><th class="hide-mobile">校准偏移</th><th>预估已用</th><th>剩余可用</th><th>用量占比</th><th class="hide-mobile">周期起始</th><th>状态</th><th>操作</th></tr></thead>
                 <tbody></tbody>
             </table>
             <div id="quota-empty" class="empty-state hidden"><p>暂未配置任何配额限制</p><p>点击下方按钮为服务商添加配额</p></div>
@@ -211,13 +252,13 @@
         <div class="panel">
             <table id="logs-table"><thead><tr>
                 <th style="cursor:pointer" onclick="toggleLogSort('created_at')">时间 <span id="sort-created_at"></span></th>
-                <th>API Key</th>
+                <th class="hide-mobile">API Key</th>
                 <th>服务商</th>
-                <th>模型</th>
+                <th class="hide-mobile">模型</th>
                 <th style="cursor:pointer" onclick="toggleLogSort('response_status')">状态码 <span id="sort-response_status"></span></th>
                 <th style="cursor:pointer" onclick="toggleLogSort('total_tokens')">Tokens <span id="sort-total_tokens"></span></th>
-                <th style="cursor:pointer" onclick="toggleLogSort('duration_ms')">耗时 <span id="sort-duration_ms"></span></th>
-                <th>流式</th><th>限流</th><th>错误</th><th>详情</th><th>删除</th>
+                <th class="hide-mobile" style="cursor:pointer" onclick="toggleLogSort('duration_ms')">耗时 <span id="sort-duration_ms"></span></th>
+                <th class="hide-mobile">流式</th><th class="hide-mobile">限流</th><th class="hide-mobile">错误</th><th>详情</th><th>删除</th>
             </tr></thead><tbody></tbody></table>
             <div class="pagination" id="logs-pagination" style="margin-top:12px;display:flex;align-items:center;gap:8px">
                 <button class="btn btn-sm" onclick="changeLogPage(-1)">← 上一页</button>
@@ -240,7 +281,7 @@
             <label>服务商:</label><select id="st-provider"><option value="">全部</option></select>
             <button onclick="loadStats()">加载</button>
         </div>
-        <div class="panel"><h2>请求统计</h2><table id="stats-table"><thead><tr><th>时段</th><th>请求数</th><th>Avg ms</th><th>Prompt Tokens</th><th>Completion Tokens</th><th>总 Tokens</th><th>限流次数</th></tr></thead><tbody></tbody></table></div>
+        <div class="panel"><h2>请求统计</h2><div class="table-wrap"><table id="stats-table"><thead><tr><th>时段</th><th>请求数</th><th class="hide-mobile">Avg ms</th><th class="hide-mobile">Prompt Tokens</th><th class="hide-mobile">Completion Tokens</th><th>总 Tokens</th><th class="hide-mobile">限流次数</th></tr></thead><tbody></tbody></table></div></div>
     </div>
 </div>
 
@@ -398,7 +439,7 @@ async function loadProviderHealth(){
             const errRate=h.request_count_24h>0?(h.error_count_24h/h.request_count_24h*100).toFixed(1)+'%':'0%';
             const status=h.error_count_24h>0?'<span style="color:red">'+errRate+'</span>':(h.throttle_count_24h>0?'<span style="color:orange">'+h.throttle_count_24h+'</span>':'<span style="color:green">正常</span>');
             const last=h.last_request_at?new Date(h.last_request_at).toLocaleString():'-';
-            return `<tr><td><a href="#" onclick="event.preventDefault();filterLogsByProvider('${h.provider_id}')" style="color:#3b82f6;text-decoration:none">${h.provider_id}</a></td><td>${h.request_count_24h}</td><td>${h.error_count_24h}</td><td>${status}</td><td>${h.avg_duration_ms.toFixed(0)}ms</td><td>${last}</td><td style="font-size:11px;color:#64748b">${new Date().toLocaleTimeString()}</td></tr>`;
+            return `<tr><td><a href="#" onclick="event.preventDefault();filterLogsByProvider('${h.provider_id}')" style="color:#3b82f6;text-decoration:none">${h.provider_id}</a></td><td>${h.request_count_24h}</td><td class="hide-mobile">${h.error_count_24h}</td><td class="hide-mobile">${status}</td><td class="hide-mobile">${h.avg_duration_ms.toFixed(0)}ms</td><td class="hide-mobile">${last}</td><td style="font-size:11px;color:#64748b">${new Date().toLocaleTimeString()}</td></tr>`;
         }).join('');
         document.getElementById('provider-health-table').querySelector('tbody').innerHTML=rows;
     }catch(e){console.error('Health load error:', e)}
@@ -413,7 +454,7 @@ async function loadOverviewProviders(){
             <td>${p.name}</td>
             <td><span class="badge ${p.auth_type==='api_key'?'badge-blue':'badge-yellow'}">${p.auth_type==='api_key'?'API Key':'动态Token'}</span></td>
             <td><span class="badge ${p.is_active?'badge-green':'badge-red'}">${p.is_active?'活跃':'停用'}</span></td>
-            <td>${p.auth_type==='dynamic_token'?'<button class="btn btn-sm btn-success" onclick="refreshToken(\''+p.id+'\')">🔄 刷新</button>':'-'}</td>
+            <td>${p.auth_type==='dynamic_token'?'<button class="btn btn-sm btn-success" onclick="refreshToken(\''+p.id+'\')">🔄</button>':'-'}</td>
         </tr>`).join('')||'<tr><td colspan="6" class="empty-state">暂无服务商</td></tr>';
     }catch(e){console.error(e)}
 }
@@ -422,7 +463,7 @@ async function loadOverviewApiKeys(){
         const ks=await(await fetch(API+'/api-keys')).json();
         document.querySelector('#overview-apikey-table tbody').innerHTML=ks.map(k=>`<tr>
             <td>${k.name}</td><td>${k.key_prefix}...</td>
-            <td>${k.allowed_providers?k.allowed_providers.join(', '):'全部'}</td>
+            <td class="hide-mobile">${k.allowed_providers?k.allowed_providers.join(', '):'全部'}</td>
             <td><span class="badge ${k.is_active?'badge-green':'badge-red'}">${k.is_active?'活跃':'停用'}</span></td>
         </tr>`).join('')||'<tr><td colspan="4" class="empty-state">暂无 API Key</td></tr>';
     }catch(e){console.error(e)}
@@ -639,8 +680,8 @@ function renderProvidersTable(){
             tokenStatus='<span class="badge badge-green">-</span>';
         }
         return`<tr>
-            <td><input type="checkbox" class="provider-row-checkbox" value="${p.id}"></td><td>${p.id}</td><td>${p.name}</td><td style="font-size:11px;word-break:break-all">${p.base_url}</td>
-            <td>${authBadge}</td><td>${p.weight}</td><td>${statusBadge}</td><td>${tokenStatus}</td>
+            <td><input type="checkbox" class="provider-row-checkbox" value="${p.id}"></td><td>${p.id}</td><td>${p.name}</td><td class="hide-mobile" style="font-size:11px;word-break:break-all">${p.base_url}</td>
+            <td>${authBadge}</td><td class="hide-mobile">${p.weight}</td><td>${statusBadge}</td><td class="hide-mobile">${tokenStatus}</td>
             <td><button class="btn btn-sm" onclick='editProvider("${p.id}")'>编辑</button> <button class="btn btn-sm" onclick='showModels("${p.id}")'>🤖 模型</button> ${p.auth_type==='dynamic_token'?'<button class="btn btn-sm btn-success" onclick=\'refreshToken("'+p.id+'\")\'>🔄 刷新Token</button>':''} <button class="btn btn-sm btn-danger" onclick='deleteProvider("${p.id}")'>删除</button></td>
         </tr>`;
     }).join('');
@@ -827,9 +868,9 @@ async function loadApiKeysManage(){
         if(!ks.length){tb.innerHTML='<tr><td colspan="7" class="empty-state"><p>暂无 API Key，点击上方按钮创建</p></td></tr>';return;}
         tb.innerHTML=ks.map(k=>`<tr>
             <td>${k.name}</td><td style="font-family:monospace;font-size:12px">${k.key}</td>
-            <td>${k.allowed_providers?k.allowed_providers.join(', '):'全部'}</td>
+            <td class="hide-mobile">${k.allowed_providers?k.allowed_providers.join(', '):'全部'}</td>
             <td><span class="badge ${k.is_active?'badge-green':'badge-red'}">${k.is_active?'活跃':'停用'}</span></td>
-            <td>${fmtTime(k.created_at)}</td>
+            <td class="hide-mobile">${fmtTime(k.created_at)}</td>
             <td><button class="btn btn-sm" onclick='copyKey("${k.key}")' title='复制 Key'>📋</button> <button class="btn btn-sm btn-danger" onclick='deleteApiKey("${k.id}")'>删除</button></td>
         </tr>`).join('');
     }catch(e){console.error(e)}
@@ -1122,10 +1163,10 @@ async function loadLogs(){
             const isError = l.error_message || (l.response_status && l.response_status >= 400);
             const rowStyle = isError ? 'background:rgba(239,68,68,0.1)' : '';
             return `<tr style="${rowStyle}">
-            <td>${fmtTime(l.created_at)}</td><td>${getApiKeyName(l.api_key_id)}</td>
-            <td>${l.provider_id}</td><td>${l.model||'-'}</td><td style="${l.response_status&&l.response_status>=400?'color:#ef4444;font-weight:bold':''}">${l.response_status||'-'}</td>
-            <td>${l.total_tokens}</td><td>${l.duration_ms?l.duration_ms+'ms':'-'}</td>
-            <td>${l.is_streaming?'✅':'❌'}</td><td>${l.is_throttled?'⚠️':'✅'}</td><td>${l.error_message?'<span style="color:red" title="'+l.error_message+'">❌</span>':'✅'}</td><td><button class="btn btn-sm" onclick='showLogDetail(${l.id})'>📋 QA</button></td><td><button class="btn btn-sm btn-danger" onclick='deleteSingleLog(${l.id})'>🗑</button></td>
+            <td>${fmtTime(l.created_at)}</td><td class="hide-mobile">${getApiKeyName(l.api_key_id)}</td>
+            <td>${l.provider_id}</td><td class="hide-mobile">${l.model||'-'}</td><td style="${l.response_status&&l.response_status>=400?'color:#ef4444;font-weight:bold':''}">${l.response_status||'-'}</td>
+            <td>${l.total_tokens}</td><td class="hide-mobile">${l.duration_ms?l.duration_ms+'ms':'-'}</td>
+            <td class="hide-mobile">${l.is_streaming?'✅':'❌'}</td><td class="hide-mobile">${l.is_throttled?'⚠️':'✅'}</td><td class="hide-mobile">${l.error_message?'<span style="color:red" title="'+l.error_message+'">❌</span>':'✅'}</td><td><button class="btn btn-sm" onclick='showLogDetail(${l.id})'>📋</button></td><td><button class="btn btn-sm btn-danger" onclick='deleteSingleLog(${l.id})'>🗑</button></td>
         </tr>`;}).join('')||'<tr><td colspan="12" class="empty-state">暂无日志</td></tr>';
     }catch(e){console.error(e)}
 }
@@ -1149,8 +1190,8 @@ async function loadStats(){
         if(p)url+='&provider_id='+p;
         const data=await(await fetch(url)).json();
         document.querySelector('#stats-table tbody').innerHTML=data.map(b=>`<tr>
-            <td>${b.period}</td><td>${b.request_count}</td><td>${b.avg_duration_ms ? b.avg_duration_ms.toFixed(0) : 0}</td><td>${b.prompt_tokens}</td>
-            <td>${b.completion_tokens}</td><td>${b.total_tokens}</td><td>${b.throttle_count}</td>
+            <td>${b.period}</td><td>${b.request_count}</td><td class="hide-mobile">${b.avg_duration_ms ? b.avg_duration_ms.toFixed(0) : 0}</td><td class="hide-mobile">${b.prompt_tokens}</td>
+            <td class="hide-mobile">${b.completion_tokens}</td><td>${b.total_tokens}</td><td class="hide-mobile">${b.throttle_count}</td>
         </tr>`).join('')||'<tr><td colspan="7" class="empty-state">暂无数据</td></tr>';
     }catch(e){console.error(e)}
 }
@@ -1218,12 +1259,12 @@ async function loadModels() {
                 <td style="font-family:monospace">${m.model_id}</td>
                 <td>${externalIdCell}</td>
                 <td>${statusBadge}</td>
-                <td>${testBadge}</td>
-                <td style="font-size:12px">${testTime}</td>
+                <td class="hide-mobile">${testBadge}</td>
+                <td class="hide-mobile" style="font-size:12px">${testTime}</td>
                 <td>
-                    <button class="btn btn-sm" onclick="setExternalId('${m.model_id}', '${externalId || ''}')">🔗 ${externalId ? '修改对外ID' : '设置对外ID'}</button>
-                    <button class="btn btn-sm" onclick="testModel('${m.model_id}')" id="test-btn-${m.model_id}">🧪 测试</button>
-                    <button class="btn btn-sm btn-danger" onclick="removeModel('${m.model_id}')">删除</button>
+                    <button class="btn btn-sm" onclick="setExternalId('${m.model_id}', '${externalId || ''}')">🔗</button>
+                    <button class="btn btn-sm" onclick="testModel('${m.model_id}')" id="test-btn-${m.model_id}">🧪</button>
+                    <button class="btn btn-sm btn-danger" onclick="removeModel('${m.model_id}')">🗑</button>
                 </td>
             </tr>`;
         }).join('');
@@ -1731,18 +1772,18 @@ function loadAllQuotaUsage(){
                 <td>${typeLabel}</td>
                 <td style="font-weight:600">${q.limit_count.toLocaleString()}</td>
                 <td>${q.gateway_count.toLocaleString()}</td>
-                <td>${q.calibration_offset>0?'<span style="color:#fbbf24">+'+q.calibration_offset+'</span>':'0'}</td>
+                <td class="hide-mobile">${q.calibration_offset>0?'<span style="color:#fbbf24">+'+q.calibration_offset+'</span>':'0'}</td>
                 <td style="font-weight:600;color:${pctColor}">${q.estimated_total.toLocaleString()}</td>
                 <td style="font-weight:700;color:${pctColor}">${q.remaining.toLocaleString()}</td>
                 <td>
-                    <div style="display:flex;align-items:center;gap:6px">
+                    <div style="display:flex;align-items:center;gap:4px">
                         <div style="flex:1;height:8px;background:#334155;border-radius:4px;overflow:hidden">
                             <div style="width:${barW}%;height:100%;background:${pctColor};border-radius:4px;transition:width .3s"></div>
                         </div>
-                        <span style="font-size:12px;color:${pctColor};font-weight:600;min-width:42px">${pct.toFixed(1)}%</span>
+                        <span style="font-size:11px;color:${pctColor};font-weight:600;min-width:36px">${pct.toFixed(1)}%</span>
                     </div>
                 </td>
-                <td style="font-size:11px;color:#64748b">${q.period_start||'-'}</td>
+                <td class="hide-mobile" style="font-size:11px;color:#64748b">${q.period_start||'-'}</td>
                 <td>${statusBadge}</td>
                 <td>
                     <button class="btn btn-sm" onclick="openCalibrationModal('${q.provider_id}','${q.quota_type}',${q.gateway_count},${q.calibration_offset},'${q.provider_name}')">📏 校准</button>

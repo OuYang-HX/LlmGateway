@@ -108,10 +108,10 @@ class MainActivity : AppCompatActivity() {
             allowFileAccess = false
             allowContentAccess = false
             loadWithOverviewMode = true
-            useWideViewPort = true
-            builtInZoomControls = true
+            useWideViewPort = false
+            builtInZoomControls = false
             displayZoomControls = false
-            setSupportZoom(true)
+            setSupportZoom(false)
             cacheMode = android.webkit.WebSettings.LOAD_DEFAULT
             mixedContentMode = android.webkit.WebSettings.MIXED_CONTENT_NEVER_ALLOW
             userAgentString = userAgentString + " LlmGatewayApp/1.0"
