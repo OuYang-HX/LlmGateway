@@ -228,6 +228,13 @@ impl Database {
         .execute(&self.pool)
         .await;
 
+        // Migration: Add elapsed_seconds column to token_rate_snapshots
+        let _ = sqlx::query(
+            "ALTER TABLE token_rate_snapshots ADD COLUMN elapsed_seconds REAL DEFAULT 10"
+        )
+        .execute(&self.pool)
+        .await;
+
         Ok(())
     }
 

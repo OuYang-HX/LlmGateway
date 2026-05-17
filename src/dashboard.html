@@ -519,6 +519,7 @@ async function loadTokenRateChart(){
                             tension: 0.3,
                             pointRadius: 0,
                             borderWidth: 2,
+                            hidden: true,
                         },
                         {
                             label: 'Output Tokens/s',
@@ -562,7 +563,7 @@ async function loadTokenRateChart(){
         const maxPrompt = Math.max(...promptRates);
         const maxCompletion = Math.max(...completionRates);
         document.getElementById('token-rate-legend').textContent =
-            'Input 峰值: ' + maxPrompt.toFixed(1) + ' | Output 峰值: ' + maxCompletion.toFixed(1) + ' tokens/s';
+            'Output 峰值: ' + maxCompletion.toFixed(1) + ' tokens/s (点击图例切换)';
     }catch(e){console.error('Token rate chart error:', e)}
 }
 
