@@ -146,6 +146,18 @@
             <div id="apikey-usage-detail" style="margin-top:12px"></div>
         </div>
         <div class="panel">
+            <h2>用量趋势 <span style="font-size:12px;color:#64748b">(近30天)</span>
+                <select id="ut-range" onchange="loadUsageTrendChart()" style="margin-left:12px;font-size:12px;background:#1e293b;color:#e2e8f0;border:1px solid #334155;border-radius:4px;padding:2px 6px">
+                    <option value="7">近7天</option>
+                    <option value="14">近14天</option>
+                    <option value="30" selected>近30天</option>
+                </select>
+            </h2>
+            <div style="position:relative;height:160px">
+                <canvas id="usage-trend-chart"></canvas>
+            </div>
+        </div>
+        <div class="panel">
             <h2>服务商健康状态 <span style="font-size:12px;color:#64748b">(近24小时)</span></h2>
             <div class="table-wrap"><table id="provider-health-table"><thead><tr><th>服务商</th><th>24h请求</th><th class="hide-mobile">错误</th><th class="hide-mobile">限流</th><th class="hide-mobile">Avg ms</th><th class="hide-mobile">最近请求</th><th style="font-size:11px;color:#64748b">更新</th></tr></thead><tbody></tbody></table></div>
         </div>
@@ -417,7 +429,7 @@ function showTab(name, btn){
     if(btn) btn.classList.add('active');
     if(name==='providers') loadProvidersManage();
     if(name==='apikeys') loadApiKeysManage();
-    if(name==='overview'){loadSummary();loadOverviewProviders();loadOverviewApiKeys();loadProviderHealth();startTokenRateAutoRefresh();startApiKeyUsageAutoRefresh();} else {stopTokenRateAutoRefresh();stopApiKeyUsageAutoRefresh();}
+    if(name==='overview'){loadSummary();loadOverviewProviders();loadOverviewApiKeys();loadProviderHealth();loadUsageTrendChart();startTokenRateAutoRefresh();startApiKeyUsageAutoRefresh();} else {stopTokenRateAutoRefresh();stopApiKeyUsageAutoRefresh();}
     if(name==='logs') loadLogProviderOptions();
     if(name==='stats') loadStatsProviderOptions();
 }
@@ -740,6 +752,77 @@ function startApiKeyUsageAutoRefresh(){
 
 function stopApiKeyUsageAutoRefresh(){
     if(apiKeyUsageInterval){clearInterval(apiKeyUsageInterval);apiKeyUsageInterval=null;}
+}
+
+let usageTrendChart = null;
+async function loadUsageTrendChart(){
+    try{
+        const days = document.getElementById('ut-range')?.value || '30';
+        const resp = await fetch(API+'/stats/usage-trend?days='+days);
+        if(!resp.ok) return;
+        const data = await resp.json();
+        if(!data.length){
+            const chartDiv = document.getElementById('usage-trend-chart')?.parentElement;
+            if(chartDiv) chartDiv.style.display='none';
+            return;
+        }
+        const chartDiv = document.getElementById('usage-trend-chart')?.parentElement;
+        if(chartDiv) chartDiv.style.display='';
+
+        const labels = data.map(d => {
+            // Format date as M/D for shorter labels
+            const parts = d.date.split('-');
+            return parts.length >= 3 ? `${parseInt(parts[1])}/${parseInt(parts[2])}` : d.date;
+        });
+        const tokens = data.map(d => d.total_tokens);
+        const requests = data.map(d => d.request_count);
+        const ctx = document.getElementById('usage-trend-chart').getContext('2d');
+        if(usageTrendChart){
+            usageTrendChart.data.labels = labels;
+            usageTrendChart.data.datasets[0].data = tokens;
+            usageTrendChart.data.datasets[1].data = requests;
+            usageTrendChart.update('none');
+        } else {
+            usageTrendChart = new Chart(ctx, {
+                type: 'line',
+                data: {
+                    labels,
+                    datasets: [
+                        {
+                            label: 'Total Tokens',
+                            data: tokens,
+                            borderColor: 'rgba(59,130,246,1)',
+                            backgroundColor: 'rgba(59,130,246,0.1)',
+                            borderWidth: 2,
+                            tension: 0.3,
+                            fill: true,
+                            yAxisID: 'y',
+                        },
+                        {
+                            label: 'Requests',
+                            data: requests,
+                            borderColor: 'rgba(168,85,247,1)',
+                            backgroundColor: 'rgba(168,85,247,0.1)',
+                            borderWidth: 2,
+                            tension: 0.3,
+                            fill: true,
+                            yAxisID: 'y1',
+                        }
+                    ]
+                },
+                options: {
+                    responsive: true,
+                    maintainAspectRatio: false,
+                    plugins: { legend: { display: true, position: 'top', labels: { color: '#94a3b8', font: { size: 11 }, boxWidth: 12 } } },
+                    scales: {
+                        x: { ticks: { color: '#94a3b8', font: { size: 10 }, maxTicksLimit: 10 }, grid: { display: false } },
+                        y: { position: 'left', beginAtZero: true, ticks: { color: '#94a3b8', font: { size: 10 }, callback: v => v >= 1000 ? (v/1000).toFixed(0)+'k' : v }, title: { display: true, text: 'Tokens', color: '#64748b', font: { size: 10 } } },
+                        y1: { position: 'right', beginAtZero: true, ticks: { color: '#94a3b8', font: { size: 10 } }, title: { display: true, text: 'Requests', color: '#64748b', font: { size: 10 } }, grid: { drawOnChartArea: false } }
+                    }
+                }
+            });
+        }
+    }catch(e){console.error('Usage trend chart error:', e)}
 }
 
 // ========== 服务商管理 ==========

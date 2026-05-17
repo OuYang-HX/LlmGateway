@@ -41,6 +41,7 @@ async fn build_test_app() -> TestServer {
         .route("/api/v1/dashboard/summary", get(llm_gateway::api::get_dashboard_summary))
         .route("/api/v1/dashboard/health", get(llm_gateway::api::get_provider_health))
         .route("/api/v1/stats/by-api-key", get(llm_gateway::api::get_stats_by_api_key))
+        .route("/api/v1/stats/usage-trend", get(llm_gateway::api::get_usage_trend))
         .route("/api/v1/dashboard/token-rate", get(llm_gateway::api::get_token_rate))
         .route("/ws/v1", get(llm_gateway::proxy::ws_handler::ws_proxy_handler))
         .with_state(state)
@@ -392,6 +393,35 @@ async fn test_http_get_bucketed_stats() {
     let server = build_test_app().await;
     let response = server.get("/api/v1/stats/bucketed?granularity=day").await;
     assert_eq!(response.status_code(), StatusCode::OK);
+}
+
+#[tokio::test]
+async fn test_http_usage_trend_empty() {
+    let server = build_test_app().await;
+    let response = server.get("/api/v1/stats/usage-trend").await;
+    assert_eq!(response.status_code(), StatusCode::OK);
+    let body: Vec<serde_json::Value> = response.json();
+    assert!(body.is_empty());
+}
+
+#[tokio::test]
+async fn test_http_usage_trend_with_days_param() {
+    let server = build_test_app().await;
+    let response = server.get("/api/v1/stats/usage-trend?days=7").await;
+    assert_eq!(response.status_code(), StatusCode::OK);
+    let body: Vec<serde_json::Value> = response.json();
+    assert!(body.is_empty()); // No logs yet
+}
+
+#[tokio::test]
+async fn test_http_usage_trend_caps_days() {
+    let server = build_test_app().await;
+    // days > 90 should be capped
+    let response = server.get("/api/v1/stats/usage-trend?days=200").await;
+    assert_eq!(response.status_code(), StatusCode::OK);
+    // Should still return valid empty array (days capped but query succeeds)
+    let body: Vec<serde_json::Value> = response.json();
+    assert!(body.is_empty());
 }
 
 // ==================== Request Logs HTTP Tests ====================

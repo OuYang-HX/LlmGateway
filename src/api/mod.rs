@@ -995,6 +995,43 @@ pub async fn get_stats_by_api_key(
     }
 }
 
+/// Get usage trend data (daily totals for the last 30 days)
+pub async fn get_usage_trend(
+    State(state): State<AppState>,
+    Query(params): Query<UsageTrendParams>,
+) -> impl IntoResponse {
+    let days = params.days.unwrap_or(30).min(90);
+    let end_time = chrono::Utc::now().format("%Y-%m-%dT%H:%M:%SZ").to_string();
+    let start_time = (chrono::Utc::now() - chrono::Duration::days(days as i64))
+        .format("%Y-%m-%dT%H:%M:%SZ").to_string();
+
+    match state.db.get_time_bucketed_stats(
+        params.api_key_id.as_deref(),
+        params.provider_id.as_deref(),
+        &start_time,
+        &end_time,
+        "day",
+    ).await {
+        Ok(stats) => {
+            // Return just the fields needed for a trend chart
+            let trend: Vec<serde_json::Value> = stats.into_iter().map(|s| {
+                serde_json::json!({
+                    "date": s.period,
+                    "total_tokens": s.total_tokens,
+                    "request_count": s.request_count,
+                    "prompt_tokens": s.prompt_tokens,
+                    "completion_tokens": s.completion_tokens,
+                })
+            }).collect();
+            Json(trend).into_response()
+        }
+        Err(e) => {
+            tracing::error!("Failed to get usage trend: {}", e);
+            (StatusCode::INTERNAL_SERVER_ERROR, Json(serde_json::json!({"error": e.to_string()}))).into_response()
+        }
+    }
+}
+
 /// Get token rate data
 pub async fn get_token_rate(
     State(state): State<AppState>,
@@ -1026,6 +1063,13 @@ pub struct StatsByApiKeyParams {
 #[derive(Debug, Deserialize)]
 pub struct TokenRateParams {
     pub provider_id: Option<String>,
+}
+
+#[derive(Debug, Deserialize)]
+pub struct UsageTrendParams {
+    pub api_key_id: Option<String>,
+    pub provider_id: Option<String>,
+    pub days: Option<i64>,
 }
 
 // ========== Unified Model handlers ==========
