@@ -504,6 +504,7 @@ async function loadTokenRateChart(){
             tokenRateChart.data.datasets[0].data = promptRates;
             tokenRateChart.data.datasets[1].data = completionRates;
             tokenRateChart.update('none');
+            updateTokenRateLegend(tokenRateChart);
         } else {
             tokenRateChart = new Chart(ctx, {
                 type: 'line',
@@ -539,7 +540,14 @@ async function loadTokenRateChart(){
                     animation: false,
                     interaction: { mode: 'index', intersect: false },
                     plugins: {
-                        legend: { display: true, labels: { color: '#94a3b8', font: { size: 11 } } },
+                        legend: {
+                            display: true,
+                            labels: { color: '#94a3b8', font: { size: 11 } },
+                            onClick: function(e, legendItem, legend) {
+                                legend.toggleDataset(legendItem.datasetIndex);
+                                updateTokenRateLegend(this.chart);
+                            }
+                        },
                         tooltip: {
                             callbacks: {
                                 label: ctx => ctx.dataset.label + ': ' + ctx.parsed.y.toFixed(2)
@@ -563,8 +571,28 @@ async function loadTokenRateChart(){
         const maxPrompt = Math.max(...promptRates);
         const maxCompletion = Math.max(...completionRates);
         document.getElementById('token-rate-legend').textContent =
-            'Output 峰值: ' + maxCompletion.toFixed(1) + ' tokens/s (点击图例切换)';
+            updateTokenRateLegend(tokenRateChart);
     }catch(e){console.error('Token rate chart error:', e)}
+}
+
+function updateTokenRateLegend(chart){
+    if(!chart) return;
+    const visible = chart.data.datasets.filter(d => !d.hidden);
+    const promptRates = chart.data.datasets[0].data;
+    const completionRates = chart.data.datasets[1].data;
+    const maxPrompt = Math.max(...promptRates, 0);
+    const maxCompletion = Math.max(...completionRates, 0);
+    let text = '';
+    if(visible.length === 1){
+        const label = visible[0].label;
+        const val = label.includes('Input') ? maxPrompt : maxCompletion;
+        text = label + ' 峰值: ' + val.toFixed(1) + ' tokens/s';
+    } else if(visible.length === 2){
+        text = 'Input 峰值: ' + maxPrompt.toFixed(1) + ' | Output 峰值: ' + maxCompletion.toFixed(1) + ' tokens/s';
+    } else {
+        text = '暂无数据';
+    }
+    document.getElementById('token-rate-legend').textContent = text;
 }
 
 function getApiKeyName(keyId){
