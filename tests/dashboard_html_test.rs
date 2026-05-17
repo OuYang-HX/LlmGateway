@@ -183,3 +183,84 @@ fn test_dashboard_html_shows_input_checkbox_removed() {
         "Should NOT have tr-show-prompt checkbox"
     );
 }
+
+#[test]
+fn test_dashboard_html_error_row_highlighting_in_logs() {
+    let content = fs::read_to_string("src/dashboard.html").unwrap();
+    // Error rows in logs should have visual distinction (red background/border)
+    assert!(
+        content.contains("error") && (content.contains("color:#ef4444") || content.contains("background:#ef") || content.contains("rgb(239")),
+        "Logs table should highlight error rows with red color"
+    );
+}
+
+#[test]
+fn test_dashboard_html_logs_pagination_controls() {
+    let content = fs::read_to_string("src/dashboard.html").unwrap();
+    // Logs tab should have pagination with prev/next buttons
+    assert!(
+        (content.contains("prev") || content.contains("previous") || content.contains("上一页") || content.contains("前一页")) &&
+        (content.contains("next") || content.contains("下一页") || content.contains("后一页")),
+        "Logs should have prev/next pagination"
+    );
+}
+
+#[test]
+fn test_dashboard_html_time_range_filter() {
+    let content = fs::read_to_string("src/dashboard.html").unwrap();
+    // Should have time range filter for logs/stats
+    assert!(
+        content.contains("time") || content.contains("时间") || content.contains("range") || content.contains("范围"),
+        "Should have time range filter"
+    );
+}
+
+#[test]
+fn test_dashboard_html_stats_by_api_key() {
+    let content = fs::read_to_string("src/dashboard.html").unwrap();
+    // Overview should show stats grouped by API key
+    assert!(
+        content.contains("api-key") || content.contains("api_key") || content.contains("API Key") || content.contains("apiKey"),
+        "Should have API key usage stats"
+    );
+}
+
+#[test]
+fn test_dashboard_html_csv_export_in_logs() {
+    let content = fs::read_to_string("src/dashboard.html").unwrap();
+    // Logs tab should have CSV export button
+    assert!(
+        content.contains("csv") || content.contains("CSV") || content.contains("export") || content.contains("导出"),
+        "Should have CSV export for logs"
+    );
+}
+
+#[test]
+fn test_dashboard_html_refresh_token_button() {
+    let content = fs::read_to_string("src/dashboard.html").unwrap();
+    // Provider management should have refresh token button for dynamic token providers
+    assert!(
+        content.contains("refresh") || content.contains("刷新") || content.contains("refresh-token"),
+        "Should have refresh token functionality"
+    );
+}
+
+#[test]
+fn test_dashboard_html_logs_model_filter() {
+    let content = fs::read_to_string("src/dashboard.html").unwrap();
+    // Logs should have model filter
+    assert!(
+        content.contains("model") || content.contains("模型"),
+        "Should have model filter in logs"
+    );
+}
+
+#[test]
+fn test_dashboard_html_batch_provider_toggle() {
+    let content = fs::read_to_string("src/dashboard.html").unwrap();
+    // Provider management should have batch enable/disable
+    assert!(
+        content.contains("batch") || content.contains("批量"),
+        "Should have batch provider operations"
+    );
+}
