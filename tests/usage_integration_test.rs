@@ -2,6 +2,7 @@ use llm_gateway::db::Database;
 use llm_gateway::proxy::LlmProxy;
 use llm_gateway::auth::AuthManager;
 use llm_gateway::usage;
+use llm_gateway::stats::StatsCollector;
 use std::sync::Arc;
 
 async fn test_db() -> Arc<Database> {
@@ -220,7 +221,8 @@ async fn test_proxy_response_struct() {
     // Verify the ProxyResponse struct works correctly
     let db = test_db().await;
     let auth_manager = Arc::new(AuthManager::new(db.clone()));
-    let proxy = LlmProxy::new(db.clone(), auth_manager);
+    let stats: Arc<llm_gateway::stats::StatsCollector> = Arc::new(llm_gateway::stats::StatsCollector::new(db.clone()));
+    let proxy = LlmProxy::new(db.clone(), auth_manager, stats);
 
     // Just verify the proxy can be created and the method exists
     assert!(proxy.http_client().get("https://example.com").build().is_ok());

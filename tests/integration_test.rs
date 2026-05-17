@@ -442,8 +442,8 @@ async fn test_get_stats_empty_database() {
 async fn test_insert_and_get_token_rate_snapshots() {
     let db = test_db().await;
 
-    db.insert_token_rate_snapshot(None, 150.5, 100, 50, 10).await.unwrap();
-    db.insert_token_rate_snapshot(None, 200.0, 130, 70, 12).await.unwrap();
+    db.insert_token_rate_snapshot(None, 150.5, 100, 50, 10, 10.0).await.unwrap();
+    db.insert_token_rate_snapshot(None, 200.0, 130, 70, 12, 10.0).await.unwrap();
 
     let now = chrono::Utc::now().format("%Y-%m-%d %H:%M:%S").to_string();
     let snapshots = db.get_token_rate_snapshots(None, &now, 100).await.unwrap();
@@ -457,8 +457,8 @@ async fn test_token_rate_snapshot_by_provider() {
     let db = test_db().await;
     db.create_provider_simple("prov", "Provider", "https://p.com", "openai", "api_key", Some("key"), None, None, None, "token", "refreshToken", "Authorization", "Bearer ", 86400, 1).await.unwrap();
 
-    db.insert_token_rate_snapshot(Some("prov"), 100.0, 60, 40, 5).await.unwrap();
-    db.insert_token_rate_snapshot(None, 50.0, 30, 20, 3).await.unwrap();
+    db.insert_token_rate_snapshot(Some("prov"), 100.0, 60, 40, 5, 10.0).await.unwrap();
+    db.insert_token_rate_snapshot(None, 50.0, 30, 20, 3, 10.0).await.unwrap();
 
     let now = chrono::Utc::now().format("%Y-%m-%d %H:%M:%S").to_string();
     let prov_snapshots = db.get_token_rate_snapshots(Some("prov"), &now, 100).await.unwrap();
@@ -470,10 +470,11 @@ async fn test_token_rate_snapshot_by_provider() {
 async fn test_cleanup_old_snapshots() {
     let db = test_db().await;
 
-    db.insert_token_rate_snapshot(None, 100.0, 50, 50, 5).await.unwrap();
+    db.insert_token_rate_snapshot(None, 100.0, 50, 50, 5, 10.0).await.unwrap();
 
     // Cleanup with a future time should delete the snapshot
-    let future = (chrono::Utc::now() + chrono::Duration::hours(1)).format("%Y-%m-%d %H:%M:%S").to_string();
+    // snapshot_time is stored as UTC ISO ("2024-01-01T12:00:00Z")
+    let future = (chrono::Utc::now() + chrono::Duration::hours(1)).format("%Y-%m-%dT%H:%M:%SZ").to_string();
     let deleted = db.cleanup_old_snapshots(&future).await.unwrap();
     assert_eq!(deleted, 1, "Should delete snapshot older than future time");
 }
@@ -515,7 +516,8 @@ async fn test_proxy_select_provider_round_robin() {
     db.create_provider_simple("p2", "Provider 2", "https://p2.com", "openai", "api_key", Some("key2"), None, None, None, "token", "refreshToken", "Authorization", "Bearer ", 86400, 1).await.unwrap();
 
     let auth_manager = Arc::new(AuthManager::new(db.clone()));
-    let proxy = LlmProxy::new(db.clone(), auth_manager);
+    let stats: Arc<llm_gateway::stats::StatsCollector> = Arc::new(llm_gateway::stats::StatsCollector::new(db.clone()));
+    let proxy = LlmProxy::new(db.clone(), auth_manager, stats);
 
     let mut p1_count = 0;
     let mut p2_count = 0;
@@ -537,7 +539,8 @@ async fn test_proxy_select_provider_with_allowed_list() {
     db.create_provider_simple("p2", "Provider 2", "https://p2.com", "openai", "api_key", Some("key2"), None, None, None, "token", "refreshToken", "Authorization", "Bearer ", 86400, 1).await.unwrap();
 
     let auth_manager = Arc::new(AuthManager::new(db.clone()));
-    let proxy = LlmProxy::new(db.clone(), auth_manager);
+    let stats: Arc<llm_gateway::stats::StatsCollector> = Arc::new(llm_gateway::stats::StatsCollector::new(db.clone()));
+    let proxy = LlmProxy::new(db.clone(), auth_manager, stats);
 
     let allowed = vec!["p1".to_string()];
     for _ in 0..5 {
@@ -550,7 +553,8 @@ async fn test_proxy_select_provider_with_allowed_list() {
 async fn test_proxy_select_provider_no_providers() {
     let db = test_db().await;
     let auth_manager = Arc::new(AuthManager::new(db.clone()));
-    let proxy = LlmProxy::new(db.clone(), auth_manager);
+    let stats: Arc<llm_gateway::stats::StatsCollector> = Arc::new(llm_gateway::stats::StatsCollector::new(db.clone()));
+    let proxy = LlmProxy::new(db.clone(), auth_manager, stats);
 
     let result = proxy.select_provider(None).await;
     assert!(result.is_err(), "Should fail with no providers");
@@ -562,7 +566,8 @@ async fn test_proxy_select_provider_no_matching() {
     db.create_provider_simple("p1", "Provider 1", "https://p1.com", "openai", "api_key", Some("key1"), None, None, None, "token", "refreshToken", "Authorization", "Bearer ", 86400, 1).await.unwrap();
 
     let auth_manager = Arc::new(AuthManager::new(db.clone()));
-    let proxy = LlmProxy::new(db.clone(), auth_manager);
+    let stats: Arc<llm_gateway::stats::StatsCollector> = Arc::new(llm_gateway::stats::StatsCollector::new(db.clone()));
+    let proxy = LlmProxy::new(db.clone(), auth_manager, stats);
 
     let allowed = vec!["nonexistent".to_string()];
     let result = proxy.select_provider(Some(&allowed)).await;
@@ -576,7 +581,8 @@ async fn test_proxy_weighted_selection() {
     db.create_provider_simple("p-light", "Light Provider", "https://pl.com", "openai", "api_key", Some("key2"), None, None, None, "token", "refreshToken", "Authorization", "Bearer ", 86400, 1).await.unwrap();
 
     let auth_manager = Arc::new(AuthManager::new(db.clone()));
-    let proxy = LlmProxy::new(db.clone(), auth_manager);
+    let stats: Arc<llm_gateway::stats::StatsCollector> = Arc::new(llm_gateway::stats::StatsCollector::new(db.clone()));
+    let proxy = LlmProxy::new(db.clone(), auth_manager, stats);
 
     let mut heavy_count = 0;
     let mut light_count = 0;
@@ -599,7 +605,8 @@ async fn test_proxy_select_provider_skips_inactive() {
     db.deactivate_provider("p-inactive").await.unwrap();
 
     let auth_manager = Arc::new(AuthManager::new(db.clone()));
-    let proxy = LlmProxy::new(db.clone(), auth_manager);
+    let stats: Arc<llm_gateway::stats::StatsCollector> = Arc::new(llm_gateway::stats::StatsCollector::new(db.clone()));
+    let proxy = LlmProxy::new(db.clone(), auth_manager, stats);
 
     for _ in 0..5 {
         let provider = proxy.select_provider(None).await.unwrap();
@@ -611,7 +618,8 @@ async fn test_proxy_select_provider_skips_inactive() {
 async fn test_proxy_extract_model_from_body() {
     let db = test_db().await;
     let auth_manager = Arc::new(AuthManager::new(db.clone()));
-    let proxy = LlmProxy::new(db.clone(), auth_manager);
+    let stats: Arc<llm_gateway::stats::StatsCollector> = Arc::new(llm_gateway::stats::StatsCollector::new(db.clone()));
+    let proxy = LlmProxy::new(db.clone(), auth_manager, stats);
 
     let body = r#"{"model":"gpt-4","messages":[{"role":"user","content":"hi"}]}"#;
     let model = proxy.extract_model_from_body(body.as_bytes());
@@ -961,7 +969,8 @@ async fn test_proxy_log_streaming_request() {
     db.create_provider_simple("prov", "Provider", "https://p.com", "openai", "api_key", Some("key"), None, None, None, "token", "refreshToken", "Authorization", "Bearer ", 86400, 1).await.unwrap();
 
     let auth_manager = Arc::new(AuthManager::new(db.clone()));
-    let proxy = LlmProxy::new(db.clone(), auth_manager);
+    let stats: Arc<llm_gateway::stats::StatsCollector> = Arc::new(llm_gateway::stats::StatsCollector::new(db.clone()));
+    let proxy = LlmProxy::new(db.clone(), auth_manager, stats);
 
     let log_id = proxy.log_streaming_request(
         "key", "prov", "/v1/chat/completions",
@@ -987,7 +996,8 @@ async fn test_proxy_log_streaming_with_throttle() {
     db.create_provider_simple("prov", "Provider", "https://p.com", "openai", "api_key", Some("key"), None, None, None, "token", "refreshToken", "Authorization", "Bearer ", 86400, 1).await.unwrap();
 
     let auth_manager = Arc::new(AuthManager::new(db.clone()));
-    let proxy = LlmProxy::new(db.clone(), auth_manager);
+    let stats: Arc<llm_gateway::stats::StatsCollector> = Arc::new(llm_gateway::stats::StatsCollector::new(db.clone()));
+    let proxy = LlmProxy::new(db.clone(), auth_manager, stats);
 
     let _log_id = proxy.log_streaming_request(
         "key", "prov", "/v1/chat/completions",
@@ -1018,7 +1028,8 @@ async fn test_api_key_with_specific_providers() {
     db.create_provider_simple("anthropic", "Anthropic", "https://api.anthropic.com/v1", "openai", "api_key", Some("sk-key2"), None, None, None, "token", "refreshToken", "Authorization", "Bearer ", 86400, 1).await.unwrap();
 
     let auth_manager = Arc::new(AuthManager::new(db.clone()));
-    let proxy = LlmProxy::new(db.clone(), auth_manager);
+    let stats: Arc<llm_gateway::stats::StatsCollector> = Arc::new(llm_gateway::stats::StatsCollector::new(db.clone()));
+    let proxy = LlmProxy::new(db.clone(), auth_manager, stats);
 
     let allowed_providers = serde_json::from_str::<Vec<String>>(&serde_json::to_string(&vec!["openai".to_string()]).unwrap()).unwrap();
     for _ in 0..5 {

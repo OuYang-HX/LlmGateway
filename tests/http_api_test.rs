@@ -12,8 +12,8 @@ use axum_test::TestServer;
 async fn build_test_app() -> TestServer {
     let db = Arc::new(Database::new_in_memory().await.unwrap());
     let auth_manager = Arc::new(AuthManager::new(db.clone()));
-    let proxy = Arc::new(LlmProxy::new(db.clone(), auth_manager.clone()));
     let stats = Arc::new(StatsCollector::new(db.clone()));
+    let proxy = Arc::new(LlmProxy::new(db.clone(), auth_manager.clone(), stats.clone()));
 
     let state = AppState {
         db: db.clone(),
