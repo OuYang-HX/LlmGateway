@@ -544,8 +544,10 @@ async function loadTokenRateChart(){
                             display: true,
                             labels: { color: '#94a3b8', font: { size: 11 } },
                             onClick: function(e, legendItem, legend) {
-                                legend.toggleDataset(legendItem.datasetIndex);
-                                updateTokenRateLegend(this.chart);
+                                const idx = legendItem.datasetIndex;
+                                legend.chart.data.datasets[idx].hidden = !legend.chart.data.datasets[idx].hidden;
+                                legend.chart.update();
+                                updateTokenRateLegend(legend.chart);
                             }
                         },
                         tooltip: {
