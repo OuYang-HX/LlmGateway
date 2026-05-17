@@ -1065,6 +1065,19 @@ pub struct TokenRateParams {
     pub provider_id: Option<String>,
 }
 
+pub async fn get_top_provider(
+    State(state): State<AppState>,
+) -> impl IntoResponse {
+    match state.db.get_top_provider_by_usage().await {
+        Ok(Some(pid)) => Json(serde_json::json!({ "provider_id": pid })).into_response(),
+        Ok(None) => Json(serde_json::json!({ "provider_id": null })).into_response(),
+        Err(e) => {
+            tracing::error!("Failed to get top provider: {}", e);
+            (StatusCode::INTERNAL_SERVER_ERROR, Json(serde_json::json!({"error": e.to_string()}))).into_response()
+        }
+    }
+}
+
 #[derive(Debug, Deserialize)]
 pub struct UsageTrendParams {
     pub api_key_id: Option<String>,

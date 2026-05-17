@@ -383,7 +383,7 @@ pub async fn proxy_request(
                     ).await;
 
                     // Record usage for token rate tracking
-                    let _ = stats_collector.record_usage(prompt_tokens, completion_tokens).await;
+                    let _ = stats_collector.record_usage(&provider.id, prompt_tokens, completion_tokens).await;
                 });
 
                 let body_stream = tokio_stream::wrappers::ReceiverStream::new(rx);

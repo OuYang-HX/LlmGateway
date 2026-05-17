@@ -23,13 +23,13 @@ async fn test_stats_collector_record_usage_accumulates() {
     let collector = StatsCollector::new(db.clone());
 
     // Record several usage events
-    collector.record_usage(100, 200).await;
-    collector.record_usage(50, 75).await;
-    collector.record_usage(150, 300).await;
+    collector.record_usage("test-provider", 100, 200).await;
+    collector.record_usage("test-provider", 50, 75).await;
+    collector.record_usage("test-provider", 150, 300).await;
 
     // Take a snapshot - the window should contain all accumulated tokens
     // We can't directly inspect the window, but we can verify the snapshot was written
-    let result = collector.take_snapshot(None).await;
+    let result = collector.take_snapshot("test-provider").await;
     assert!(result.is_ok(), "Snapshot should succeed");
 
     // Verify the snapshot was persisted to the database
@@ -48,16 +48,16 @@ async fn test_stats_collector_window_resets_after_snapshot() {
     let collector = StatsCollector::new(db.clone());
 
     // Record usage
-    collector.record_usage(100, 200).await;
+    collector.record_usage("test-provider", 100, 200).await;
 
     // Take first snapshot
-    collector.take_snapshot(None).await.unwrap();
+    collector.take_snapshot("test-provider").await.unwrap();
 
     // Record more usage
-    collector.record_usage(500, 600).await;
+    collector.record_usage("test-provider", 500, 600).await;
 
     // Take second snapshot
-    collector.take_snapshot(None).await.unwrap();
+    collector.take_snapshot("test-provider").await.unwrap();
 
     // Should have 2 snapshots, each with different token counts
     let snapshots = db.get_token_rate_snapshots(None, "1970-01-01T00:00:00Z", 100).await.unwrap();
@@ -79,12 +79,12 @@ async fn test_stats_collector_snapshot_contains_elapsed_seconds() {
     let db = test_db().await;
     let collector = StatsCollector::new(db.clone());
 
-    collector.record_usage(100, 200).await;
+    collector.record_usage("test-provider", 100, 200).await;
 
     // Wait a bit to ensure elapsed > 0
     tokio::time::sleep(std::time::Duration::from_millis(100)).await;
 
-    collector.take_snapshot(None).await.unwrap();
+    collector.take_snapshot("test-provider").await.unwrap();
 
     let snapshots = db.get_token_rate_snapshots(None, "1970-01-01T00:00:00Z", 100).await.unwrap();
     assert_eq!(snapshots.len(), 1);
@@ -110,8 +110,8 @@ async fn test_stats_collector_elapsed_not_hardcoded_10_seconds() {
     let collector = StatsCollector::new(db.clone());
 
     // Record immediately (almost 0 elapsed)
-    collector.record_usage(1000, 2000).await;
-    collector.take_snapshot(None).await.unwrap();
+    collector.record_usage("test-provider", 1000, 2000).await;
+    collector.take_snapshot("test-provider").await.unwrap();
 
     let snapshots = db.get_token_rate_snapshots(None, "1970-01-01T00:00:00Z", 100).await.unwrap();
     let first_elapsed = snapshots[0].elapsed_seconds;
@@ -120,8 +120,8 @@ async fn test_stats_collector_elapsed_not_hardcoded_10_seconds() {
     tokio::time::sleep(std::time::Duration::from_millis(500)).await;
 
     // Record and snapshot again
-    collector.record_usage(1000, 2000).await;
-    collector.take_snapshot(None).await.unwrap();
+    collector.record_usage("test-provider", 1000, 2000).await;
+    collector.take_snapshot("test-provider").await.unwrap();
 
     let snapshots2 = db.get_token_rate_snapshots(None, "1970-01-01T00:00:00Z", 100).await.unwrap();
     let second_elapsed = snapshots2[1].elapsed_seconds;
@@ -143,8 +143,8 @@ async fn test_stats_collector_separate_prompt_and_completion() {
     let collector = StatsCollector::new(db.clone());
 
     // Only prompt tokens
-    collector.record_usage(1000, 0).await;
-    collector.take_snapshot(None).await.unwrap();
+    collector.record_usage("test-provider", 1000, 0).await;
+    collector.take_snapshot("test-provider").await.unwrap();
 
     let snapshots = db.get_token_rate_snapshots(None, "1970-01-01T00:00:00Z", 100).await.unwrap();
     assert_eq!(snapshots[0].prompt_tokens, 1000);
@@ -157,8 +157,8 @@ async fn test_stats_collector_separate_completion_only() {
     let collector = StatsCollector::new(db.clone());
 
     // Only completion tokens (e.g. from cached context)
-    collector.record_usage(0, 500).await;
-    collector.take_snapshot(None).await.unwrap();
+    collector.record_usage("test-provider", 0, 500).await;
+    collector.take_snapshot("test-provider").await.unwrap();
 
     let snapshots = db.get_token_rate_snapshots(None, "1970-01-01T00:00:00Z", 100).await.unwrap();
     assert_eq!(snapshots[0].prompt_tokens, 0);
@@ -173,8 +173,8 @@ async fn test_stats_collector_zero_tokens_still_snapshots() {
     let collector = StatsCollector::new(db.clone());
 
     // Record zero tokens (should still write a snapshot with 0 rates)
-    collector.record_usage(0, 0).await;
-    let result = collector.take_snapshot(None).await;
+    collector.record_usage("test-provider", 0, 0).await;
+    let result = collector.take_snapshot("test-provider").await;
     assert!(result.is_ok());
 
     let snapshots = db.get_token_rate_snapshots(None, "1970-01-01T00:00:00Z", 100).await.unwrap();
@@ -191,12 +191,12 @@ async fn test_stats_collector_rate_calculation_accurate() {
     let collector = StatsCollector::new(db.clone());
 
     // Simulate: 1000 tokens in 10 seconds = 100 tokens/s
-    collector.record_usage(600, 400).await;
+    collector.record_usage("test-provider", 600, 400).await;
 
     // Wait approximately 10 seconds
     tokio::time::sleep(std::time::Duration::from_secs(10)).await;
 
-    let rate = collector.take_snapshot(None).await.unwrap();
+    let rate = collector.take_snapshot("test-provider").await.unwrap();
 
     // Rate should be approximately 100 (600+400=1000, elapsed≈10s)
     // Allow some tolerance due to timing variation
@@ -213,9 +213,9 @@ async fn test_stats_collector_rate_calculation_fast_window() {
     let collector = StatsCollector::new(db.clone());
 
     // Very short window: 10 tokens in ~100ms = ~100 tokens/s
-    collector.record_usage(6, 4).await;
+    collector.record_usage("test-provider", 6, 4).await;
     tokio::time::sleep(std::time::Duration::from_millis(100)).await;
-    let rate = collector.take_snapshot(None).await.unwrap();
+    let rate = collector.take_snapshot("test-provider").await.unwrap();
 
     // Rate should be approximately 100
     assert!(
@@ -232,9 +232,9 @@ async fn test_database_token_rate_snapshot_has_elapsed_column() {
     let db = test_db().await;
     let collector = StatsCollector::new(db.clone());
 
-    collector.record_usage(100, 200).await;
+    collector.record_usage("test-provider", 100, 200).await;
     tokio::time::sleep(std::time::Duration::from_millis(50)).await;
-    collector.take_snapshot(None).await.unwrap();
+    collector.take_snapshot("test-provider").await.unwrap();
 
     // Query directly to verify the column exists and has a value
     let rows = sqlx::query_as::<_, (i64, Option<String>, f64, i64, i64, i64, f64, String)>(
@@ -272,7 +272,7 @@ async fn test_database_migration_adds_elapsed_seconds_column() {
     .unwrap(); // Column exists - query succeeds
 
     // Also verify we can INSERT with elapsed_seconds (proves the column works)
-    db.insert_token_rate_snapshot(None, 100.0, 50, 100, 5, 5.0).await.unwrap();
+    db.insert_token_rate_snapshot(Some("test-prov"), 100.0, 50, 100, 5, 5.0).await.unwrap();
     let snapshots = db.get_token_rate_snapshots(None, "1970-01-01T00:00:00Z", 100).await.unwrap();
     assert_eq!(snapshots.len(), 1);
     assert_eq!(snapshots[0].elapsed_seconds, 5.0);
@@ -285,8 +285,8 @@ async fn test_stats_collector_snapshot_time_is_utc_iso_format() {
     let db = test_db().await;
     let collector = StatsCollector::new(db.clone());
 
-    collector.record_usage(10, 20).await;
-    collector.take_snapshot(None).await.unwrap();
+    collector.record_usage("test-provider", 10, 20).await;
+    collector.take_snapshot("test-provider").await.unwrap();
 
     let snapshots = db.get_token_rate_snapshots(None, "1970-01-01T00:00:00Z", 100).await.unwrap();
     assert_eq!(snapshots.len(), 1);
@@ -312,9 +312,9 @@ async fn test_stats_collector_get_current_rate_returns_data() {
     let db = test_db().await;
     let collector = StatsCollector::new(db.clone());
 
-    collector.record_usage(100, 200).await;
+    collector.record_usage("test-provider", 100, 200).await;
     tokio::time::sleep(std::time::Duration::from_millis(50)).await;
-    collector.take_snapshot(None).await.unwrap();
+    collector.take_snapshot("test-provider").await.unwrap();
 
     let rates = collector.get_current_rate(None).await.unwrap();
     assert!(!rates.is_empty());
@@ -329,11 +329,11 @@ async fn test_stats_collector_snapshot_provider_id() {
     let db = test_db().await;
     let collector = StatsCollector::new(db.clone());
 
-    collector.record_usage(100, 200).await;
-    collector.take_snapshot(Some("openai")).await.unwrap();
+    collector.record_usage("openai", 100, 200).await;
+    collector.take_snapshot("openai").await.unwrap();
 
-    collector.record_usage(50, 75).await;
-    collector.take_snapshot(Some("anthropic")).await.unwrap();
+    collector.record_usage("anthropic", 50, 75).await;
+    collector.take_snapshot("anthropic").await.unwrap();
 
     let openai_rates = collector.get_current_rate(Some("openai")).await.unwrap();
     assert_eq!(openai_rates.len(), 1);

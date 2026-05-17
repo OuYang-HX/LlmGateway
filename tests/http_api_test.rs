@@ -1,6 +1,6 @@
 use axum::{
     Router,
-    routing::{get, post},
+    routing::{get, post, delete},
     http::{Method, StatusCode},
 };
 use llm_gateway::{AppState, db::Database, auth::AuthManager, proxy::LlmProxy, stats::StatsCollector};
@@ -31,15 +31,24 @@ async fn build_test_app() -> TestServer {
         .route("/", get(llm_gateway::dashboard::dashboard_page))
         .route("/dashboard", get(llm_gateway::dashboard::dashboard_page))
         .route("/api/v1/api-keys", post(llm_gateway::api::create_api_key).get(llm_gateway::api::list_api_keys))
-        .route("/api/v1/api-keys/:id", get(llm_gateway::api::get_api_key).delete(llm_gateway::api::delete_api_key).post(llm_gateway::api::regenerate_api_key))
+        .route("/api/v1/api-keys/:id", get(llm_gateway::api::get_api_key).delete(llm_gateway::api::delete_api_key).post(llm_gateway::api::regenerate_api_key).put(llm_gateway::api::update_api_key))
         .route("/api/v1/providers", post(llm_gateway::api::create_provider).get(llm_gateway::api::list_providers))
-        .route("/api/v1/providers/:id", get(llm_gateway::api::get_provider).delete(llm_gateway::api::delete_provider).put(llm_gateway::api::update_provider))
         .route("/api/v1/providers/batch-update-status", post(llm_gateway::api::batch_update_provider_status))
+        .route("/api/v1/providers/:id", get(llm_gateway::api::get_provider).delete(llm_gateway::api::delete_provider).put(llm_gateway::api::update_provider))
+        .route("/api/v1/providers/:id/refresh-token", post(llm_gateway::api::refresh_provider_token))
+        .route("/api/v1/providers/:id/models", post(llm_gateway::api::add_provider_model).get(llm_gateway::api::list_provider_models))
+        .route("/api/v1/providers/:id/models/:model_id", delete(llm_gateway::api::remove_provider_model))
+        .route("/api/v1/providers/:id/models/:model_id/test", post(llm_gateway::api::test_provider_model))
+        .route("/api/v1/providers/:id/models/test-all", post(llm_gateway::api::test_all_provider_models))
+        .route("/api/v1/models", post(llm_gateway::api::create_model).get(llm_gateway::api::list_models))
         .route("/api/v1/stats", get(llm_gateway::api::get_stats))
         .route("/api/v1/stats/bucketed", get(llm_gateway::api::get_time_bucketed_stats))
         .route("/api/v1/logs", get(llm_gateway::api::get_request_logs))
+        .route("/api/v1/logs/batch-delete", post(llm_gateway::api::delete_request_logs_batch))
+        .route("/api/v1/logs/delete-all", post(llm_gateway::api::delete_all_request_logs))
         .route("/api/v1/dashboard/summary", get(llm_gateway::api::get_dashboard_summary))
         .route("/api/v1/dashboard/health", get(llm_gateway::api::get_provider_health))
+        .route("/api/v1/dashboard/top-provider", get(llm_gateway::api::get_top_provider))
         .route("/api/v1/stats/by-api-key", get(llm_gateway::api::get_stats_by_api_key))
         .route("/api/v1/stats/usage-trend", get(llm_gateway::api::get_usage_trend))
         .route("/api/v1/dashboard/token-rate", get(llm_gateway::api::get_token_rate))
@@ -1281,4 +1290,65 @@ async fn test_logs_with_search_and_provider_filter() {
     assert_eq!(resp.status_code(), StatusCode::OK);
     let body: serde_json::Value = resp.json();
     assert!(body.get("logs").is_some());
+}
+
+
+// ==================== Additional HTTP API tests ====================
+
+#[tokio::test]
+async fn test_http_top_provider_empty() {
+    let server = build_test_app().await;
+    let resp = server.get("/api/v1/dashboard/top-provider").await;
+    assert_eq!(resp.status_code(), StatusCode::OK);
+    let v: serde_json::Value = resp.json();
+    assert!(v["provider_id"].is_null());
+}
+
+#[tokio::test]
+async fn test_http_provider_models_crud() {
+    let server = build_test_app().await;
+    let resp = server.post("/api/v1/providers")
+        .json(&serde_json::json!({"id":"mprov","name":"ModelProv","base_url":"https://m.com","auth_type":"api_key","api_key":"sk-test","weight":1}))
+        .await;
+    let pid_val: serde_json::Value = resp.json();
+    let pid: &str = pid_val["id"].as_str().unwrap();
+    let resp = server.post(&format!("/api/v1/providers/{}/models", pid))
+        .json(&serde_json::json!({"model_id":"gpt-4"}))
+        .await;
+    assert!(resp.status_code() == StatusCode::OK || resp.status_code() == StatusCode::CREATED);
+    let resp = server.get(&format!("/api/v1/providers/{}/models", pid)).await;
+    assert_eq!(resp.status_code(), StatusCode::OK);
+    let resp = server.delete(&format!("/api/v1/providers/{}/models/gpt-4", pid)).await;
+    assert_eq!(resp.status_code(), StatusCode::OK);
+}
+
+#[tokio::test]
+async fn test_http_logs_delete_all() {
+    let server = build_test_app().await;
+    let resp = server.post("/api/v1/logs/delete-all").await;
+    assert!(resp.status_code() == StatusCode::OK || resp.status_code() == StatusCode::NOT_FOUND);
+}
+
+#[tokio::test]
+async fn test_http_batch_enable_providers() {
+    let server = build_test_app().await;
+    let mut ids = Vec::new();
+    for id in ["be1", "be2"] {
+        let resp = server.post("/api/v1/providers")
+            .json(&serde_json::json!({"id":id,"name":id,"base_url":"https://b.com","auth_type":"api_key","api_key":"sk","weight":1}))
+            .await;
+        let id_val: serde_json::Value = resp.json();
+        ids.push(id_val["id"].as_str().unwrap().to_string());
+    }
+    let resp = server.post("/api/v1/providers/batch-update-status")
+        .json(&serde_json::json!({"ids":ids,"enable":true}))
+        .await;
+    assert_eq!(resp.status_code(), StatusCode::OK);
+}
+
+#[tokio::test]
+async fn test_http_unified_models_list() {
+    let server = build_test_app().await;
+    let resp = server.get("/api/v1/models").await;
+    assert_eq!(resp.status_code(), StatusCode::OK);
 }

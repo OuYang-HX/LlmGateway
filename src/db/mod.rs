@@ -1279,7 +1279,7 @@ impl Database {
         limit: i64,
     ) -> Result<Vec<TokenRateRow>, sqlx::Error> {
         let mut query = String::from(
-            "SELECT * FROM token_rate_snapshots WHERE snapshot_time >= ?"
+            "SELECT * FROM token_rate_snapshots WHERE snapshot_time >= ? AND provider_id IS NOT NULL"
         );
         if provider_id.is_some() { query.push_str(" AND provider_id = ?"); }
         query.push_str(" ORDER BY snapshot_time ASC LIMIT ?");
@@ -1303,6 +1303,15 @@ impl Database {
         .await?;
 
         Ok(result.rows_affected())
+    }
+
+    /// Get the provider with highest token usage in the last hour
+    pub async fn get_top_provider_by_usage(&self) -> Result<Option<String>, sqlx::Error> {
+        let start = (chrono::Utc::now() - chrono::Duration::hours(1)).format("%Y-%m-%dT%H:%M:%SZ").to_string();
+        let result: Option<(String, i64)> = sqlx::query_as(
+            r#"SELECT provider_id, SUM(prompt_tokens + completion_tokens) as total_tokens FROM token_rate_snapshots WHERE snapshot_time >= ? AND provider_id IS NOT NULL GROUP BY provider_id ORDER BY total_tokens DESC LIMIT 1"#
+        ).bind(&start).fetch_optional(&self.pool).await?;
+        Ok(result.map(|(id, _)| id))
     }
 
     /// Get dashboard summary

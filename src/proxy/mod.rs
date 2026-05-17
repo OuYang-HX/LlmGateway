@@ -182,7 +182,7 @@ impl LlmProxy {
             .unwrap_or((0, 0, 0));
 
         // Record usage for token rate tracking
-        let _ = self.stats_collector.record_usage(prompt_tokens, completion_tokens).await;
+        let _ = self.stats_collector.record_usage(&provider.id, prompt_tokens, completion_tokens).await;
 
         // Extract model from response
         let response_model = serde_json::from_slice::<serde_json::Value>(&response_body)

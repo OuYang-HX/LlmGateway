@@ -442,8 +442,8 @@ async fn test_get_stats_empty_database() {
 async fn test_insert_and_get_token_rate_snapshots() {
     let db = test_db().await;
 
-    db.insert_token_rate_snapshot(None, 150.5, 100, 50, 10, 10.0).await.unwrap();
-    db.insert_token_rate_snapshot(None, 200.0, 130, 70, 12, 10.0).await.unwrap();
+    db.insert_token_rate_snapshot(Some("test-prov"), 150.5, 100, 50, 10, 10.0).await.unwrap();
+    db.insert_token_rate_snapshot(Some("test-prov"), 200.0, 130, 70, 12, 10.0).await.unwrap();
 
     let now = chrono::Utc::now().format("%Y-%m-%d %H:%M:%S").to_string();
     let snapshots = db.get_token_rate_snapshots(None, &now, 100).await.unwrap();
@@ -458,7 +458,7 @@ async fn test_token_rate_snapshot_by_provider() {
     db.create_provider_simple("prov", "Provider", "https://p.com", "openai", "api_key", Some("key"), None, None, None, "token", "refreshToken", "Authorization", "Bearer ", 86400, 1).await.unwrap();
 
     db.insert_token_rate_snapshot(Some("prov"), 100.0, 60, 40, 5, 10.0).await.unwrap();
-    db.insert_token_rate_snapshot(None, 50.0, 30, 20, 3, 10.0).await.unwrap();
+    db.insert_token_rate_snapshot(Some("test-prov"), 50.0, 30, 20, 3, 10.0).await.unwrap();
 
     let now = chrono::Utc::now().format("%Y-%m-%d %H:%M:%S").to_string();
     let prov_snapshots = db.get_token_rate_snapshots(Some("prov"), &now, 100).await.unwrap();
@@ -470,7 +470,7 @@ async fn test_token_rate_snapshot_by_provider() {
 async fn test_cleanup_old_snapshots() {
     let db = test_db().await;
 
-    db.insert_token_rate_snapshot(None, 100.0, 50, 50, 5, 10.0).await.unwrap();
+    db.insert_token_rate_snapshot(Some("test-prov"), 100.0, 50, 50, 5, 10.0).await.unwrap();
 
     // Cleanup with a future time should delete the snapshot
     // snapshot_time is stored as UTC ISO ("2024-01-01T12:00:00Z")
@@ -637,10 +637,11 @@ async fn test_stats_collector_record_usage() {
     let db = test_db().await;
     let collector = StatsCollector::new(db.clone());
 
-    collector.record_usage(100, 50).await;
-    collector.record_usage(200, 100).await;
+    collector.record_usage("test-provider", 100, 50).await;
+    collector.record_usage("test-provider", 200, 100).await;
 
-    let window = collector.current_window.read().await;
+    let windows = collector.windows.read().await;
+    let window = windows.get("test-provider").expect("no window");
     assert_eq!(window.prompt_tokens, 300);
     assert_eq!(window.completion_tokens, 150);
     assert_eq!(window.request_count, 2);
@@ -651,12 +652,13 @@ async fn test_stats_collector_take_snapshot() {
     let db = test_db().await;
     let collector = StatsCollector::new(db.clone());
 
-    collector.record_usage(1000, 500).await;
+    collector.record_usage("test-provider", 1000, 500).await;
 
-    let rate = collector.take_snapshot(None).await.unwrap();
+    let rate = collector.take_snapshot("test-provider").await.unwrap();
     assert!(rate > 0.0, "Token rate should be positive");
 
-    let window = collector.current_window.read().await;
+    let windows = collector.windows.read().await;
+    let window = windows.get("test-provider").expect("no window");
     assert_eq!(window.prompt_tokens, 0);
     assert_eq!(window.completion_tokens, 0);
     assert_eq!(window.request_count, 0);
@@ -667,13 +669,13 @@ async fn test_stats_collector_multiple_snapshots() {
     let db = test_db().await;
     let collector = StatsCollector::new(db.clone());
 
-    collector.record_usage(100, 50).await;
-    let rate1 = collector.take_snapshot(None).await.unwrap();
+    collector.record_usage("test-provider", 100, 50).await;
+    let rate1 = collector.take_snapshot("test-provider").await.unwrap();
     assert!(rate1 > 0.0);
 
     // After snapshot, window is reset
-    collector.record_usage(200, 100).await;
-    let rate2 = collector.take_snapshot(None).await.unwrap();
+    collector.record_usage("test-provider", 200, 100).await;
+    let rate2 = collector.take_snapshot("test-provider").await.unwrap();
     assert!(rate2 > 0.0);
 
     // Verify both snapshots are in the database
