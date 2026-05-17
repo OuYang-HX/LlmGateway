@@ -320,26 +320,32 @@ do_uninstall() {
 show_help() {
     cat << EOF
 
-LLM Gateway 部署管理脚本
+$(echo -e "${G}")LLM Gateway 部署管理脚本$(echo -e "${NC}")
 
-用法: bash deploy.sh <命令>
+$(echo -e "${B}")用法:$(echo -e "${NC}")  bash deploy.sh <命令> [参数]
 
-命令:
-  setup      首次部署（安装 Rust + 编译 + 创建服务 + 启动）
-  update     编译 + 重启（日常更新最常用）
-  build      仅编译
-  start      启动服务
-  stop       停止服务
-  restart    重启服务
-  status     查看服务状态 + 端口监听
-  logs [N]   查看最近 N 条日志（默认 50，持续跟踪）
-  uninstall  卸载服务（保留数据库）
+$(echo -e "${B}")命令:$(echo -e "${NC}")
+  $(echo -e "${G}")setup$(echo -e "${NC}")      首次部署（安装 Rust + 编译 + 创建 systemd 服务 + 启动）
+  $(echo -e "${G}")update$(echo -e "${NC}")     拉取代码 + 编译 + 重启（日常更新最常用）
+  $(echo -e "${G}")build$(echo -e "${NC}")      仅编译（编译期间服务不受影响）
+  $(echo -e "${G}")start$(echo -e "${NC}")      启动服务
+  $(echo -e "${G}")stop$(echo -e "${NC}")       停止服务
+  $(echo -e "${G}")restart$(echo -e "${NC}")    重启服务
+  $(echo -e "${G}")status$(echo -e "${NC}")     查看服务状态 + 端口监听
+  $(echo -e "${G}")logs$(echo -e "${NC}") [N]   查看最近 N 条日志（默认 50，持续跟踪）
+  $(echo -e "${G}")uninstall$(echo -e "${NC}")  卸载服务（保留数据库）
 
-快速开始:
+$(echo -e "${B}")说明:$(echo -e "${NC}")
+  • 编译期间服务不受影响，只有 restart 才切换到新版本
+  • 服务名: ${SERVICE_NAME}，开机自启
+  • 配置文件: config.toml（首次 setup 自动从 config.example.toml 创建）
+  • 数据库: llm_gateway.db（uninstall 不会删除）
+
+$(echo -e "${B}")快速开始:$(echo -e "${NC}")
   git clone <repo-url> && cd LlmGateway
   bash deploy.sh setup
 
-日常更新:
+$(echo -e "${B}")日常更新:$(echo -e "${NC}")
   bash deploy.sh update
 
 EOF
