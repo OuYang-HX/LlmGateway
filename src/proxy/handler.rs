@@ -6,7 +6,46 @@ use axum::{
     Json,
 };
 use regex::Regex;
+use std::sync::LazyLock;
 use crate::AppState;
+
+/// Pre-compiled regex for detecting rate-limit / quota-exhausted errors.
+static RATE_LIMIT_REGEX: LazyLock<Regex> = LazyLock::new(|| {
+    Regex::new(r"(?i)rate.?limit|insufficient.?quota|quota.?exceed|balance.?insufficient|credits?.deplet|NotEnough|capacity.?exceed|throttl|too.?many.?requests|usage.?limit|billing.?limit|plan.?limit|exceeds?.limit|limit.?exceed").unwrap()
+});
+
+/// Check if an error message indicates a rate-limit / quota-exhausted / throttling error
+/// that should be converted to HTTP 429 so that clients (like pi-coding-agent) auto-retry.
+fn is_rate_limit_error(message: &str) -> bool {
+    // Common patterns from various providers:
+    // - Xunfei: NotEnoughCvError, code: 11210
+    // - OpenAI: rate_limit_exceeded, insufficient_quota
+    // - Generic: quota exceeded, balance insufficient, credits depleted, etc.
+    RATE_LIMIT_REGEX.is_match(message)
+}
+
+/// Build a standard OpenAI-compatible error response JSON for rate limit errors.
+/// The message includes "rate_limit" keyword so that pi-coding-agent's _isRetryableError regex matches.
+fn build_rate_limit_error_json(original_message: &str) -> serde_json::Value {
+    serde_json::json!({
+        "error": {
+            "message": format!("rate_limit error from upstream provider: {}", original_message),
+            "type": "rate_limit_error",
+            "code": "rate_limit_exceeded"
+        }
+    })
+}
+
+/// Build a standard OpenAI-compatible error response JSON for server errors.
+fn build_server_error_json(original_message: &str) -> serde_json::Value {
+    serde_json::json!({
+        "error": {
+            "message": format!("server_error from upstream provider: {}", original_message),
+            "type": "server_error",
+            "code": "upstream_error"
+        }
+    })
+}
 
 /// Strip thinking/reasoning tags from LLM response content (e.g. <think>...</think>, <tool_call>...</think>)
 fn strip_thinking_tags(content: &str) -> String {
@@ -251,9 +290,48 @@ pub async fn proxy_request(
 
         match response {
             Ok(upstream_response) => {
-                let status = upstream_response.status();
-                let status_code = status.as_u16() as i32;
-                let is_throttled = status_code == 429;
+                let upstream_status = upstream_response.status(); // reqwest::StatusCode
+
+                // === Handle non-OK upstream responses ===
+                // When upstream returns an error HTTP status, we read the body,
+                // check for rate-limit/quota errors, and convert to 429 or 503
+                // so that clients (like pi-coding-agent) will auto-retry.
+                if !upstream_status.is_success() {
+                    let status_code = upstream_status.as_u16() as i32;
+                    let error_body = upstream_response.bytes().await.unwrap_or_default();
+                    let error_text = String::from_utf8_lossy(&error_body).to_string();
+
+                    // Check if this is a rate-limit / quota error that should become 429
+                    let (final_status, final_body) = if is_rate_limit_error(&error_text) {
+                        tracing::warn!(
+                            "Upstream rate-limit/quota error (status {}), converting to 429: {}",
+                            status_code,
+                            &error_text[..error_text.len().min(200)]
+                        );
+                        let error_json = build_rate_limit_error_json(&error_text);
+                        (StatusCode::TOO_MANY_REQUESTS, serde_json::to_string(&error_json).unwrap_or_default())
+                    } else if status_code >= 500 {
+                        // Server errors: convert to 503 so clients retry
+                        tracing::warn!(
+                            "Upstream server error (status {}), converting to 503: {}",
+                            status_code,
+                            &error_text[..error_text.len().min(200)]
+                        );
+                        let error_json = build_server_error_json(&error_text);
+                        (StatusCode::SERVICE_UNAVAILABLE, serde_json::to_string(&error_json).unwrap_or_default())
+                    } else {
+                        // Other client errors (400, 401, 403, 404, etc.): pass through as-is
+                        (upstream_status, error_text)
+                    };
+
+                    return (
+                        final_status,
+                        [("content-type", "application/json")],
+                        final_body,
+                    ).into_response();
+                }
+
+                // === Upstream returned 200 OK — stream SSE to client ===
                 let stream = upstream_response.bytes_stream();
                 let (tx, rx) = tokio::sync::mpsc::channel(100);
 
@@ -279,6 +357,8 @@ pub async fn proxy_request(
                     let mut finish_reason: Option<String> = None;
                     let start = std::time::Instant::now();
                     let mut raw_sse = String::new();
+                    // Track if we detected a rate-limit/quota error inside the SSE stream
+                    let mut sse_rate_limit_error: Option<String> = None;
 
                     while let Some(chunk) = stream.next().await {
                         match chunk {
@@ -294,6 +374,21 @@ pub async fn proxy_request(
                                     if json_str == "[DONE]" { continue; }
 
                                     if let Ok(v) = serde_json::from_str::<serde_json::Value>(json_str) {
+                                        // Check for error objects in SSE stream
+                                        // Some providers return HTTP 200 but include errors in the stream
+                                        if let Some(error_obj) = v.get("error") {
+                                            let error_msg = error_obj.get("message")
+                                                .and_then(|m| m.as_str())
+                                                .unwrap_or("");
+                                            let error_code = error_obj.get("code")
+                                                .and_then(|c| c.as_str())
+                                                .unwrap_or("");
+                                            let error_str = format!("{} {}", error_code, error_msg);
+                                            if is_rate_limit_error(&error_str) {
+                                                sse_rate_limit_error = Some(error_msg.to_string());
+                                            }
+                                        }
+
                                         // Extract usage from final chunk
                                         if let Some(u) = v.get("usage") {
                                             prompt_tokens = u.get("prompt_tokens").and_then(|v| v.as_i64()).unwrap_or(0);
@@ -343,6 +438,15 @@ pub async fn proxy_request(
                     // Strip thinking tags from accumulated delta content
                     let clean_content = strip_thinking_tags(&all_delta_content);
 
+                    // If we detected a rate-limit error in the SSE stream and got no useful content,
+                    // log it with a warning so the operator knows the upstream is throttling
+                    if let Some(ref err) = sse_rate_limit_error {
+                        tracing::warn!(
+                            "Rate-limit error detected in SSE stream (no content produced): {}",
+                            err
+                        );
+                    }
+
                     // Build a non-streaming style response body for QA
                     let reconstructed = serde_json::json!({
                         "id": response_id.unwrap_or_else(|| format!("chatcmpl-{}", uuid::Uuid::new_v4())),
@@ -362,6 +466,7 @@ pub async fn proxy_request(
                         }
                     });
 
+                    let log_status_code = if sse_rate_limit_error.is_some() { 429i32 } else { 200i32 };
                     let _ = db.insert_request_log(
                         &api_key_id,
                         &provider_id,
@@ -370,7 +475,7 @@ pub async fn proxy_request(
                         "POST",
                         None,
                         request_body_str.as_deref(),
-                        Some(status_code),
+                        Some(log_status_code),
                         None,
                         Some(&reconstructed.to_string()),
                         prompt_tokens,
@@ -378,8 +483,8 @@ pub async fn proxy_request(
                         total_tokens,
                         Some(duration_ms),
                         true,
-                        is_throttled,
-                        None,
+                        sse_rate_limit_error.is_some(),
+                        sse_rate_limit_error.as_deref(),
                     ).await;
 
                     // Record usage for token rate tracking
@@ -388,7 +493,7 @@ pub async fn proxy_request(
 
                 let body_stream = tokio_stream::wrappers::ReceiverStream::new(rx);
                 let response = Response::builder()
-                    .status(status)
+                    .status(upstream_status)
                     .header("content-type", "text/event-stream")
                     .header("cache-control", "no-cache")
                     .header("connection", "keep-alive")
@@ -416,11 +521,45 @@ pub async fn proxy_request(
 
     match response {
         Ok(proxy_response) => {
-            let mut builder = Response::builder().status(StatusCode::from_u16(proxy_response.status_code as u16).unwrap_or(StatusCode::INTERNAL_SERVER_ERROR));
-            if let Some(content_type) = proxy_response.content_type {
+            let body_text = String::from_utf8_lossy(&proxy_response.body).to_string();
+
+            // Check if the response body contains a rate-limit / quota error
+            // even if the HTTP status code is not 429.
+            // Some providers return 200 or other codes with error details in the body.
+            let is_rate_limit = is_rate_limit_error(&body_text);
+
+            let (final_status, final_body) = if is_rate_limit && proxy_response.status_code != 429 {
+                tracing::warn!(
+                    "Non-streaming rate-limit/quota error detected in response body (status {}), converting to 429: {}",
+                    proxy_response.status_code,
+                    &body_text[..body_text.len().min(200)]
+                );
+                let error_json = build_rate_limit_error_json(&body_text);
+                (StatusCode::TOO_MANY_REQUESTS, serde_json::to_string(&error_json).unwrap_or_default().into_bytes())
+            } else if proxy_response.status_code >= 500 && proxy_response.status_code != 429 {
+                // Server errors: convert to 503 so clients retry
+                tracing::warn!(
+                    "Non-streaming server error (status {}), converting to 503: {}",
+                    proxy_response.status_code,
+                    &body_text[..body_text.len().min(200)]
+                );
+                let error_json = build_server_error_json(&body_text);
+                (StatusCode::SERVICE_UNAVAILABLE, serde_json::to_string(&error_json).unwrap_or_default().into_bytes())
+            } else {
+                let status = StatusCode::from_u16(proxy_response.status_code as u16)
+                    .unwrap_or(StatusCode::INTERNAL_SERVER_ERROR);
+                (status, proxy_response.body.to_vec())
+            };
+
+            let mut builder = Response::builder().status(final_status);
+            // Set content-type to application/json for error responses we generated
+            // (rate-limit conversions and server-error conversions)
+            if (is_rate_limit && proxy_response.status_code != 429) || (proxy_response.status_code >= 500 && proxy_response.status_code != 429) {
+                builder = builder.header("content-type", "application/json");
+            } else if let Some(content_type) = proxy_response.content_type {
                 builder = builder.header("content-type", content_type);
             }
-            builder.body(Body::from(proxy_response.body)).unwrap().into_response()
+            builder.body(Body::from(final_body)).unwrap().into_response()
         }
         Err(e) => {
             tracing::error!("Proxy error: {}", e);
