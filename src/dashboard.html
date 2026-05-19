@@ -415,8 +415,8 @@
     <input type="hidden" id="edit-quota-type-old">
     <div class="form-group"><label>服务商</label><input id="edit-quota-provider-name" readonly></div>
     <div class="form-group"><label>窗口模式</label><select id="edit-quota-mode" onchange="toggleEditWindowStart()"><option value="fixed">固定窗口</option><option value="sliding">滑动窗口</option></select></div>
-    <div class="form-group"><label>窗口大小</label><input id="edit-quota-size" placeholder="如 5h, 7d, 30d" style="width:120px"></div>
-    <div class="form-group" id="edit-quota-start-row"><label>窗口起始时间</label><input id="edit-quota-start" type="datetime-local" style="width:100%"><small style="color:#64748b">留空则自动对齐到自然边界，手动设置可覆盖起始时间</small></div>
+    <div class="form-group"><label>窗口大小</label><input id="edit-quota-size" placeholder="如 5h, 7d, 30d" style="width:120px" onchange="updateEditWindowPeriod()" oninput="updateEditWindowPeriod()"></div>
+    <div class="form-group" id="edit-quota-start-row"><label>窗口起始时间</label><input id="edit-quota-start" type="datetime-local" style="width:100%" onchange="updateEditWindowPeriod()" oninput="updateEditWindowPeriod()"><small style="color:#64748b">留空则自动对齐到自然边界，手动设置可覆盖起始时间</small></div>
     <div class="form-group"><label>限制次数</label><input id="edit-quota-limit" type="number" placeholder="如 500"></div>
     <div class="form-group"><label>状态</label><select id="edit-quota-enabled"><option value="true">启用</option><option value="false">停用</option></select></div>
     <hr style="border-color:#334155;margin:16px 0">
@@ -2308,6 +2308,35 @@ function toggleEditWindowStart(){
     const mode=document.getElementById('edit-quota-mode').value;
     if(mode==='fixed'){document.getElementById('edit-quota-start-row').style.display='';}
     else{document.getElementById('edit-quota-start-row').style.display='none';document.getElementById('edit-quota-start').value='';}
+    updateEditWindowPeriod();
+}
+
+function updateEditWindowPeriod(){
+    const mode=document.getElementById('edit-quota-mode').value;
+    const size=document.getElementById('edit-quota-size').value.trim();
+    const startVal=document.getElementById('edit-quota-start').value;
+    if(mode==='fixed'&&startVal){
+        // User set a custom start time → compute end from start + window_size
+        document.getElementById('edit-quota-period-start').value=startVal;
+        const d=new Date(startVal);
+        if(size.endsWith('h')){d.setHours(d.getHours()+parseInt(size));}
+        else if(size.endsWith('d')){d.setDate(d.getDate()+parseInt(size));}
+        document.getElementById('edit-quota-period-end').value=d.toISOString().substring(0,16);
+    }else if(mode==='fixed'&&!startVal){
+        // No override → show auto-aligned period (keep existing values from server)
+        // Don't overwrite - user just cleared the field, the server will auto-align
+        document.getElementById('edit-quota-period-start').value='';
+        document.getElementById('edit-quota-period-end').value='自动对齐';
+    }else{
+        // Sliding window: period is always (now - size) → now
+        const now=new Date();
+        const end=now.toISOString().substring(0,16);
+        const start=new Date(now);
+        if(size.endsWith('h')){start.setHours(start.getHours()-parseInt(size));}
+        else if(size.endsWith('d')){start.setDate(start.getDate()-parseInt(size));}
+        document.getElementById('edit-quota-period-start').value=start.toISOString().substring(0,16);
+        document.getElementById('edit-quota-period-end').value=end;
+    }
 }
 
 function saveEditQuota(){
