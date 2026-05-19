@@ -1869,6 +1869,7 @@ function fmtTime(utcStr) {
 // ========== 日志详情 (QA) ==========
 let currentLogData = null;
 let currentLogMode = 'qa';
+let qaCopyStore = [];
 
 async function showLogDetail(logId) {
     try {
@@ -2007,12 +2008,14 @@ function renderLogDetailQA(log) {
     
     // Question
     if (question) {
-        html += `<div class="qa-section"><h4>❓ Question（用户输入）</h4><div class="qa-content">${escapeHtml(question)}</div></div>`;
+        const qIdx = qaCopyStore.push(question) - 1;
+        html += `<div class="qa-section"><div style="display:flex;justify-content:space-between;align-items:center"><h4>❓ Question（用户输入）</h4><button class="btn btn-sm" onclick="copyQaText(this,${qIdx})">📋 复制</button></div><div class="qa-content">${escapeHtml(question)}</div></div>`;
     }
     
     // Answer
     if (answer) {
-        html += `<div class="qa-section"><h4>💡 Answer（模型回复）</h4><div class="qa-content">${escapeHtml(answer)}</div></div>`;
+        const aIdx = qaCopyStore.push(answer) - 1;
+        html += `<div class="qa-section"><div style="display:flex;justify-content:space-between;align-items:center"><h4>💡 Answer（模型回复）</h4><button class="btn btn-sm" onclick="copyQaText(this,${aIdx})">📋 复制</button></div><div class="qa-content">${escapeHtml(answer)}</div></div>`;
     }
     
     // 如果没有提取到 QA，显示原始请求/响应
@@ -2094,6 +2097,23 @@ function copyJson(btn, text) {
     }).catch(() => alert('复制失败'));
 }
 
+function copyText(btn, text) {
+    navigator.clipboard.writeText(text).then(() => {
+        const orig = btn.textContent;
+        btn.textContent = '✅ 已复制';
+        setTimeout(() => btn.textContent = orig, 1500);
+    }).catch(() => alert('复制失败'));
+}
+
+function copyQaText(btn, idx) {
+    const text = qaCopyStore[idx] || '';
+    navigator.clipboard.writeText(text).then(() => {
+        const orig = btn.textContent;
+        btn.textContent = '✅ 已复制';
+        setTimeout(() => btn.textContent = orig, 1500);
+    }).catch(() => alert('复制失败'));
+}
+
 function closeLogDetailModal() {
     document.getElementById('log-detail-modal').classList.add('hidden');
     currentLogData = null;
@@ -2125,6 +2145,15 @@ function extractAnswer(responseJson, providerConfig) {
     // If empty, try reasoning path (for streaming responses)
     if (!answer) {
         answer = extractByPath(responseJson, reasoningPath);
+    }
+    // If still empty, check for tool_calls
+    if (!answer) {
+        try {
+            const choices = responseJson.choices;
+            if (choices && choices[0] && choices[0].message && choices[0].message.tool_calls) {
+                answer = JSON.stringify(choices[0].message.tool_calls, null, 2);
+            }
+        } catch(e) {}
     }
     return answer;
 }
