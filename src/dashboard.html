@@ -1983,10 +1983,30 @@ function renderLogDetailQA(log) {
         const extractedAnswer = extractAnswer(resJson, providerConfig);
         if (extractedAnswer) {
             answer = extractedAnswer;
+        } else {
+            // extractAnswer returned nothing - check for meaningful partial info
+            const choices = resJson.choices;
+            if (choices && choices[0]) {
+                const finishReason = choices[0].finish_reason;
+                const msg = choices[0].message;
+                if (finishReason === 'tool_calls' && msg && msg.content === '' && !msg.tool_calls) {
+                    answer = '[模型调用了工具（tool_calls），但工具调用详情在流式传输中未完整保存]';
+                }
+            }
         }
     }
     if (!answer && log.response_body) {
-        answer = log.response_body;
+        // Only show raw JSON if it's not a simple empty-content response
+        try {
+            const rb = JSON.parse(log.response_body);
+            if (rb.choices && rb.choices[0] && rb.choices[0].message && rb.choices[0].message.content === '') {
+                answer = '[模型回复内容为空]';
+            } else {
+                answer = log.response_body;
+            }
+        } catch(e) {
+            answer = log.response_body;
+        }
     }
     
     // 构建详情 HTML
