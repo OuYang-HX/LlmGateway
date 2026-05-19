@@ -2290,7 +2290,8 @@ function openEditQuotaModal(providerId,quotaType,windowMode,windowSize,windowSta
         const d=new Date(periodStart.replace(' ','T'));
         if(windowSize.endsWith('h')){d.setHours(d.getHours()+parseInt(windowSize));}
         else if(windowSize.endsWith('d')){d.setDate(d.getDate()+parseInt(windowSize));}
-        document.getElementById('edit-quota-period-end').value=d.toISOString().substring(0,16);
+        const pad=n=>String(n).padStart(2,'0');
+        document.getElementById('edit-quota-period-end').value=d.getFullYear()+'-'+pad(d.getMonth()+1)+'-'+pad(d.getDate())+'T'+pad(d.getHours())+':'+pad(d.getMinutes());
     }else{
         document.getElementById('edit-quota-period-end').value='';
     }
@@ -2315,27 +2316,29 @@ function updateEditWindowPeriod(){
     const mode=document.getElementById('edit-quota-mode').value;
     const size=document.getElementById('edit-quota-size').value.trim();
     const startVal=document.getElementById('edit-quota-start').value;
+    // Helper: format Date to datetime-local string (local time, no timezone shift)
+    const toLocalStr=d=>{
+        const pad=n=>String(n).padStart(2,'0');
+        return d.getFullYear()+'-'+pad(d.getMonth()+1)+'-'+pad(d.getDate())+'T'+pad(d.getHours())+':'+pad(d.getMinutes());
+    };
     if(mode==='fixed'&&startVal){
         // User set a custom start time → compute end from start + window_size
         document.getElementById('edit-quota-period-start').value=startVal;
         const d=new Date(startVal);
         if(size.endsWith('h')){d.setHours(d.getHours()+parseInt(size));}
         else if(size.endsWith('d')){d.setDate(d.getDate()+parseInt(size));}
-        document.getElementById('edit-quota-period-end').value=d.toISOString().substring(0,16);
+        document.getElementById('edit-quota-period-end').value=toLocalStr(d);
     }else if(mode==='fixed'&&!startVal){
-        // No override → show auto-aligned period (keep existing values from server)
-        // Don't overwrite - user just cleared the field, the server will auto-align
         document.getElementById('edit-quota-period-start').value='';
         document.getElementById('edit-quota-period-end').value='自动对齐';
     }else{
         // Sliding window: period is always (now - size) → now
         const now=new Date();
-        const end=now.toISOString().substring(0,16);
+        document.getElementById('edit-quota-period-end').value=toLocalStr(now);
         const start=new Date(now);
         if(size.endsWith('h')){start.setHours(start.getHours()-parseInt(size));}
         else if(size.endsWith('d')){start.setDate(start.getDate()-parseInt(size));}
-        document.getElementById('edit-quota-period-start').value=start.toISOString().substring(0,16);
-        document.getElementById('edit-quota-period-end').value=end;
+        document.getElementById('edit-quota-period-start').value=toLocalStr(start);
     }
 }
 
