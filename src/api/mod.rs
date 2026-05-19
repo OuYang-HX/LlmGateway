@@ -856,7 +856,7 @@ pub async fn get_request_logs(
     let page_size = params.page_size.unwrap_or(20);
     let offset = ((page - 1) * page_size) as i64;
 
-    match state.db.query_request_logs(
+    match state.db.query_request_logs_lightweight(
         params.api_key_id.as_deref(),
         params.provider_id.as_deref(),
         params.start_time.as_deref(),

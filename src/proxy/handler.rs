@@ -386,6 +386,10 @@ pub async fn proxy_request(
                                             let error_str = format!("{} {}", error_code, error_msg);
                                             if is_rate_limit_error(&error_str) {
                                                 sse_rate_limit_error = Some(error_msg.to_string());
+                                            } else {
+                                                // Non-rate-limit upstream error in SSE stream (e.g. Engine Busy)
+                                                // Record it so we can log with 503 status and notify the client
+                                                sse_rate_limit_error = Some(format!("upstream_error: {}", error_msg));
                                             }
                                         }
 
@@ -419,6 +423,25 @@ pub async fn proxy_request(
                                             }
                                         }
                                     }
+                                }
+
+                                // If we detected an error in the SSE stream, stop forwarding
+                                // the raw upstream error and instead send a standardized error event
+                                // so the client can properly detect and handle it.
+                                if sse_rate_limit_error.is_some() {
+                                    // Don't forward the raw error chunk to client
+                                    // Instead, send a proper error SSE event
+                                    let is_rate_limit = !sse_rate_limit_error.as_deref().unwrap_or("").starts_with("upstream_error:");
+                                    let error_event = if is_rate_limit {
+                                        let err_json = build_rate_limit_error_json(sse_rate_limit_error.as_deref().unwrap_or(""));
+                                        format!("data: {}\n\ndata: [DONE]\n\n", err_json)
+                                    } else {
+                                        let err_msg = sse_rate_limit_error.as_deref().unwrap_or("").strip_prefix("upstream_error: ").unwrap_or("");
+                                        let err_json = build_server_error_json(err_msg);
+                                        format!("data: {}\n\ndata: [DONE]\n\n", err_json)
+                                    };
+                                    let _ = tx.send(Ok::<_, std::convert::Infallible>(axum::body::Bytes::from(error_event))).await;
+                                    break;
                                 }
 
                                 if tx.send(Ok::<_, std::convert::Infallible>(bytes)).await.is_err() {
@@ -466,7 +489,15 @@ pub async fn proxy_request(
                         }
                     });
 
-                    let log_status_code = if sse_rate_limit_error.is_some() { 429i32 } else { 200i32 };
+                    let log_status_code = if sse_rate_limit_error.is_some() {
+                        if sse_rate_limit_error.as_deref().unwrap_or("").starts_with("upstream_error:") {
+                            503i32  // Upstream server error (e.g. Engine Busy)
+                        } else {
+                            429i32  // Rate limit error
+                        }
+                    } else {
+                        200i32
+                    };
                     let _ = db.insert_request_log(
                         &api_key_id,
                         &provider_id,

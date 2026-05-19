@@ -1093,6 +1093,48 @@ impl Database {
         Ok(count)
     }
 
+    /// Query request logs with filters — lightweight version without request_body/response_body
+    pub async fn query_request_logs_lightweight(
+        &self,
+        api_key_id: Option<&str>,
+        provider_id: Option<&str>,
+        start_time: Option<&str>,
+        end_time: Option<&str>,
+        search: Option<&str>,
+        model: Option<&str>,
+        limit: i64,
+        offset: i64,
+    ) -> Result<Vec<RequestLogListRow>, sqlx::Error> {
+        let mut query = String::from(
+            r#"SELECT id, api_key_id, provider_id, model, request_path, request_method,
+                      response_status, prompt_tokens, completion_tokens, total_tokens,
+                      duration_ms, is_streaming, is_throttled, error_message, created_at
+               FROM request_logs WHERE 1=1"#
+        );
+        if api_key_id.is_some() { query.push_str(" AND api_key_id = ?"); }
+        if provider_id.is_some() { query.push_str(" AND provider_id = ?"); }
+        if start_time.is_some() { query.push_str(" AND created_at >= ?"); }
+        if end_time.is_some() { query.push_str(" AND created_at <= ?"); }
+        if search.is_some() { query.push_str(" AND (request_body LIKE ? OR response_body LIKE ?)"); }
+        if model.is_some() { query.push_str(" AND model = ?"); }
+        query.push_str(" ORDER BY created_at DESC LIMIT ? OFFSET ?");
+
+        let mut q = sqlx::query_as::<_, RequestLogListRow>(&query);
+        if let Some(v) = api_key_id { q = q.bind(v); }
+        if let Some(v) = provider_id { q = q.bind(v); }
+        if let Some(v) = start_time { q = q.bind(v); }
+        if let Some(v) = end_time { q = q.bind(v); }
+        if let Some(ref v) = search {
+            q = q.bind(format!("%{}%", v));
+            q = q.bind(format!("%{}%", v));
+        }
+        if let Some(v) = model { q = q.bind(v); }
+        q = q.bind(limit).bind(offset);
+
+        let rows = q.fetch_all(&self.pool).await?;
+        Ok(rows)
+    }
+
     /// Get a single request log by ID
     pub async fn get_request_log(&self, id: i64) -> Result<Option<RequestLogRow>, sqlx::Error> {
         let row = sqlx::query_as::<_, RequestLogRow>(
@@ -2201,6 +2243,27 @@ pub struct ProviderModelRow {
     pub last_tested_at: Option<String>,
     pub created_at: String,
     pub updated_at: String,
+}
+
+#[derive(Debug, Clone, Serialize, sqlx::FromRow)]
+/// Lightweight log row for list queries — excludes request_body and response_body
+/// to avoid transferring large payloads when only displaying a table.
+pub struct RequestLogListRow {
+    pub id: i64,
+    pub api_key_id: String,
+    pub provider_id: String,
+    pub model: Option<String>,
+    pub request_path: String,
+    pub request_method: String,
+    pub response_status: Option<i32>,
+    pub prompt_tokens: i64,
+    pub completion_tokens: i64,
+    pub total_tokens: i64,
+    pub duration_ms: Option<i64>,
+    pub is_streaming: bool,
+    pub is_throttled: bool,
+    pub error_message: Option<String>,
+    pub created_at: String,
 }
 
 #[derive(Debug, Clone, Serialize, sqlx::FromRow)]
