@@ -1376,6 +1376,7 @@ pub struct SetQuotaRequest {
     pub quota_type: Option<String>,
     pub window_mode: Option<String>,
     pub window_size: Option<String>,
+    pub window_start_override: Option<String>,
     pub limit_count: i64,
     #[serde(default = "default_quota_enabled")]
     pub is_enabled: bool,
@@ -1464,6 +1465,7 @@ pub async fn set_provider_quota(
         &quota_type,
         &window_mode,
         &window_size,
+        req.window_start_override.as_deref(),
         req.limit_count,
         req.is_enabled,
     ).await {
@@ -1472,6 +1474,7 @@ pub async fn set_provider_quota(
             "quota_type": quota_type,
             "window_mode": window_mode,
             "window_size": window_size,
+            "window_start_override": req.window_start_override,
             "limit_count": req.limit_count,
             "is_enabled": req.is_enabled,
             "message": "Quota set successfully"

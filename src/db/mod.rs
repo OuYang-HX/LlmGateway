@@ -190,6 +190,7 @@ impl Database {
                 quota_type TEXT NOT NULL,
                 window_mode TEXT NOT NULL DEFAULT 'fixed',
                 window_size TEXT NOT NULL DEFAULT '5h',
+                window_start_override TEXT,
                 limit_count INTEGER NOT NULL,
                 is_enabled BOOLEAN NOT NULL DEFAULT 1,
                 created_at TEXT NOT NULL DEFAULT (datetime('now')),
@@ -266,6 +267,13 @@ impl Database {
         .await;
         let _ = sqlx::query(
             "ALTER TABLE provider_quota_calibrations ADD COLUMN calibration_window_end TEXT"
+        )
+        .execute(&self.pool)
+        .await;
+
+        // Migration: Add window_start_override column to provider_quotas
+        let _ = sqlx::query(
+            "ALTER TABLE provider_quotas ADD COLUMN window_start_override TEXT"
         )
         .execute(&self.pool)
         .await;
@@ -1857,15 +1865,17 @@ impl Database {
         quota_type: &str,
         window_mode: &str,
         window_size: &str,
+        window_start_override: Option<&str>,
         limit_count: i64,
         is_enabled: bool,
     ) -> Result<(), sqlx::Error> {
         sqlx::query(
-            r#"INSERT INTO provider_quotas (provider_id, quota_type, window_mode, window_size, limit_count, is_enabled)
-            VALUES (?, ?, ?, ?, ?, ?)
+            r#"INSERT INTO provider_quotas (provider_id, quota_type, window_mode, window_size, window_start_override, limit_count, is_enabled)
+            VALUES (?, ?, ?, ?, ?, ?, ?)
             ON CONFLICT(provider_id, quota_type) DO UPDATE SET
                 window_mode = excluded.window_mode,
                 window_size = excluded.window_size,
+                window_start_override = excluded.window_start_override,
                 limit_count = excluded.limit_count,
                 is_enabled = excluded.is_enabled,
                 updated_at = datetime('now')"#
@@ -1874,6 +1884,7 @@ impl Database {
         .bind(quota_type)
         .bind(window_mode)
         .bind(window_size)
+        .bind(window_start_override)
         .bind(limit_count)
         .bind(is_enabled)
         .execute(&self.pool)
@@ -2028,6 +2039,7 @@ impl Database {
                 quota_type: quota.quota_type.clone(),
                 window_mode: quota.window_mode.clone(),
                 window_size: quota.window_size.clone(),
+                window_start_override: quota.window_start_override.clone(),
                 limit_count: quota.limit_count,
                 is_enabled: false,
                 gateway_count: 0,
@@ -2051,7 +2063,24 @@ impl Database {
             (quota.window_mode.clone(), quota.window_size.clone())
         };
 
-        let (period_start, period_end) = Self::get_quota_period(&window_mode, &window_size, now);
+        // Calculate period: if window_start_override is set for fixed window, use it
+        let (period_start, period_end) = if window_mode == "fixed" && quota.window_start_override.is_some() {
+            // User-specified start time override
+            let override_str = quota.window_start_override.as_ref().unwrap();
+            if let Ok(custom_start) = chrono::DateTime::parse_from_rfc3339(
+                &format!("{}Z", override_str.replace(' ', "T"))
+            ) {
+                let custom_start_utc = custom_start.to_utc();
+                let duration = Self::parse_window_size(&window_size);
+                let custom_end = custom_start_utc + duration;
+                (custom_start_utc, custom_end)
+            } else {
+                // Fallback to auto-alignment if override is invalid
+                Self::get_quota_period(&window_mode, &window_size, now)
+            }
+        } else {
+            Self::get_quota_period(&window_mode, &window_size, now)
+        };
         let period_start_str = period_start.format("%Y-%m-%d %H:%M:%S").to_string();
 
         // Check calibration validity
@@ -2078,6 +2107,7 @@ impl Database {
             quota_type: quota.quota_type.clone(),
             window_mode,
             window_size,
+            window_start_override: quota.window_start_override.clone(),
             limit_count: quota.limit_count,
             is_enabled: quota.is_enabled,
             gateway_count,
@@ -2585,6 +2615,7 @@ pub struct ProviderQuotaRow {
     pub quota_type: String,
     pub window_mode: String,
     pub window_size: String,
+    pub window_start_override: Option<String>,
     pub limit_count: i64,
     pub is_enabled: bool,
     pub created_at: String,
@@ -2611,6 +2642,7 @@ pub struct QuotaUsageInfo {
     pub quota_type: String,
     pub window_mode: String,
     pub window_size: String,
+    pub window_start_override: Option<String>,
     pub limit_count: i64,
     pub is_enabled: bool,
     /// Requests counted by the gateway in the current period

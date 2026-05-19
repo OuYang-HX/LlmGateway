@@ -228,7 +228,7 @@
                 <button class="btn btn-sm" onclick="loadAllQuotaUsage()" style="margin-left:12px">🔄 刷新</button>
             </h2>
             <table id="quota-usage-table">
-                <thead><tr><th>服务商</th><th>窗口模式</th><th>窗口大小</th><th>限制次数</th><th>网关请求</th><th class="hide-mobile">校准偏移</th><th>校准状态</th><th>预估已用</th><th>剩余可用</th><th>用量占比</th><th class="hide-mobile">周期起始</th><th>状态</th><th>操作</th></tr></thead>
+                <thead><tr><th>服务商</th><th>窗口模式</th><th>窗口大小</th><th>限制次数</th><th>网关请求</th><th class="hide-mobile">校准偏移</th><th>已用</th><th>剩余可用</th><th>用量占比</th><th class="hide-mobile">窗口起始</th><th>状态</th><th>操作</th></tr></thead>
                 <tbody></tbody>
             </table>
             <div id="quota-empty" class="empty-state hidden"><p>暂未配置任何配额限制</p><p>点击下方按钮为服务商添加配额</p></div>
@@ -237,8 +237,9 @@
             <h2>配额配置</h2>
             <div class="controls">
                 <label>服务商:</label><select id="quota-provider-select"><option value="">选择服务商...</option></select>
-                <label>窗口模式:</label><select id="quota-window-mode"><option value="fixed">固定窗口</option><option value="sliding">滑动窗口</option></select>
+                <label>窗口模式:</label><select id="quota-window-mode" onchange="toggleWindowStartInput()"><option value="fixed">固定窗口</option><option value="sliding">滑动窗口</option></select>
                 <label>窗口大小:</label><input id="quota-window-size" placeholder="如 5h, 7d, 30d" value="5h" style="width:80px">
+                <label id="quota-window-start-label">窗口起始:</label><input id="quota-window-start" type="datetime-local" style="width:180px" title="留空则自动对齐，手动设置可覆盖起始时间">
                 <label>限制次数:</label><input id="quota-limit-input" type="number" placeholder="如 500" style="width:100px">
                 <button class="btn btn-success" onclick="setQuota()">+ 设置配额</button>
             </div>
@@ -424,6 +425,24 @@
     <div class="form-actions">
         <button class="btn" onclick="closeCalibrationModal()">取消</button>
         <button class="btn btn-success" onclick="saveCalibration()">保存校准</button>
+    </div>
+</div>
+</div>
+
+<!-- ====== 编辑配额 Modal ====== -->
+<div id="edit-quota-modal" class="modal-overlay hidden">
+<div class="modal">
+    <h3>✏️ 编辑配额</h3>
+    <input type="hidden" id="edit-quota-provider-id">
+    <input type="hidden" id="edit-quota-type">
+    <div class="form-group"><label>窗口模式</label><input id="edit-quota-mode" readonly></div>
+    <div class="form-group"><label>窗口大小</label><input id="edit-quota-size" readonly></div>
+    <div class="form-group"><label>限制次数</label><input id="edit-quota-limit" type="number" placeholder="如 500"></div>
+    <div class="form-group"><label>状态</label><select id="edit-quota-enabled"><option value="启用">启用</option><option value="停用">停用</option></select></div>
+    <div class="form-group" id="edit-quota-start-row"><label>窗口起始时间</label><input id="edit-quota-start" type="datetime-local" style="width:100%"><small style="color:#64748b">留空则自动对齐到自然边界，手动设置可覆盖起始时间</small></div>
+    <div class="form-actions">
+        <button class="btn" onclick="closeEditQuotaModal()">取消</button>
+        <button class="btn btn-success" onclick="saveEditQuota()">保存</button>
     </div>
 </div>
 </div>
@@ -2182,16 +2201,17 @@ function loadAllQuotaUsage(){
             const modeLabel=q.window_mode==='fixed'?'固定窗口':'滑动窗口';
             const sizeLabel={'5h':'5小时','7d':'7天','30d':'30天'}[q.window_size]||q.window_size;
             const calValid=q.calibration_valid;
-            const calBadge=q.calibration_offset>0?(calValid?'<span style="color:#34d399">✓ +'+q.calibration_offset+'</span>':'<span style="color:#f87171">✗ +'+q.calibration_offset+'</span>'):'0';
+            const calColor=q.calibration_offset>0?(calValid?'#34d399':'#f87171'):'#94a3b8';
+            const calBadge=q.calibration_offset>0?'+'+q.calibration_offset:'0';
             const statusBadge=q.is_enabled?'<span class="badge badge-green">启用</span>':'<span class="badge badge-red">停用</span>';
+            const periodStartDisplay=q.window_start_override?'<span style="color:#f59e0b" title="手动设置">⚙ '+q.period_start+'</span>':q.period_start;
             return `<tr>
                 <td>${q.provider_name}<br><span style="font-size:11px;color:#64748b">${q.provider_id}</span></td>
                 <td>${modeLabel}</td>
                 <td>${sizeLabel}</td>
                 <td style="font-weight:600">${q.limit_count.toLocaleString()}</td>
                 <td>${q.gateway_count.toLocaleString()}</td>
-                <td class="hide-mobile">${calBadge}</td>
-                <td>${calValid?'<span style="color:#34d399;font-size:11px">✓ 有效</span>':'<span style="color:#f87171;font-size:11px">✗ 已过期</span>'}</td>
+                <td class="hide-mobile" style="color:${calColor}">${calBadge}</td>
                 <td style="font-weight:600;color:${pctColor}">${q.estimated_total.toLocaleString()}</td>
                 <td style="font-weight:700;color:${pctColor}">${q.remaining.toLocaleString()}</td>
                 <td>
@@ -2202,10 +2222,11 @@ function loadAllQuotaUsage(){
                         <span style="font-size:11px;color:${pctColor};font-weight:600;min-width:36px">${pct.toFixed(1)}%</span>
                     </div>
                 </td>
-                <td class="hide-mobile" style="font-size:11px;color:#64748b">${q.period_start||'-'}</td>
+                <td class="hide-mobile" style="font-size:11px;color:#64748b">${periodStartDisplay||'-'}</td>
                 <td>${statusBadge}</td>
                 <td>
-                    <button class="btn btn-sm" onclick="openCalibrationModal('${q.provider_id}','${q.quota_type}',${q.gateway_count},${q.calibration_offset},'${q.provider_name}','${q.window_mode}','${q.window_size}','${q.period_start}')">📏 校准</button>
+                    <button class="btn btn-sm" onclick="openEditQuotaModal('${q.provider_id}','${q.quota_type}','${q.window_mode}','${q.window_size}','${q.window_start_override||''}',${q.limit_count},${q.is_enabled})">✏️</button>
+                    <button class="btn btn-sm" onclick="openCalibrationModal('${q.provider_id}','${q.quota_type}',${q.gateway_count},${q.calibration_offset},'${q.provider_name}','${q.window_mode}','${q.window_size}','${q.period_start}')">📏</button>
                     <button class="btn btn-sm btn-danger" onclick="deleteQuota('${q.provider_id}','${q.quota_type}')">🗑</button>
                 </td>
             </tr>`;
@@ -2224,17 +2245,21 @@ function setQuota(){
     const providerId=document.getElementById('quota-provider-select').value;
     const windowMode=document.getElementById('quota-window-mode').value;
     const windowSize=document.getElementById('quota-window-size').value.trim();
+    const windowStart=document.getElementById('quota-window-start').value;
     const limitCount=parseInt(document.getElementById('quota-limit-input').value);
     if(!providerId){alert('请选择服务商');return;}
     if(!windowSize){alert('请输入窗口大小');return;}
     if(!limitCount||limitCount<=0){alert('请输入有效的限制次数');return;}
+    const body={window_mode:windowMode,window_size:windowSize,limit_count:limitCount,is_enabled:true};
+    if(windowMode==='fixed'&&windowStart){body.window_start_override=windowStart.replace('T',' ')+'+00:00';}
     fetch(API+'/quotas/'+providerId,{
         method:'POST',
         headers:{'Content-Type':'application/json'},
-        body:JSON.stringify({window_mode:windowMode,window_size:windowSize,limit_count:limitCount,is_enabled:true})
+        body:JSON.stringify(body)
     }).then(r=>r.json()).then(d=>{
         if(d.error){alert('设置失败: '+d.error);return;}
         document.getElementById('quota-limit-input').value='';
+        document.getElementById('quota-window-start').value='';
         loadAllQuotaUsage();
     }).catch(e=>alert('请求失败: '+e));
 }
@@ -2284,8 +2309,64 @@ function saveCalibration(){
 const origShowTab=showTab;
 showTab=function(name,btn){
     origShowTab(name,btn);
-    if(name==='quotas'){loadAllQuotaUsage();loadQuotaProviderSelect();}
+    if(name==='quotas'){loadAllQuotaUsage();loadQuotaProviderSelect();toggleWindowStartInput();}
 };
+
+function toggleWindowStartInput(){
+    const mode=document.getElementById('quota-window-mode').value;
+    const label=document.getElementById('quota-window-start-label');
+    const input=document.getElementById('quota-window-start');
+    if(mode==='fixed'){label.style.display='';input.style.display='';}
+    else{label.style.display='none';input.style.display='none';}
+}
+
+function openEditQuotaModal(providerId,quotaType,windowMode,windowSize,windowStartOverride,limitCount,isEnabled){
+    document.getElementById('edit-quota-provider-id').value=providerId;
+    document.getElementById('edit-quota-type').value=quotaType;
+    document.getElementById('edit-quota-mode').value=windowMode==='fixed'?'固定窗口':'滑动窗口';
+    document.getElementById('edit-quota-size').value={'5h':'5小时','7d':'7天','30d':'30天'}[windowSize]||windowSize;
+    document.getElementById('edit-quota-limit').value=limitCount;
+    document.getElementById('edit-quota-enabled').value=isEnabled?'启用':'停用';
+    if(windowMode==='fixed'){
+        document.getElementById('edit-quota-start-row').style.display='';
+        if(windowStartOverride){
+            // Convert "2026-05-19 10:00:00+00:00" to datetime-local format
+            const dt=windowStartOverride.replace(/\+00:00$/,'').replace(' ','T').substring(0,16);
+            document.getElementById('edit-quota-start').value=dt;
+        }else{
+            document.getElementById('edit-quota-start').value='';
+        }
+    }else{
+        document.getElementById('edit-quota-start-row').style.display='none';
+        document.getElementById('edit-quota-start').value='';
+    }
+    document.getElementById('edit-quota-modal').classList.remove('hidden');
+}
+
+function closeEditQuotaModal(){
+    document.getElementById('edit-quota-modal').classList.add('hidden');
+}
+
+function saveEditQuota(){
+    const providerId=document.getElementById('edit-quota-provider-id').value;
+    const quotaType=document.getElementById('edit-quota-type').value;
+    const limitCount=parseInt(document.getElementById('edit-quota-limit').value);
+    const isEnabled=document.getElementById('edit-quota-enabled').value==='启用';
+    const windowStart=document.getElementById('edit-quota-start').value;
+    if(!limitCount||limitCount<=0){alert('请输入有效的限制次数');return;}
+    const body={window_mode:quotaType.startsWith('fixed')?'fixed':'sliding',window_size:quotaType.split(':')[1]||'5h',limit_count:limitCount,is_enabled:isEnabled};
+    if(quotaType.startsWith('fixed')&&windowStart){body.window_start_override=windowStart.replace('T',' ')+'+00:00';}
+    else if(quotaType.startsWith('fixed')&&!windowStart){body.window_start_override=null;}
+    fetch(API+'/quotas/'+providerId,{
+        method:'POST',
+        headers:{'Content-Type':'application/json'},
+        body:JSON.stringify(body)
+    }).then(r=>r.json()).then(d=>{
+        if(d.error){alert('保存失败: '+d.error);return;}
+        closeEditQuotaModal();
+        loadAllQuotaUsage();
+    }).catch(e=>alert('请求失败: '+e));
+}
 
 </script>
 

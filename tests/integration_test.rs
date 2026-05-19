@@ -2098,7 +2098,7 @@ async fn test_quota_set_with_window_mode_and_size() {
     db.create_provider_simple("testprov", "Test Prov", "https://t.com", "openai", "api_key", Some("key"), None, None, None, "token", "refreshToken", "Authorization", "Bearer ", 86400, 1).await.unwrap();
     
     // Set quota with new format
-    db.set_provider_quota("testprov", "fixed:5h", "fixed", "5h", 500, true).await.unwrap();
+    db.set_provider_quota("testprov", "fixed:5h", "fixed", "5h", None, 500, true).await.unwrap();
     
     let quotas = db.list_provider_quotas("testprov").await.unwrap();
     assert_eq!(quotas.len(), 1);
@@ -2114,7 +2114,7 @@ async fn test_quota_calibration_with_window_binding() {
     
     db.create_provider_simple("testprov", "Test Prov", "https://t.com", "openai", "api_key", Some("key"), None, None, None, "token", "refreshToken", "Authorization", "Bearer ", 86400, 1).await.unwrap();
     
-    db.set_provider_quota("testprov", "fixed:5h", "fixed", "5h", 500, true).await.unwrap();
+    db.set_provider_quota("testprov", "fixed:5h", "fixed", "5h", None, 500, true).await.unwrap();
     
     // Set calibration with window binding
     db.set_quota_calibration("testprov", "fixed:5h", 50, Some("2026-05-19 10:00:00"), Some("2026-05-19 15:00:00"), Some("test calibration")).await.unwrap();
@@ -2183,7 +2183,7 @@ async fn test_quota_usage_with_expired_calibration() {
     
     db.create_provider_simple("testprov", "Test Prov", "https://t.com", "openai", "api_key", Some("key"), None, None, None, "token", "refreshToken", "Authorization", "Bearer ", 86400, 1).await.unwrap();
     
-    db.set_provider_quota("testprov", "fixed:5h", "fixed", "5h", 500, true).await.unwrap();
+    db.set_provider_quota("testprov", "fixed:5h", "fixed", "5h", None, 500, true).await.unwrap();
     
     // Set calibration with a PAST window (already expired)
     db.set_quota_calibration("testprov", "fixed:5h", 50, Some("2020-01-01 00:00:00"), Some("2020-01-01 05:00:00"), Some("old calibration")).await.unwrap();
