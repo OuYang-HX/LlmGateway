@@ -1503,7 +1503,9 @@ function setLogTimePreset(preset){
     } else if(preset==='7d'){
         start=new Date(now.getTime()-7*24*60*60*1000);
     }
-    document.getElementById('log-start').value=start.toISOString().slice(0,16);
+    const pad=n=>String(n).padStart(2,'0');
+    const toLocalStr=d=>d.getFullYear()+'-'+pad(d.getMonth()+1)+'-'+pad(d.getDate())+'T'+pad(d.getHours())+':'+pad(d.getMinutes());
+    document.getElementById('log-start').value=toLocalStr(start);
     document.getElementById('log-end').value='';
     currentLogPage=1;
     loadLogs();
