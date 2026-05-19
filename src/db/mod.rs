@@ -2021,6 +2021,39 @@ impl Database {
         Ok(count)
     }
 
+    /// Compute the actual quota period for a given quota, respecting window_start_override
+    fn compute_quota_period(quota: &ProviderQuotaRow, now: &chrono::DateTime<chrono::Utc>) -> (chrono::DateTime<chrono::Utc>, chrono::DateTime<chrono::Utc>) {
+        let (window_mode, window_size) = if quota.window_mode.is_empty() {
+            Self::normalize_quota_type(&quota.quota_type)
+        } else {
+            (quota.window_mode.clone(), quota.window_size.clone())
+        };
+
+        if window_mode == "fixed" && quota.window_start_override.is_some() {
+            let override_str = quota.window_start_override.as_ref().unwrap();
+            let has_tz = override_str.contains('+') || override_str.ends_with('Z');
+            let with_t = override_str.replace(' ', "T");
+            let tz_pos = if let Some(p) = with_t.rfind('+') { Some(p) }
+                         else if let Some(p) = with_t.rfind('Z') { Some(p) }
+                         else { None };
+            let time_part = if let Some(tp) = tz_pos { &with_t[..tp] } else { &with_t };
+            let has_seconds = time_part.matches(':').count() >= 2;
+            let with_seconds = if has_seconds {
+                if has_tz { with_t.clone() } else { format!("{}Z", with_t) }
+            } else {
+                if let Some(tp) = tz_pos { format!("{}:00{}", &with_t[..tp], &with_t[tp..]) }
+                else { format!("{}:00Z", with_t) }
+            };
+            if let Ok(custom_start) = chrono::DateTime::parse_from_rfc3339(&with_seconds) {
+                let custom_start_utc = custom_start.to_utc();
+                let duration = Self::parse_window_size(&window_size);
+                return (custom_start_utc, custom_start_utc + duration);
+            }
+        }
+
+        Self::get_quota_period(&window_mode, &window_size, now)
+    }
+
     /// Compute quota usage info for a single quota
     fn compute_quota_usage(
         &self,
@@ -2057,49 +2090,12 @@ impl Database {
 
         // Determine window_mode and window_size, with backward compat for legacy quota_type
         let (window_mode, window_size) = if quota.window_mode.is_empty() || quota.window_mode == "sliding" && quota.window_size == "5h" && quota.quota_type == "5h" {
-            // Legacy format
             Self::normalize_quota_type(&quota.quota_type)
         } else {
             (quota.window_mode.clone(), quota.window_size.clone())
         };
 
-        // Calculate period: if window_start_override is set for fixed window, use it
-        let (period_start, period_end) = if window_mode == "fixed" && quota.window_start_override.is_some() {
-            // User-specified start time override
-            let override_str = quota.window_start_override.as_ref().unwrap();
-            // Normalize: "2026-05-20 00:00+00:00" → "2026-05-20T00:00:00+00:00"
-            //            "2026-05-20 00:00:00" → "2026-05-20T00:00:00Z"
-            let has_tz = override_str.contains('+') || override_str.ends_with('Z');
-            let with_t = override_str.replace(' ', "T");
-            // Check if seconds are present in the time part (before timezone)
-            // Time part is between 'T' and timezone (+/Z/end)
-            let tz_pos = if let Some(p) = with_t.rfind('+') { Some(p) }
-                         else if let Some(p) = with_t.rfind('Z') { Some(p) }
-                         else { None };
-            let time_part = if let Some(tp) = tz_pos { &with_t[..tp] } else { &with_t };
-            let has_seconds = time_part.matches(':').count() >= 2;
-            let with_seconds = if has_seconds {
-                if has_tz { with_t.clone() } else { format!("{}Z", with_t) }
-            } else {
-                // Need to add :SS before timezone
-                if let Some(tp) = tz_pos {
-                    format!("{}:00{}", &with_t[..tp], &with_t[tp..])
-                } else {
-                    format!("{}:00Z", with_t)
-                }
-            };
-            if let Ok(custom_start) = chrono::DateTime::parse_from_rfc3339(&with_seconds) {
-                let custom_start_utc = custom_start.to_utc();
-                let duration = Self::parse_window_size(&window_size);
-                let custom_end = custom_start_utc + duration;
-                (custom_start_utc, custom_end)
-            } else {
-                // Fallback to auto-alignment if override is invalid
-                Self::get_quota_period(&window_mode, &window_size, now)
-            }
-        } else {
-            Self::get_quota_period(&window_mode, &window_size, now)
-        };
+        let (period_start, period_end) = Self::compute_quota_period(quota, now);
         let period_start_str = period_start.format("%Y-%m-%d %H:%M:%S").to_string();
 
         // Check calibration validity
@@ -2158,12 +2154,7 @@ impl Database {
                 continue;
             }
 
-            let (window_mode, window_size) = if quota.window_mode.is_empty() {
-                Self::normalize_quota_type(&quota.quota_type)
-            } else {
-                (quota.window_mode.clone(), quota.window_size.clone())
-            };
-            let (period_start, period_end) = Self::get_quota_period(&window_mode, &window_size, &now);
+            let (period_start, period_end) = Self::compute_quota_period(quota, &now);
             let period_start_str = period_start.format("%Y-%m-%d %H:%M:%S").to_string();
             let period_end_str = period_end.format("%Y-%m-%d %H:%M:%S").to_string();
 
@@ -2201,12 +2192,7 @@ impl Database {
                 continue;
             }
 
-            let (window_mode, window_size) = if quota.window_mode.is_empty() {
-                Self::normalize_quota_type(&quota.quota_type)
-            } else {
-                (quota.window_mode.clone(), quota.window_size.clone())
-            };
-            let (period_start, period_end) = Self::get_quota_period(&window_mode, &window_size, &now);
+            let (period_start, period_end) = Self::compute_quota_period(quota, &now);
             let period_start_str = period_start.format("%Y-%m-%d %H:%M:%S").to_string();
             let period_end_str = period_end.format("%Y-%m-%d %H:%M:%S").to_string();
 
