@@ -2022,7 +2022,7 @@ impl Database {
     }
 
     /// Compute the actual quota period for a given quota, respecting window_start_override
-    fn compute_quota_period(quota: &ProviderQuotaRow, now: &chrono::DateTime<chrono::Utc>) -> (chrono::DateTime<chrono::Utc>, chrono::DateTime<chrono::Utc>) {
+    pub fn compute_quota_period(quota: &ProviderQuotaRow, now: &chrono::DateTime<chrono::Utc>) -> (chrono::DateTime<chrono::Utc>, chrono::DateTime<chrono::Utc>) {
         let (window_mode, window_size) = if quota.window_mode.is_empty() {
             Self::normalize_quota_type(&quota.quota_type)
         } else {

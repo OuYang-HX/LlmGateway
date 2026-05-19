@@ -1565,7 +1565,7 @@ pub async fn set_quota_calibration(
     } else {
         (quota.window_mode.clone(), quota.window_size.clone())
     };
-    let (period_start, period_end) = crate::db::Database::get_quota_period(&window_mode, &window_size, &now);
+    let (period_start, period_end) = crate::db::Database::compute_quota_period(&quota, &now);
     let period_start_str = period_start.format("%Y-%m-%d %H:%M:%S").to_string();
     let period_end_str = period_end.format("%Y-%m-%d %H:%M:%S").to_string();
 
