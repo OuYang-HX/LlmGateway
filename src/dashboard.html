@@ -416,13 +416,13 @@
     <div class="form-group"><label>服务商</label><input id="edit-quota-provider-name" readonly></div>
     <div class="form-group"><label>窗口模式</label><select id="edit-quota-mode" onchange="toggleEditWindowStart()"><option value="fixed">固定窗口</option><option value="sliding">滑动窗口</option></select></div>
     <div class="form-group"><label>窗口大小</label><input id="edit-quota-size" placeholder="如 5h, 7d, 30d" style="width:120px" onchange="updateEditWindowPeriod()" oninput="updateEditWindowPeriod()"></div>
-    <div class="form-group" id="edit-quota-start-row"><label>窗口起始时间</label><input id="edit-quota-start" type="datetime-local" style="width:100%" onchange="updateEditWindowPeriod()" oninput="updateEditWindowPeriod()"><small style="color:#64748b">留空则自动对齐到自然边界，手动设置可覆盖起始时间</small></div>
+    <div class="form-group" id="edit-quota-start-row"><label>窗口起始时间</label><input id="edit-quota-start" type="datetime-local" style="width:100%" onchange="updateEditWindowPeriod()"><small style="color:#64748b">留空则自动对齐到自然边界，手动设置可覆盖起始时间</small></div>
     <div class="form-group"><label>限制次数</label><input id="edit-quota-limit" type="number" placeholder="如 500"></div>
     <div class="form-group"><label>状态</label><select id="edit-quota-enabled"><option value="true">启用</option><option value="false">停用</option></select></div>
     <hr style="border-color:#334155;margin:16px 0">
     <h4 style="margin:0 0 8px;color:#e2e8f0">📏 校准</h4>
     <p style="color:#f59e0b;font-size:12px;margin-bottom:8px">⚠️ 校准只在当前窗口期内生效，窗口期切换后校准自动失效</p>
-    <div class="form-group"><label>当前窗口期</label><div style="display:flex;gap:4px"><input id="edit-quota-period-start" type="datetime-local" style="flex:1" readonly><span style="line-height:36px;color:#64748b">→</span><input id="edit-quota-period-end" type="datetime-local" style="flex:1" readonly></div></div>
+    <div class="form-group"><label>当前窗口期</label><div style="display:flex;gap:4px"><input id="edit-quota-period-start" type="datetime-local" style="flex:1;background:#1e293b;color:#60a5fa;border:1px solid #334155;pointer-events:none"><span style="line-height:36px;color:#64748b">→</span><input id="edit-quota-period-end" type="datetime-local" style="flex:1;background:#1e293b;color:#60a5fa;border:1px solid #334155;pointer-events:none"></div></div>
     <div class="form-group"><label>网关已统计请求数（真实值）</label><input id="edit-quota-gateway-count" readonly style="color:#60a5fa"></div>
     <div class="form-group"><label>校准偏移量（未经过网关的请求数）</label><input id="edit-quota-offset" type="number" placeholder="如 50" value="0"><small style="color:#64748b">即当前窗口期内不经过网关直接调用服务商的次数</small></div>
     <div class="form-group"><label>校准备注（可选）</label><input id="edit-quota-note" placeholder="如：5月15日前未使用网关"></div>
@@ -2322,7 +2322,6 @@ function updateEditWindowPeriod(){
         return d.getFullYear()+'-'+pad(d.getMonth()+1)+'-'+pad(d.getDate())+'T'+pad(d.getHours())+':'+pad(d.getMinutes());
     };
     if(mode==='fixed'&&startVal){
-        // User set a custom start time → compute end from start + window_size
         document.getElementById('edit-quota-period-start').value=startVal;
         const d=new Date(startVal);
         if(size.endsWith('h')){d.setHours(d.getHours()+parseInt(size));}
@@ -2332,7 +2331,6 @@ function updateEditWindowPeriod(){
         document.getElementById('edit-quota-period-start').value='';
         document.getElementById('edit-quota-period-end').value='自动对齐';
     }else{
-        // Sliding window: period is always (now - size) → now
         const now=new Date();
         document.getElementById('edit-quota-period-end').value=toLocalStr(now);
         const start=new Date(now);

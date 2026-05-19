@@ -2196,3 +2196,19 @@ async fn test_quota_usage_with_expired_calibration() {
     assert_eq!(usage[0].calibration_offset, 0); // offset not applied
     assert_eq!(usage[0].estimated_total, usage[0].gateway_count); // no offset added
 }
+
+#[tokio::test]
+async fn test_quota_window_start_override_parsing() {
+    let db = llm_gateway::db::Database::new_in_memory().await.unwrap();
+    
+    db.create_provider_simple("testprov", "Test Prov", "https://t.com", "openai", "api_key", Some("key"), None, None, None, "token", "refreshToken", "Authorization", "Bearer ", 86400, 1).await.unwrap();
+    
+    // Set quota with window_start_override in format "2026-05-20 00:00+00:00"
+    db.set_provider_quota("testprov", "fixed:5h", "fixed", "5h", Some("2026-05-20 00:00+00:00"), 500, true).await.unwrap();
+    
+    let usage = db.get_provider_quota_usage("testprov").await.unwrap();
+    assert_eq!(usage.len(), 1);
+    // period_start should be 2026-05-20 00:00:00, not auto-aligned
+    println!("period_start: {}", usage[0].period_start);
+    assert!(usage[0].period_start.starts_with("2026-05-20 00:00"), "Expected period_start to start with 2026-05-20 00:00, got {}", usage[0].period_start);
+}

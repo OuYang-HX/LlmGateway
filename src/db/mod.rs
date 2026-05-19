@@ -2067,9 +2067,28 @@ impl Database {
         let (period_start, period_end) = if window_mode == "fixed" && quota.window_start_override.is_some() {
             // User-specified start time override
             let override_str = quota.window_start_override.as_ref().unwrap();
-            if let Ok(custom_start) = chrono::DateTime::parse_from_rfc3339(
-                &format!("{}Z", override_str.replace(' ', "T"))
-            ) {
+            // Normalize: "2026-05-20 00:00+00:00" → "2026-05-20T00:00:00+00:00"
+            //            "2026-05-20 00:00:00" → "2026-05-20T00:00:00Z"
+            let has_tz = override_str.contains('+') || override_str.ends_with('Z');
+            let with_t = override_str.replace(' ', "T");
+            // Check if seconds are present in the time part (before timezone)
+            // Time part is between 'T' and timezone (+/Z/end)
+            let tz_pos = if let Some(p) = with_t.rfind('+') { Some(p) }
+                         else if let Some(p) = with_t.rfind('Z') { Some(p) }
+                         else { None };
+            let time_part = if let Some(tp) = tz_pos { &with_t[..tp] } else { &with_t };
+            let has_seconds = time_part.matches(':').count() >= 2;
+            let with_seconds = if has_seconds {
+                if has_tz { with_t.clone() } else { format!("{}Z", with_t) }
+            } else {
+                // Need to add :SS before timezone
+                if let Some(tp) = tz_pos {
+                    format!("{}:00{}", &with_t[..tp], &with_t[tp..])
+                } else {
+                    format!("{}:00Z", with_t)
+                }
+            };
+            if let Ok(custom_start) = chrono::DateTime::parse_from_rfc3339(&with_seconds) {
                 let custom_start_utc = custom_start.to_utc();
                 let duration = Self::parse_window_size(&window_size);
                 let custom_end = custom_start_utc + duration;
