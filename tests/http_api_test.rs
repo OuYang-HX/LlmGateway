@@ -1,6 +1,6 @@
 use axum::{
     Router,
-    routing::{get, post, delete},
+    routing::{get, post, delete, put},
     http::{Method, StatusCode},
 };
 use llm_gateway::{AppState, db::Database, auth::AuthManager, proxy::LlmProxy, stats::StatsCollector};
@@ -41,9 +41,13 @@ async fn build_test_app() -> TestServer {
         .route("/api/v1/providers/:id/models/:model_id/test", post(llm_gateway::api::test_provider_model))
         .route("/api/v1/providers/:id/models/test-all", post(llm_gateway::api::test_all_provider_models))
         .route("/api/v1/models", post(llm_gateway::api::create_model).get(llm_gateway::api::list_models))
+        .route("/api/v1/models/:id", get(llm_gateway::api::get_model).delete(llm_gateway::api::delete_model).put(llm_gateway::api::update_model))
+        .route("/api/v1/models/:id/mappings", get(llm_gateway::api::list_model_mappings).post(llm_gateway::api::add_model_mapping))
+        .route("/api/v1/models/:id/mappings/:provider_id", put(llm_gateway::api::update_model_mapping).delete(llm_gateway::api::remove_model_mapping))
         .route("/api/v1/stats", get(llm_gateway::api::get_stats))
         .route("/api/v1/stats/bucketed", get(llm_gateway::api::get_time_bucketed_stats))
         .route("/api/v1/logs", get(llm_gateway::api::get_request_logs))
+        .route("/api/v1/logs/:id", get(llm_gateway::api::get_request_log_detail).delete(llm_gateway::api::delete_request_log))
         .route("/api/v1/logs/batch-delete", post(llm_gateway::api::delete_request_logs_batch))
         .route("/api/v1/logs/delete-all", post(llm_gateway::api::delete_all_request_logs))
         .route("/api/v1/dashboard/summary", get(llm_gateway::api::get_dashboard_summary))
@@ -1351,4 +1355,205 @@ async fn test_http_unified_models_list() {
     let server = build_test_app().await;
     let resp = server.get("/api/v1/models").await;
     assert_eq!(resp.status_code(), StatusCode::OK);
+}
+
+#[tokio::test]
+async fn test_http_model_mapping_cleanup_on_provider_model_delete() {
+    let server = build_test_app().await;
+    
+    // Create provider
+    let resp = server.post("/api/v1/providers")
+        .json(&serde_json::json!({"id":"mcp","name":"Model Cleanup Prov","base_url":"https://m.com","auth_type":"api_key","api_key":"sk-test","weight":1}))
+        .await;
+    assert!(resp.status_code() == StatusCode::OK || resp.status_code() == StatusCode::CREATED);
+    
+    // Add provider model
+    let resp = server.post("/api/v1/providers/mcp/models")
+        .json(&serde_json::json!({"model_id":"gpt-4"}))
+        .await;
+    assert!(resp.status_code() == StatusCode::OK || resp.status_code() == StatusCode::CREATED, "Add provider model status: {:?}", resp.status_code());
+    
+    // Verify provider exists
+    let resp = server.get("/api/v1/providers/mcp").await;
+    assert_eq!(resp.status_code(), StatusCode::OK, "Provider mcp not found, status: {:?}", resp.status_code());
+    
+    // Create unified model
+    let resp = server.post("/api/v1/models")
+        .json(&serde_json::json!({"id":"my-gpt4","name":"My GPT-4","model_type":"chat","priority":0}))
+        .await;
+    assert!(resp.status_code() == StatusCode::OK || resp.status_code() == StatusCode::CREATED, "Create model status: {:?}", resp.status_code());
+    
+    // Verify model exists before adding mapping
+    let resp = server.get("/api/v1/models/my-gpt4").await;
+    assert_eq!(resp.status_code(), StatusCode::OK, "Model my-gpt4 not found, status: {:?}", resp.status_code());
+    
+    // Add mapping
+    let resp = server.post("/api/v1/models/my-gpt4/mappings")
+        .json(&serde_json::json!({"provider_id":"mcp","provider_model_id":"gpt-4","weight":1,"cost_multiplier":1.0}))
+        .await;
+    assert!(resp.status_code() == StatusCode::OK || resp.status_code() == StatusCode::CREATED, "Add mapping status: {:?}", resp.status_code());
+    
+    // Verify mapping exists
+    let resp = server.get("/api/v1/models/my-gpt4").await;
+    assert_eq!(resp.status_code(), StatusCode::OK);
+    let model: serde_json::Value = resp.json();
+    assert_eq!(model["mappings"].as_array().unwrap().len(), 1);
+    
+    // Delete provider model — should cleanup mapping
+    let resp = server.delete("/api/v1/providers/mcp/models/gpt-4").await;
+    assert_eq!(resp.status_code(), StatusCode::OK);
+    
+    // Verify unified model is gone (no mappings left)
+    let resp = server.get("/api/v1/models/my-gpt4").await;
+    assert_eq!(resp.status_code(), StatusCode::NOT_FOUND);
+}
+
+#[tokio::test]
+async fn test_http_logs_list_excludes_body_fields() {
+    let server = build_test_app().await;
+    
+    // Create provider and API key
+    let resp = server.post("/api/v1/providers")
+        .json(&serde_json::json!({"id":"logprov","name":"Log Prov","base_url":"https://l.com","auth_type":"api_key","api_key":"sk-test","weight":1}))
+        .await;
+    assert!(resp.status_code() == StatusCode::OK || resp.status_code() == StatusCode::CREATED);
+    
+    let resp = server.post("/api/v1/api-keys")
+        .json(&serde_json::json!({"name":"test-log-key","api_key":"lgk-logtest123"}))
+        .await;
+    assert!(resp.status_code() == StatusCode::OK || resp.status_code() == StatusCode::CREATED);
+    
+    // Get logs list
+    let resp = server.get("/api/v1/logs?page=1&page_size=10").await;
+    assert_eq!(resp.status_code(), StatusCode::OK);
+    let data: serde_json::Value = resp.json();
+    
+    // Verify the response has the expected structure
+    assert!(data["logs"].is_array());
+    assert!(data["total"].is_number());
+    assert!(data["page"].is_number());
+    assert!(data["page_size"].is_number());
+    
+    // If there are logs, verify they don't have request_body/response_body fields
+    if let Some(logs) = data["logs"].as_array() {
+        for log in logs {
+            assert!(log.get("request_body").is_none(), "List should not include request_body");
+            assert!(log.get("response_body").is_none(), "List should not include response_body");
+            // But should have essential fields
+            assert!(log.get("id").is_some());
+            assert!(log.get("provider_id").is_some());
+            assert!(log.get("model").is_some());
+            assert!(log.get("response_status").is_some());
+            assert!(log.get("prompt_tokens").is_some());
+            assert!(log.get("error_message").is_some());
+        }
+    }
+}
+
+#[tokio::test]
+async fn test_http_log_detail_includes_body_fields() {
+    let server = build_test_app().await;
+    
+    // Create provider and API key
+    let resp = server.post("/api/v1/providers")
+        .json(&serde_json::json!({"id":"detprov","name":"Detail Prov","base_url":"https://d.com","auth_type":"api_key","api_key":"sk-test","weight":1}))
+        .await;
+    assert!(resp.status_code() == StatusCode::OK || resp.status_code() == StatusCode::CREATED);
+    
+    let resp = server.post("/api/v1/api-keys")
+        .json(&serde_json::json!({"name":"test-detail-key","api_key":"lgk-detailtest123"}))
+        .await;
+    assert!(resp.status_code() == StatusCode::OK || resp.status_code() == StatusCode::CREATED);
+    
+    // Get log detail for a non-existent ID should return 404
+    let resp = server.get("/api/v1/logs/99999").await;
+    assert_eq!(resp.status_code(), StatusCode::NOT_FOUND);
+}
+
+#[tokio::test]
+async fn test_http_provider_update_preserves_all_fields() {
+    let server = build_test_app().await;
+    
+    // Create provider with api_key auth
+    let resp = server.post("/api/v1/providers")
+        .json(&serde_json::json!({"id":"editprov","name":"Original Name","base_url":"https://original.com","api_type":"openai","auth_type":"api_key","api_key":"sk-original","weight":1}))
+        .await;
+    assert!(resp.status_code() == StatusCode::OK || resp.status_code() == StatusCode::CREATED);
+    
+    // Update provider — change name and base_url
+    let resp = server.put("/api/v1/providers/editprov")
+        .json(&serde_json::json!({"name":"Updated Name","base_url":"https://updated.com","api_key":"sk-updated","token_header_field":"Authorization","token_header_prefix":"Bearer "}))
+        .await;
+    assert_eq!(resp.status_code(), StatusCode::OK);
+    
+    // Verify the update took effect
+    let resp = server.get("/api/v1/providers/editprov").await;
+    assert_eq!(resp.status_code(), StatusCode::OK);
+    let provider: serde_json::Value = resp.json();
+    assert_eq!(provider["name"], "Updated Name");
+    assert_eq!(provider["base_url"], "https://updated.com");
+}
+
+#[tokio::test]
+async fn test_http_provider_update_response_paths() {
+    let server = build_test_app().await;
+    
+    // Create provider
+    let resp = server.post("/api/v1/providers")
+        .json(&serde_json::json!({"id":"pathprov","name":"Path Prov","base_url":"https://p.com","api_type":"openai","auth_type":"api_key","api_key":"sk-test","weight":1}))
+        .await;
+    assert!(resp.status_code() == StatusCode::OK || resp.status_code() == StatusCode::CREATED);
+    
+    // Update with custom response paths
+    let resp = server.put("/api/v1/providers/pathprov")
+        .json(&serde_json::json!({
+            "response_content_path": "output.text",
+            "response_reasoning_path": "output.reasoning"
+        }))
+        .await;
+    assert_eq!(resp.status_code(), StatusCode::OK);
+    
+    // Verify paths were updated
+    let resp = server.get("/api/v1/providers/pathprov").await;
+    assert_eq!(resp.status_code(), StatusCode::OK);
+    let provider: serde_json::Value = resp.json();
+    assert_eq!(provider["response_content_path"], "output.text");
+    assert_eq!(provider["response_reasoning_path"], "output.reasoning");
+}
+
+#[tokio::test]
+async fn test_http_provider_update_dynamic_token_fields() {
+    let server = build_test_app().await;
+    
+    // Create provider with dynamic_token auth
+    let resp = server.post("/api/v1/providers")
+        .json(&serde_json::json!({
+            "id":"dynprov","name":"Dynamic Prov","base_url":"https://d.com",
+            "api_type":"openai","auth_type":"dynamic_token",
+            "token_url":"https://auth.d.com/login",
+            "token_username":"user1","token_password":"pass1",
+            "token_field":"token","refresh_token_field":"refreshToken",
+            "token_header_field":"Authorization","token_header_prefix":"Bearer ",
+            "token_expiry_seconds":3600,"weight":1
+        }))
+        .await;
+    assert!(resp.status_code() == StatusCode::OK || resp.status_code() == StatusCode::CREATED);
+    
+    // Update dynamic token fields
+    let resp = server.put("/api/v1/providers/dynprov")
+        .json(&serde_json::json!({
+            "token_url":"https://auth.d.com/v2/login",
+            "token_username":"user2","token_password":"pass2",
+            "token_expiry_seconds":7200
+        }))
+        .await;
+    assert_eq!(resp.status_code(), StatusCode::OK);
+    
+    // Verify update
+    let resp = server.get("/api/v1/providers/dynprov").await;
+    assert_eq!(resp.status_code(), StatusCode::OK);
+    let provider: serde_json::Value = resp.json();
+    assert_eq!(provider["token_url"], "https://auth.d.com/v2/login");
+    assert_eq!(provider["token_username"], "user2");
+    assert_eq!(provider["token_expiry_seconds"], 7200);
 }

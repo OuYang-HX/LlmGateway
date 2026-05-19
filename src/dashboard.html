@@ -364,6 +364,7 @@
     <div class="auth-section">
         <h4>📋 响应内容路径</h4>
         <div class="form-group"><label>响应内容路径</label><input id="prov-response-content-path" value="choices.0.message.content"><small style="color:#64748b">从响应 JSON 提取模型回复的路径，支持点号和数组索引。如 choices.0.message.content、output.text、result.0.content.0.text</small></div>
+        <div class="form-group"><label>推理内容路径</label><input id="prov-response-reasoning-path" value="choices.0.delta.reasoning_content"><small style="color:#64748b">从流式响应中提取推理/思考内容的路径。如 choices.0.delta.reasoning_content</small></div>
     </div>
     </div>
 
@@ -1121,9 +1122,9 @@ function editProvider(id){
         document.getElementById('prov-dyn-header-prefix').value=p.token_header_prefix;
         document.getElementById('prov-token-expiry').value=p.token_expiry_seconds;
         document.getElementById('prov-bypass-proxy').value=p.bypass_proxy ? 'true' : 'false';
-        document.getElementById('prov-response-content-path').value=p.response_content_path || 'choices.0.message.content';
-        document.getElementById('prov-response-reasoning-path').value=p.response_reasoning_path || 'choices.0.delta.reasoning_content';
     }
+    document.getElementById('prov-response-content-path').value=p.response_content_path || 'choices.0.message.content';
+    document.getElementById('prov-response-reasoning-path').value=p.response_reasoning_path || 'choices.0.delta.reasoning_content';
     toggleAuthFields();
 }
 

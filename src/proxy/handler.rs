@@ -16,7 +16,7 @@ static RATE_LIMIT_REGEX: LazyLock<Regex> = LazyLock::new(|| {
 
 /// Check if an error message indicates a rate-limit / quota-exhausted / throttling error
 /// that should be converted to HTTP 429 so that clients (like pi-coding-agent) auto-retry.
-fn is_rate_limit_error(message: &str) -> bool {
+pub fn is_rate_limit_error(message: &str) -> bool {
     // Common patterns from various providers:
     // - Xunfei: NotEnoughCvError, code: 11210
     // - OpenAI: rate_limit_exceeded, insufficient_quota
@@ -48,7 +48,7 @@ fn build_server_error_json(original_message: &str) -> serde_json::Value {
 }
 
 /// Strip thinking/reasoning tags from LLM response content (e.g. <think>...</think>, <tool_call>...</think>)
-fn strip_thinking_tags(content: &str) -> String {
+pub fn strip_thinking_tags(content: &str) -> String {
     // Strip <think>...</think> tags (may appear multiple times)
     let re_think = Regex::new(r"<think>[\s\S]*?<\/think>").unwrap();
     // Strip <tool_call>...</think> tags

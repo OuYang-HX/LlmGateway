@@ -283,3 +283,229 @@ fn test_dashboard_html_batch_provider_toggle() {
         "Should have batch provider operations"
     );
 }
+
+#[test]
+fn test_dashboard_html_provider_health_table() {
+    let content = include_str!("../src/dashboard.html");
+    assert!(
+        content.contains("provider-health") || content.contains("health-table") || content.contains("loadProviderHealth"),
+        "Should have provider health table"
+    );
+}
+
+#[test]
+fn test_dashboard_html_log_detail_modal() {
+    let content = include_str!("../src/dashboard.html");
+    assert!(
+        content.contains("log-detail-modal") || content.contains("showLogDetail"),
+        "Should have log detail modal"
+    );
+}
+
+#[test]
+fn test_dashboard_html_log_detail_qa_mode() {
+    let content = include_str!("../src/dashboard.html");
+    assert!(
+        content.contains("log-mode-qa") || content.contains("renderLogDetailQA"),
+        "Should have QA mode for log detail"
+    );
+}
+
+#[test]
+fn test_dashboard_html_log_detail_raw_mode() {
+    let content = include_str!("../src/dashboard.html");
+    assert!(
+        content.contains("log-mode-raw") || content.contains("renderLogDetailRaw"),
+        "Should have raw mode for log detail"
+    );
+}
+
+#[test]
+fn test_dashboard_html_copy_to_clipboard_buttons() {
+    let content = include_str!("../src/dashboard.html");
+    assert!(
+        content.contains("copyToClipboard") || content.contains("navigator.clipboard"),
+        "Should have copy to clipboard functionality"
+    );
+}
+
+#[test]
+fn test_dashboard_html_sort_column_headers() {
+    let content = include_str!("../src/dashboard.html");
+    assert!(
+        content.contains("currentLogSort") || content.contains("sortColumn") || content.contains("sortBy"),
+        "Should have sortable column headers in logs"
+    );
+}
+
+#[test]
+fn test_dashboard_html_clear_filters_button() {
+    let content = include_str!("../src/dashboard.html");
+    assert!(
+        content.contains("clearLogFilters") || content.contains("clear-filters") || content.contains("重置"),
+        "Should have clear/reset filters button"
+    );
+}
+
+#[test]
+fn test_dashboard_html_time_preset_buttons() {
+    let content = include_str!("../src/dashboard.html");
+    assert!(
+        content.contains("preset") || content.contains("1小时") || content.contains("24小时") || content.contains("7天"),
+        "Should have time preset buttons for logs"
+    );
+}
+
+#[test]
+fn test_dashboard_html_external_id_modal() {
+    let content = include_str!("../src/dashboard.html");
+    assert!(
+        content.contains("external-id-modal") || content.contains("saveExternalId"),
+        "Should have external ID modal"
+    );
+}
+
+#[test]
+fn test_dashboard_html_batch_external_id() {
+    let content = include_str!("../src/dashboard.html");
+    assert!(
+        content.contains("batch-external-id") || content.contains("showBatchExternalIdArea"),
+        "Should have batch external ID configuration"
+    );
+}
+
+#[test]
+fn test_dashboard_html_api_key_regenerate() {
+    let content = include_str!("../src/dashboard.html");
+    assert!(
+        content.contains("regenerate") || content.contains("regenApiKey"),
+        "Should have API key regenerate functionality"
+    );
+}
+
+#[test]
+fn test_dashboard_html_provider_filter_on_token_rate() {
+    let content = include_str!("../src/dashboard.html");
+    assert!(
+        content.contains("tr-provider") || content.contains("provider-filter"),
+        "Should have provider filter on token rate chart"
+    );
+}
+
+#[test]
+fn test_dashboard_html_stats_by_api_key_chart() {
+    let content = include_str!("../src/dashboard.html");
+    assert!(
+        content.contains("loadApiKeyUsageChart") || content.contains("api-key-usage") || content.contains("apiKeyUsageChart"),
+        "Should have stats by API key chart"
+    );
+}
+
+#[test]
+fn test_dashboard_html_all_providers_in_token_rate_legend() {
+    let content = include_str!("../src/dashboard.html");
+    assert!(
+        content.contains("allProviders.forEach") || content.contains("providerMap"),
+        "Should iterate allProviders for token rate chart legend"
+    );
+}
+
+#[test]
+fn test_dashboard_html_hidden_dataset_for_no_data_provider() {
+    let content = include_str!("../src/dashboard.html");
+    assert!(
+        content.contains("hidden:") || content.contains("hasData"),
+        "Should hide datasets for providers with no data"
+    );
+}
+
+#[test]
+fn test_dashboard_html_zero_fill_for_no_data_provider() {
+    let content = include_str!("../src/dashboard.html");
+    assert!(
+        content.contains("hasData ? null : 0") || content.contains("hasData"),
+        "Should fill with 0 for providers with no data so clicking legend shows y=0 line"
+    );
+}
+
+#[test]
+fn test_dashboard_html_provider_edit_modal_has_reasoning_path_input() {
+    let content = include_str!("../src/dashboard.html");
+    assert!(
+        content.contains("prov-response-reasoning-path"),
+        "Provider edit modal must have response reasoning path input field"
+    );
+}
+
+#[test]
+fn test_dashboard_html_provider_edit_modal_has_content_path_input() {
+    let content = include_str!("../src/dashboard.html");
+    assert!(
+        content.contains("prov-response-content-path"),
+        "Provider edit modal must have response content path input field"
+    );
+}
+
+#[test]
+fn test_dashboard_html_provider_edit_sets_response_paths_for_all_auth_types() {
+    let content = include_str!("../src/dashboard.html");
+    // The response path fields should be set OUTSIDE the if/else auth_type block
+    // so they work for both api_key and dynamic_token providers
+    let pattern1 = "prov-response-content-path').value=p.response_content_path";
+    let pattern2 = "prov-response-reasoning-path').value=p.response_reasoning_path";
+    assert!(
+        content.contains(pattern1),
+        "editProvider should set response_content_path for all auth types"
+    );
+    assert!(
+        content.contains(pattern2),
+        "editProvider should set response_reasoning_path for all auth types"
+    );
+}
+
+#[test]
+fn test_dashboard_html_provider_save_sends_reasoning_path() {
+    let content = include_str!("../src/dashboard.html");
+    assert!(
+        content.contains("body.response_reasoning_path=document.getElementById('prov-response-reasoning-path')"),
+        "saveProvider should send response_reasoning_path in request body"
+    );
+}
+
+#[test]
+fn test_dashboard_html_provider_save_sends_content_path() {
+    let content = include_str!("../src/dashboard.html");
+    assert!(
+        content.contains("body.response_content_path=document.getElementById('prov-response-content-path')"),
+        "saveProvider should send response_content_path in request body"
+    );
+}
+
+#[test]
+fn test_dashboard_html_provider_edit_function_exists() {
+    let content = include_str!("../src/dashboard.html");
+    assert!(
+        content.contains("function editProvider(id)"),
+        "editProvider function must exist"
+    );
+}
+
+#[test]
+fn test_dashboard_html_provider_save_function_exists() {
+    let content = include_str!("../src/dashboard.html");
+    assert!(
+        content.contains("async function saveProvider()"),
+        "saveProvider function must exist"
+    );
+}
+
+#[test]
+fn test_dashboard_html_provider_edit_populates_all_fields() {
+    let content = include_str!("../src/dashboard.html");
+    // editProvider should populate these core fields
+    assert!(content.contains("prov-name').value=p.name"), "editProvider sets name");
+    assert!(content.contains("prov-base-url').value=p.base_url"), "editProvider sets base_url");
+    assert!(content.contains("prov-api-type').value=p.api_type"), "editProvider sets api_type");
+    assert!(content.contains("prov-auth-type').value=p.auth_type"), "editProvider sets auth_type");
+    assert!(content.contains("prov-weight').value=p.weight"), "editProvider sets weight");
+}
