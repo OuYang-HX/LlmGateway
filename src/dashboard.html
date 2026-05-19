@@ -1688,9 +1688,11 @@ async function removeModel(modelId) {
 
 // 设置对外ID
 let currentSettingExternalIdModel = null;
+let currentSettingExternalIdOldValue = null;
 
 function openExternalIdModal(providerModelId, currentExternalId) {
     currentSettingExternalIdModel = providerModelId;
+    currentSettingExternalIdOldValue = currentExternalId || null;
     document.getElementById('external-id-modal').classList.remove('hidden');
     document.getElementById('ext-provider-model-id').textContent = providerModelId;
     document.getElementById('ext-id').value = currentExternalId || '';
@@ -1710,6 +1712,10 @@ async function saveExternalId() {
     if (!currentSettingExternalIdModel) return;
     
     try {
+        // 0. 记录旧的对外ID（如果有），用于清理旧映射
+        const oldExternalId = currentSettingExternalIdOldValue;
+        const isChanging = oldExternalId && oldExternalId !== externalId;
+        
         // 1. 检查对外ID对应的统一模型是否存在
         let modelExists = false;
         const existingModels = await fetch(API + '/models/' + externalId).then(r => r.json()).catch(() => null);
@@ -1720,9 +1726,15 @@ async function saveExternalId() {
             const existingMapping = existingModels.mappings.find(
                 m => m.mapping.provider_id === currentModelProviderId && m.mapping.provider_model_id === currentSettingExternalIdModel
             );
-            if (existingMapping) {
+            if (existingMapping && !isChanging) {
+                // 同一对外ID、同一服务商模型 → 无变化，直接关闭
                 alert('该对外ID已映射到同一服务商模型，无需重复设置');
                 closeExternalIdModal();
+                return;
+            }
+            // 如果是修改对外ID，且新ID下已有同一服务商映射 → 提示冲突
+            if (existingMapping && isChanging) {
+                alert('该对外ID已存在同一服务商的映射，请使用其他对外ID');
                 return;
             }
         }
@@ -1746,7 +1758,19 @@ async function saveExternalId() {
             }
         }
         
-        // 3. 添加映射
+        // 3. 删除旧对外ID的映射（如果是在修改对外ID）
+        if (isChanging) {
+            await fetch(API + '/models/' + oldExternalId + '/mappings/' + currentModelProviderId, {
+                method: 'DELETE'
+            });
+            // 检查旧模型是否还有其他映射，如果没有则删除空模型
+            const oldModelData = await fetch(API + '/models/' + oldExternalId).then(r => r.json()).catch(() => null);
+            if (oldModelData && oldModelData.mappings && oldModelData.mappings.length === 0) {
+                await fetch(API + '/models/' + oldExternalId, { method: 'DELETE' });
+            }
+        }
+        
+        // 4. 添加映射
         const mappingResp = await fetch(API + '/models/' + externalId + '/mappings', {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
