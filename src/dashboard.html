@@ -2279,20 +2279,19 @@ function openEditQuotaModal(providerId,quotaType,windowMode,windowSize,windowSta
         document.getElementById('edit-quota-start').value='';
     }
     // Calibration section - window period range
+    // Always compute period_end from period_start + window_size
+    // period_start from server is UTC, convert to local for display
     if(periodStart){
-        document.getElementById('edit-quota-period-start').value=periodStart.replace(' ','T').substring(0,16);
+        const ps=new Date(periodStart.replace(' ','T')+'Z'); // parse as UTC
+        const pad=n=>String(n).padStart(2,'0');
+        const toLocal=d=>d.getFullYear()+'-'+pad(d.getMonth()+1)+'-'+pad(d.getDate())+'T'+pad(d.getHours())+':'+pad(d.getMinutes());
+        document.getElementById('edit-quota-period-start').value=toLocal(ps);
+        const pe=new Date(ps.getTime());
+        if(windowSize.endsWith('h')){pe.setHours(pe.getHours()+parseInt(windowSize));}
+        else if(windowSize.endsWith('d')){pe.setDate(pe.getDate()+parseInt(windowSize));}
+        document.getElementById('edit-quota-period-end').value=toLocal(pe);
     }else{
         document.getElementById('edit-quota-period-start').value='';
-    }
-    if(calWindowEnd){
-        document.getElementById('edit-quota-period-end').value=calWindowEnd.replace(' ','T').substring(0,16);
-    }else if(periodStart){
-        const d=new Date(periodStart.replace(' ','T'));
-        if(windowSize.endsWith('h')){d.setHours(d.getHours()+parseInt(windowSize));}
-        else if(windowSize.endsWith('d')){d.setDate(d.getDate()+parseInt(windowSize));}
-        const pad=n=>String(n).padStart(2,'0');
-        document.getElementById('edit-quota-period-end').value=d.getFullYear()+'-'+pad(d.getMonth()+1)+'-'+pad(d.getDate())+'T'+pad(d.getHours())+':'+pad(d.getMinutes());
-    }else{
         document.getElementById('edit-quota-period-end').value='';
     }
     document.getElementById('edit-quota-gateway-count').value=gatewayCount;
