@@ -1373,13 +1373,28 @@ pub async fn remove_model_mapping(
 
 #[derive(Debug, Deserialize)]
 pub struct SetQuotaRequest {
-    pub quota_type: String,
+    pub quota_type: Option<String>,
+    pub window_mode: Option<String>,
+    pub window_size: Option<String>,
     pub limit_count: i64,
     #[serde(default = "default_quota_enabled")]
     pub is_enabled: bool,
 }
 
 fn default_quota_enabled() -> bool { true }
+fn default_window_mode() -> String { "fixed".to_string() }
+fn default_window_size() -> String { "5h".to_string() }
+
+/// Validate window_size format (e.g. "5h", "7d", "30d")
+fn is_valid_window_size(s: &str) -> bool {
+    if let Some(hours) = s.strip_suffix('h') {
+        return hours.parse::<i64>().map(|h| h > 0).unwrap_or(false);
+    }
+    if let Some(days) = s.strip_suffix('d') {
+        return days.parse::<i64>().map(|d| d > 0).unwrap_or(false);
+    }
+    false
+}
 
 /// Set a quota limit for a provider
 pub async fn set_provider_quota(
@@ -1392,12 +1407,51 @@ pub async fn set_provider_quota(
         return (StatusCode::NOT_FOUND, Json(serde_json::json!({"error": "Provider not found"}))).into_response();
     }
 
-    // Validate quota_type
-    if !["5h", "weekly", "monthly"].contains(&req.quota_type.as_str()) {
-        return (StatusCode::BAD_REQUEST, Json(serde_json::json!({
-            "error": "Invalid quota_type. Must be one of: 5h, weekly, monthly"
-        }))).into_response();
-    }
+    // Determine window_mode and window_size
+    let (quota_type, window_mode, window_size) = if let Some(ref qt) = req.quota_type {
+        // Legacy quota_type: convert to new format
+        match qt.as_str() {
+            "5h" => ("sliding:5h".to_string(), "sliding".to_string(), "5h".to_string()),
+            "weekly" => ("fixed:7d".to_string(), "fixed".to_string(), "7d".to_string()),
+            "monthly" => ("fixed:30d".to_string(), "fixed".to_string(), "30d".to_string()),
+            other => {
+                // Could be new format like "fixed:5h"
+                if let Some((mode, size)) = other.split_once(':') {
+                    if !["fixed", "sliding"].contains(&mode) {
+                        return (StatusCode::BAD_REQUEST, Json(serde_json::json!({
+                            "error": "Invalid window_mode. Must be 'fixed' or 'sliding'"
+                        }))).into_response();
+                    }
+                    if !is_valid_window_size(size) {
+                        return (StatusCode::BAD_REQUEST, Json(serde_json::json!({
+                            "error": format!("Invalid window_size '{}'. Use format like 5h, 12h, 7d, 30d", size)
+                        }))).into_response();
+                    }
+                    (other.to_string(), mode.to_string(), size.to_string())
+                } else {
+                    return (StatusCode::BAD_REQUEST, Json(serde_json::json!({
+                        "error": format!("Invalid quota_type '{}'. Use window_mode + window_size, or legacy: 5h, weekly, monthly", other)
+                    }))).into_response();
+                }
+            }
+        }
+    } else {
+        // New format: window_mode + window_size
+        let mode = req.window_mode.as_deref().unwrap_or("fixed");
+        if !["fixed", "sliding"].contains(&mode) {
+            return (StatusCode::BAD_REQUEST, Json(serde_json::json!({
+                "error": "Invalid window_mode. Must be 'fixed' or 'sliding'"
+            }))).into_response();
+        }
+        let size = req.window_size.as_deref().unwrap_or("5h");
+        if !is_valid_window_size(size) {
+            return (StatusCode::BAD_REQUEST, Json(serde_json::json!({
+                "error": format!("Invalid window_size '{}'. Use format like 5h, 12h, 7d, 30d", size)
+            }))).into_response();
+        }
+        let qt = format!("{}:{}", mode, size);
+        (qt, mode.to_string(), size.to_string())
+    };
 
     if req.limit_count <= 0 {
         return (StatusCode::BAD_REQUEST, Json(serde_json::json!({
@@ -1407,13 +1461,17 @@ pub async fn set_provider_quota(
 
     match state.db.set_provider_quota(
         &provider_id,
-        &req.quota_type,
+        &quota_type,
+        &window_mode,
+        &window_size,
         req.limit_count,
         req.is_enabled,
     ).await {
         Ok(()) => (StatusCode::OK, Json(serde_json::json!({
             "provider_id": provider_id,
-            "quota_type": req.quota_type,
+            "quota_type": quota_type,
+            "window_mode": window_mode,
+            "window_size": window_size,
             "limit_count": req.limit_count,
             "is_enabled": req.is_enabled,
             "message": "Quota set successfully"
@@ -1489,23 +1547,39 @@ pub async fn set_quota_calibration(
 
     // Verify quota exists for this type
     let quotas = state.db.list_provider_quotas(&provider_id).await;
-    let quota_exists = quotas.unwrap_or_default().iter().any(|q| q.quota_type == req.quota_type);
-    if !quota_exists {
+    let quota = quotas.unwrap_or_default().into_iter().find(|q| q.quota_type == req.quota_type);
+    if quota.is_none() {
         return (StatusCode::BAD_REQUEST, Json(serde_json::json!({
             "error": format!("No quota of type '{}' configured for this provider. Please set the quota first.", req.quota_type)
         }))).into_response();
     }
 
+    // Calculate current window period for this quota and record it
+    let quota = quota.unwrap();
+    let now = chrono::Utc::now();
+    let (window_mode, window_size) = if quota.window_mode.is_empty() {
+        crate::db::Database::normalize_quota_type(&quota.quota_type)
+    } else {
+        (quota.window_mode.clone(), quota.window_size.clone())
+    };
+    let (period_start, period_end) = crate::db::Database::get_quota_period(&window_mode, &window_size, &now);
+    let period_start_str = period_start.format("%Y-%m-%d %H:%M:%S").to_string();
+    let period_end_str = period_end.format("%Y-%m-%d %H:%M:%S").to_string();
+
     match state.db.set_quota_calibration(
         &provider_id,
         &req.quota_type,
         req.calibration_offset,
+        Some(&period_start_str),
+        Some(&period_end_str),
         req.note.as_deref(),
     ).await {
         Ok(()) => (StatusCode::OK, Json(serde_json::json!({
             "provider_id": provider_id,
             "quota_type": req.quota_type,
             "calibration_offset": req.calibration_offset,
+            "calibration_window_start": period_start_str,
+            "calibration_window_end": period_end_str,
             "message": "Calibration set successfully"
         }))).into_response(),
         Err(e) => {

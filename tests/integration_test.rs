@@ -2016,3 +2016,183 @@ async fn test_stats_by_api_key_with_time_filter() {
     let empty = db.get_stats_by_api_key(10, Some(future), None).await.unwrap();
     assert!(empty.is_empty());
 }
+
+#[tokio::test]
+async fn test_quota_fixed_window_5h_alignment() {
+    let now = chrono::Utc::now();
+    let (start, end) = llm_gateway::db::Database::get_quota_period("fixed", "5h", &now);
+    
+    // Period end - start should be exactly 5 hours
+    let duration = end - start;
+    assert_eq!(duration.num_hours(), 5);
+    
+    // Period start should be before now, end should be after now
+    assert!(start <= now);
+    assert!(end >= now);
+}
+
+#[tokio::test]
+async fn test_quota_sliding_window_5h() {
+    let now = chrono::Utc::now();
+    let (start, end) = llm_gateway::db::Database::get_quota_period("sliding", "5h", &now);
+    
+    // Sliding window: start = now - 5h, end = now
+    let duration_from_start = now - start;
+    let duration_from_end = end - now;
+    assert!(duration_from_start.num_hours() == 5 || duration_from_start.num_minutes() == 300);
+    assert!(duration_from_end.num_seconds() < 2); // end ≈ now
+}
+
+#[tokio::test]
+async fn test_quota_fixed_window_7d() {
+    let now = chrono::Utc::now();
+    let (start, end) = llm_gateway::db::Database::get_quota_period("fixed", "7d", &now);
+    
+    let duration = end - start;
+    assert_eq!(duration.num_days(), 7);
+    assert!(start <= now);
+    assert!(end >= now);
+}
+
+#[tokio::test]
+async fn test_quota_fixed_window_30d() {
+    let now = chrono::Utc::now();
+    let (start, end) = llm_gateway::db::Database::get_quota_period("fixed", "30d", &now);
+    
+    let duration = end - start;
+    // Month duration varies (28-31 days), just check it's reasonable
+    assert!(duration.num_days() >= 28 && duration.num_days() <= 31);
+    assert!(start <= now);
+    assert!(end >= now);
+}
+
+#[tokio::test]
+async fn test_quota_normalize_legacy_types() {
+    // Legacy "5h" → sliding, "weekly" → fixed 7d, "monthly" → fixed 30d
+    let (mode, size) = llm_gateway::db::Database::normalize_quota_type("5h");
+    assert_eq!(mode, "sliding");
+    assert_eq!(size, "5h");
+    
+    let (mode, size) = llm_gateway::db::Database::normalize_quota_type("weekly");
+    assert_eq!(mode, "fixed");
+    assert_eq!(size, "7d");
+    
+    let (mode, size) = llm_gateway::db::Database::normalize_quota_type("monthly");
+    assert_eq!(mode, "fixed");
+    assert_eq!(size, "30d");
+    
+    // New format
+    let (mode, size) = llm_gateway::db::Database::normalize_quota_type("fixed:12h");
+    assert_eq!(mode, "fixed");
+    assert_eq!(size, "12h");
+    
+    let (mode, size) = llm_gateway::db::Database::normalize_quota_type("sliding:3d");
+    assert_eq!(mode, "sliding");
+    assert_eq!(size, "3d");
+}
+
+#[tokio::test]
+async fn test_quota_set_with_window_mode_and_size() {
+    let db = llm_gateway::db::Database::new_in_memory().await.unwrap();
+    
+    db.create_provider_simple("testprov", "Test Prov", "https://t.com", "openai", "api_key", Some("key"), None, None, None, "token", "refreshToken", "Authorization", "Bearer ", 86400, 1).await.unwrap();
+    
+    // Set quota with new format
+    db.set_provider_quota("testprov", "fixed:5h", "fixed", "5h", 500, true).await.unwrap();
+    
+    let quotas = db.list_provider_quotas("testprov").await.unwrap();
+    assert_eq!(quotas.len(), 1);
+    assert_eq!(quotas[0].quota_type, "fixed:5h");
+    assert_eq!(quotas[0].window_mode, "fixed");
+    assert_eq!(quotas[0].window_size, "5h");
+    assert_eq!(quotas[0].limit_count, 500);
+}
+
+#[tokio::test]
+async fn test_quota_calibration_with_window_binding() {
+    let db = llm_gateway::db::Database::new_in_memory().await.unwrap();
+    
+    db.create_provider_simple("testprov", "Test Prov", "https://t.com", "openai", "api_key", Some("key"), None, None, None, "token", "refreshToken", "Authorization", "Bearer ", 86400, 1).await.unwrap();
+    
+    db.set_provider_quota("testprov", "fixed:5h", "fixed", "5h", 500, true).await.unwrap();
+    
+    // Set calibration with window binding
+    db.set_quota_calibration("testprov", "fixed:5h", 50, Some("2026-05-19 10:00:00"), Some("2026-05-19 15:00:00"), Some("test calibration")).await.unwrap();
+    
+    let cal = db.get_quota_calibration("testprov", "fixed:5h").await.unwrap().unwrap();
+    assert_eq!(cal.calibration_offset, 50);
+    assert_eq!(cal.calibration_window_start, Some("2026-05-19 10:00:00".to_string()));
+    assert_eq!(cal.calibration_window_end, Some("2026-05-19 15:00:00".to_string()));
+}
+
+#[tokio::test]
+async fn test_quota_calibration_validity_fixed_window() {
+    let db = llm_gateway::db::Database::new_in_memory().await.unwrap();
+    
+    // Create calibration with window binding
+    let cal = llm_gateway::db::ProviderQuotaCalibrationRow {
+        id: 1,
+        provider_id: "test".to_string(),
+        quota_type: "fixed:5h".to_string(),
+        calibration_offset: 50,
+        calibrated_at: "2026-05-19 12:00:00".to_string(),
+        calibration_window_start: Some("2026-05-19 10:00:00".to_string()),
+        calibration_window_end: Some("2026-05-19 15:00:00".to_string()),
+        note: None,
+    };
+    
+    // Current window matches → valid
+    let current_start = chrono::DateTime::parse_from_rfc3339("2026-05-19T10:00:00Z").unwrap().to_utc();
+    let current_end = chrono::DateTime::parse_from_rfc3339("2026-05-19T15:00:00Z").unwrap().to_utc();
+    assert!(llm_gateway::db::Database::is_calibration_valid(&cal, "fixed", &current_start, &current_end));
+    
+    // Different window → invalid
+    let other_start = chrono::DateTime::parse_from_rfc3339("2026-05-19T15:00:00Z").unwrap().to_utc();
+    let other_end = chrono::DateTime::parse_from_rfc3339("2026-05-19T20:00:00Z").unwrap().to_utc();
+    assert!(!llm_gateway::db::Database::is_calibration_valid(&cal, "fixed", &other_start, &other_end));
+}
+
+#[tokio::test]
+async fn test_quota_calibration_validity_sliding_window() {
+    // Create calibration at 12:00
+    let cal = llm_gateway::db::ProviderQuotaCalibrationRow {
+        id: 1,
+        provider_id: "test".to_string(),
+        quota_type: "sliding:5h".to_string(),
+        calibration_offset: 30,
+        calibrated_at: "2026-05-19 12:00:00".to_string(),
+        calibration_window_start: None,
+        calibration_window_end: None,
+        note: None,
+    };
+    
+    // Sliding window 10:00-15:00 includes 12:00 → valid
+    let start = chrono::DateTime::parse_from_rfc3339("2026-05-19T10:00:00Z").unwrap().to_utc();
+    let end = chrono::DateTime::parse_from_rfc3339("2026-05-19T15:00:00Z").unwrap().to_utc();
+    assert!(llm_gateway::db::Database::is_calibration_valid(&cal, "sliding", &start, &end));
+    
+    // Sliding window 15:00-20:00 does NOT include 12:00 → invalid
+    let start2 = chrono::DateTime::parse_from_rfc3339("2026-05-19T15:00:00Z").unwrap().to_utc();
+    let end2 = chrono::DateTime::parse_from_rfc3339("2026-05-19T20:00:00Z").unwrap().to_utc();
+    assert!(!llm_gateway::db::Database::is_calibration_valid(&cal, "sliding", &start2, &end2));
+}
+
+#[tokio::test]
+async fn test_quota_usage_with_expired_calibration() {
+    let db = llm_gateway::db::Database::new_in_memory().await.unwrap();
+    
+    db.create_provider_simple("testprov", "Test Prov", "https://t.com", "openai", "api_key", Some("key"), None, None, None, "token", "refreshToken", "Authorization", "Bearer ", 86400, 1).await.unwrap();
+    
+    db.set_provider_quota("testprov", "fixed:5h", "fixed", "5h", 500, true).await.unwrap();
+    
+    // Set calibration with a PAST window (already expired)
+    db.set_quota_calibration("testprov", "fixed:5h", 50, Some("2020-01-01 00:00:00"), Some("2020-01-01 05:00:00"), Some("old calibration")).await.unwrap();
+    
+    let usage = db.get_provider_quota_usage("testprov").await.unwrap();
+    assert_eq!(usage.len(), 1);
+    
+    // The calibration should be invalid (wrong window), so offset should be 0
+    assert!(!usage[0].calibration_valid);
+    assert_eq!(usage[0].calibration_offset, 0); // offset not applied
+    assert_eq!(usage[0].estimated_total, usage[0].gateway_count); // no offset added
+}

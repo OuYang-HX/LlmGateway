@@ -228,7 +228,7 @@
                 <button class="btn btn-sm" onclick="loadAllQuotaUsage()" style="margin-left:12px">🔄 刷新</button>
             </h2>
             <table id="quota-usage-table">
-                <thead><tr><th>服务商</th><th>配额类型</th><th>限制次数</th><th>网关请求</th><th class="hide-mobile">校准偏移</th><th>预估已用</th><th>剩余可用</th><th>用量占比</th><th class="hide-mobile">周期起始</th><th>状态</th><th>操作</th></tr></thead>
+                <thead><tr><th>服务商</th><th>窗口模式</th><th>窗口大小</th><th>限制次数</th><th>网关请求</th><th class="hide-mobile">校准偏移</th><th>校准状态</th><th>预估已用</th><th>剩余可用</th><th>用量占比</th><th class="hide-mobile">周期起始</th><th>状态</th><th>操作</th></tr></thead>
                 <tbody></tbody>
             </table>
             <div id="quota-empty" class="empty-state hidden"><p>暂未配置任何配额限制</p><p>点击下方按钮为服务商添加配额</p></div>
@@ -237,7 +237,8 @@
             <h2>配额配置</h2>
             <div class="controls">
                 <label>服务商:</label><select id="quota-provider-select"><option value="">选择服务商...</option></select>
-                <label>配额类型:</label><select id="quota-type-select"><option value="5h">5小时</option><option value="weekly">周</option><option value="monthly">月</option></select>
+                <label>窗口模式:</label><select id="quota-window-mode"><option value="fixed">固定窗口</option><option value="sliding">滑动窗口</option></select>
+                <label>窗口大小:</label><input id="quota-window-size" placeholder="如 5h, 7d, 30d" value="5h" style="width:80px">
                 <label>限制次数:</label><input id="quota-limit-input" type="number" placeholder="如 500" style="width:100px">
                 <button class="btn btn-success" onclick="setQuota()">+ 设置配额</button>
             </div>
@@ -409,13 +410,16 @@
 <div id="calibration-modal" class="modal-overlay hidden">
 <div class="modal">
     <h3>📏 校准已用次数</h3>
-    <p style="color:#94a3b8;font-size:13px;margin-bottom:12px">输入在当前周期内<strong>未经过网关</strong>的请求数，用于校准剩余可用次数。网关真实统计不受影响。</p>
+    <p style="color:#94a3b8;font-size:13px;margin-bottom:12px">输入在当前窗口期内<strong>未经过网关</strong>的请求数，用于校准剩余可用次数。网关真实统计不受影响。</p>
+    <p style="color:#f59e0b;font-size:12px;margin-bottom:8px">⚠️ 校准只在当前窗口期内生效，窗口期切换后校准自动失效</p>
     <input type="hidden" id="cal-provider-id">
     <input type="hidden" id="cal-quota-type">
     <div class="form-group"><label>服务商</label><input id="cal-provider-name" readonly></div>
-    <div class="form-group"><label>配额类型</label><input id="cal-quota-type-display" readonly></div>
+    <div class="form-group"><label>窗口模式</label><input id="cal-window-mode-display" readonly></div>
+    <div class="form-group"><label>窗口大小</label><input id="cal-window-size-display" readonly></div>
+    <div class="form-group"><label>当前窗口期</label><input id="cal-window-period-display" readonly style="color:#60a5fa"></div>
     <div class="form-group"><label>网关已统计请求数（真实值，不可修改）</label><input id="cal-gateway-count" readonly style="color:#60a5fa"></div>
-    <div class="form-group"><label>未经过网关的请求数（校准偏移量）</label><input id="cal-offset" type="number" placeholder="如 50" value="0"><small style="color:#64748b">即当前周期内不经过网关直接调用服务商的次数</small></div>
+    <div class="form-group"><label>未经过网关的请求数（校准偏移量）</label><input id="cal-offset" type="number" placeholder="如 50" value="0"><small style="color:#64748b">即当前窗口期内不经过网关直接调用服务商的次数</small></div>
     <div class="form-group"><label>备注（可选）</label><input id="cal-note" placeholder="如：5月15日前未使用网关"></div>
     <div class="form-actions">
         <button class="btn" onclick="closeCalibrationModal()">取消</button>
@@ -2175,14 +2179,19 @@ function loadAllQuotaUsage(){
             const pct=q.usage_percent;
             const pctColor=pct>=90?'#f87171':pct>=70?'#fbbf24':'#34d399';
             const barW=Math.min(pct,100);
-            const typeLabel={'5h':'5小时','weekly':'周','monthly':'月'}[q.quota_type]||q.quota_type;
+            const modeLabel=q.window_mode==='fixed'?'固定窗口':'滑动窗口';
+            const sizeLabel={'5h':'5小时','7d':'7天','30d':'30天'}[q.window_size]||q.window_size;
+            const calValid=q.calibration_valid;
+            const calBadge=q.calibration_offset>0?(calValid?'<span style="color:#34d399">✓ +'+q.calibration_offset+'</span>':'<span style="color:#f87171">✗ +'+q.calibration_offset+'</span>'):'0';
             const statusBadge=q.is_enabled?'<span class="badge badge-green">启用</span>':'<span class="badge badge-red">停用</span>';
             return `<tr>
                 <td>${q.provider_name}<br><span style="font-size:11px;color:#64748b">${q.provider_id}</span></td>
-                <td>${typeLabel}</td>
+                <td>${modeLabel}</td>
+                <td>${sizeLabel}</td>
                 <td style="font-weight:600">${q.limit_count.toLocaleString()}</td>
                 <td>${q.gateway_count.toLocaleString()}</td>
-                <td class="hide-mobile">${q.calibration_offset>0?'<span style="color:#fbbf24">+'+q.calibration_offset+'</span>':'0'}</td>
+                <td class="hide-mobile">${calBadge}</td>
+                <td>${calValid?'<span style="color:#34d399;font-size:11px">✓ 有效</span>':'<span style="color:#f87171;font-size:11px">✗ 已过期</span>'}</td>
                 <td style="font-weight:600;color:${pctColor}">${q.estimated_total.toLocaleString()}</td>
                 <td style="font-weight:700;color:${pctColor}">${q.remaining.toLocaleString()}</td>
                 <td>
@@ -2196,7 +2205,7 @@ function loadAllQuotaUsage(){
                 <td class="hide-mobile" style="font-size:11px;color:#64748b">${q.period_start||'-'}</td>
                 <td>${statusBadge}</td>
                 <td>
-                    <button class="btn btn-sm" onclick="openCalibrationModal('${q.provider_id}','${q.quota_type}',${q.gateway_count},${q.calibration_offset},'${q.provider_name}')">📏 校准</button>
+                    <button class="btn btn-sm" onclick="openCalibrationModal('${q.provider_id}','${q.quota_type}',${q.gateway_count},${q.calibration_offset},'${q.provider_name}','${q.window_mode}','${q.window_size}','${q.period_start}')">📏 校准</button>
                     <button class="btn btn-sm btn-danger" onclick="deleteQuota('${q.provider_id}','${q.quota_type}')">🗑</button>
                 </td>
             </tr>`;
@@ -2213,14 +2222,16 @@ function loadQuotaProviderSelect(){
 
 function setQuota(){
     const providerId=document.getElementById('quota-provider-select').value;
-    const quotaType=document.getElementById('quota-type-select').value;
+    const windowMode=document.getElementById('quota-window-mode').value;
+    const windowSize=document.getElementById('quota-window-size').value.trim();
     const limitCount=parseInt(document.getElementById('quota-limit-input').value);
     if(!providerId){alert('请选择服务商');return;}
+    if(!windowSize){alert('请输入窗口大小');return;}
     if(!limitCount||limitCount<=0){alert('请输入有效的限制次数');return;}
     fetch(API+'/quotas/'+providerId,{
         method:'POST',
         headers:{'Content-Type':'application/json'},
-        body:JSON.stringify({quota_type:quotaType,limit_count:limitCount,is_enabled:true})
+        body:JSON.stringify({window_mode:windowMode,window_size:windowSize,limit_count:limitCount,is_enabled:true})
     }).then(r=>r.json()).then(d=>{
         if(d.error){alert('设置失败: '+d.error);return;}
         document.getElementById('quota-limit-input').value='';
@@ -2236,12 +2247,13 @@ function deleteQuota(providerId,quotaType){
     }).catch(e=>alert('请求失败: '+e));
 }
 
-function openCalibrationModal(providerId,quotaType,gatewayCount,currentOffset,providerName){
+function openCalibrationModal(providerId,quotaType,gatewayCount,currentOffset,providerName,windowMode,windowSize,periodStart){
     document.getElementById('cal-provider-id').value=providerId;
     document.getElementById('cal-quota-type').value=quotaType;
     document.getElementById('cal-provider-name').value=providerName;
-    const typeLabel={'5h':'5小时','weekly':'周','monthly':'月'}[quotaType]||quotaType;
-    document.getElementById('cal-quota-type-display').value=typeLabel;
+    document.getElementById('cal-window-mode-display').value=windowMode==='fixed'?'固定窗口':'滑动窗口';
+    document.getElementById('cal-window-size-display').value={'5h':'5小时','7d':'7天','30d':'30天'}[windowSize]||windowSize;
+    document.getElementById('cal-window-period-display').value=periodStart||'-';
     document.getElementById('cal-gateway-count').value=gatewayCount;
     document.getElementById('cal-offset').value=currentOffset||0;
     document.getElementById('cal-note').value='';

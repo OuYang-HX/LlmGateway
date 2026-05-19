@@ -188,6 +188,8 @@ impl Database {
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
                 provider_id TEXT NOT NULL,
                 quota_type TEXT NOT NULL,
+                window_mode TEXT NOT NULL DEFAULT 'fixed',
+                window_size TEXT NOT NULL DEFAULT '5h',
                 limit_count INTEGER NOT NULL,
                 is_enabled BOOLEAN NOT NULL DEFAULT 1,
                 created_at TEXT NOT NULL DEFAULT (datetime('now')),
@@ -202,6 +204,8 @@ impl Database {
                 quota_type TEXT NOT NULL,
                 calibration_offset INTEGER NOT NULL DEFAULT 0,
                 calibrated_at TEXT NOT NULL DEFAULT (datetime('now')),
+                calibration_window_start TEXT,
+                calibration_window_end TEXT,
                 note TEXT,
                 FOREIGN KEY (provider_id) REFERENCES providers(id) ON DELETE CASCADE,
                 UNIQUE(provider_id, quota_type)
@@ -1793,19 +1797,25 @@ impl Database {
         &self,
         provider_id: &str,
         quota_type: &str,
+        window_mode: &str,
+        window_size: &str,
         limit_count: i64,
         is_enabled: bool,
     ) -> Result<(), sqlx::Error> {
         sqlx::query(
-            r#"INSERT INTO provider_quotas (provider_id, quota_type, limit_count, is_enabled)
-            VALUES (?, ?, ?, ?)
+            r#"INSERT INTO provider_quotas (provider_id, quota_type, window_mode, window_size, limit_count, is_enabled)
+            VALUES (?, ?, ?, ?, ?, ?)
             ON CONFLICT(provider_id, quota_type) DO UPDATE SET
+                window_mode = excluded.window_mode,
+                window_size = excluded.window_size,
                 limit_count = excluded.limit_count,
                 is_enabled = excluded.is_enabled,
                 updated_at = datetime('now')"#
         )
         .bind(provider_id)
         .bind(quota_type)
+        .bind(window_mode)
+        .bind(window_size)
         .bind(limit_count)
         .bind(is_enabled)
         .execute(&self.pool)
@@ -1865,19 +1875,25 @@ impl Database {
         provider_id: &str,
         quota_type: &str,
         calibration_offset: i64,
+        calibration_window_start: Option<&str>,
+        calibration_window_end: Option<&str>,
         note: Option<&str>,
     ) -> Result<(), sqlx::Error> {
         sqlx::query(
-            r#"INSERT INTO provider_quota_calibrations (provider_id, quota_type, calibration_offset, note)
-            VALUES (?, ?, ?, ?)
+            r#"INSERT INTO provider_quota_calibrations (provider_id, quota_type, calibration_offset, calibration_window_start, calibration_window_end, note)
+            VALUES (?, ?, ?, ?, ?, ?)
             ON CONFLICT(provider_id, quota_type) DO UPDATE SET
                 calibration_offset = excluded.calibration_offset,
                 calibrated_at = datetime('now'),
+                calibration_window_start = excluded.calibration_window_start,
+                calibration_window_end = excluded.calibration_window_end,
                 note = excluded.note"#
         )
         .bind(provider_id)
         .bind(quota_type)
         .bind(calibration_offset)
+        .bind(calibration_window_start)
+        .bind(calibration_window_end)
         .bind(note)
         .execute(&self.pool)
         .await?;
@@ -1936,76 +1952,124 @@ impl Database {
         Ok(count)
     }
 
+    /// Compute quota usage info for a single quota
+    fn compute_quota_usage(
+        &self,
+        quota: &ProviderQuotaRow,
+        provider_name: &str,
+        now: &chrono::DateTime<chrono::Utc>,
+        gateway_count: i64,
+        calibration: Option<ProviderQuotaCalibrationRow>,
+    ) -> QuotaUsageInfo {
+        let now_str = now.format("%Y-%m-%d %H:%M:%S").to_string();
+
+        if !quota.is_enabled {
+            return QuotaUsageInfo {
+                provider_id: quota.provider_id.clone(),
+                provider_name: provider_name.to_string(),
+                quota_type: quota.quota_type.clone(),
+                window_mode: quota.window_mode.clone(),
+                window_size: quota.window_size.clone(),
+                limit_count: quota.limit_count,
+                is_enabled: false,
+                gateway_count: 0,
+                calibration_offset: 0,
+                calibration_valid: false,
+                calibration_window_start: None,
+                calibration_window_end: None,
+                estimated_total: 0,
+                remaining: quota.limit_count,
+                usage_percent: 0.0,
+                period_start: String::new(),
+                period_current: now_str,
+            };
+        }
+
+        // Determine window_mode and window_size, with backward compat for legacy quota_type
+        let (window_mode, window_size) = if quota.window_mode.is_empty() || quota.window_mode == "sliding" && quota.window_size == "5h" && quota.quota_type == "5h" {
+            // Legacy format
+            Self::normalize_quota_type(&quota.quota_type)
+        } else {
+            (quota.window_mode.clone(), quota.window_size.clone())
+        };
+
+        let (period_start, period_end) = Self::get_quota_period(&window_mode, &window_size, now);
+        let period_start_str = period_start.format("%Y-%m-%d %H:%M:%S").to_string();
+
+        // Check calibration validity
+        let (calibration_offset, calibration_valid, calibration_window_start, calibration_window_end) =
+            if let Some(ref cal) = calibration {
+                let valid = Self::is_calibration_valid(cal, &window_mode, &period_start, &period_end);
+                let offset = if valid { cal.calibration_offset } else { 0 };
+                (offset, valid, cal.calibration_window_start.clone(), cal.calibration_window_end.clone())
+            } else {
+                (0, false, None, None)
+            };
+
+        let estimated_total = gateway_count + calibration_offset;
+        let remaining = (quota.limit_count - estimated_total).max(0);
+        let usage_percent = if quota.limit_count > 0 {
+            (estimated_total as f64 / quota.limit_count as f64) * 100.0
+        } else {
+            0.0
+        };
+
+        QuotaUsageInfo {
+            provider_id: quota.provider_id.clone(),
+            provider_name: provider_name.to_string(),
+            quota_type: quota.quota_type.clone(),
+            window_mode,
+            window_size,
+            limit_count: quota.limit_count,
+            is_enabled: quota.is_enabled,
+            gateway_count,
+            calibration_offset,
+            calibration_valid,
+            calibration_window_start,
+            calibration_window_end,
+            estimated_total,
+            remaining,
+            usage_percent: usage_percent.min(100.0),
+            period_start: period_start_str,
+            period_current: now_str,
+        }
+    }
+
     /// Get computed quota usage for all providers
     pub async fn get_all_quota_usage(&self) -> Result<Vec<QuotaUsageInfo>, sqlx::Error> {
         let quotas = self.list_all_quotas().await?;
         let mut result = Vec::new();
 
         let now = chrono::Utc::now();
-        let now_str = now.format("%Y-%m-%d %H:%M:%S").to_string();
 
         for quota in &quotas {
+            let provider = self.get_provider(&quota.provider_id).await.ok().flatten();
+            let provider_name = provider.map(|p| p.name).unwrap_or_default();
+
             if !quota.is_enabled {
-                // Still include disabled quotas but with zero usage
-                let provider = self.get_provider(&quota.provider_id).await.ok().flatten();
-                result.push(QuotaUsageInfo {
-                    provider_id: quota.provider_id.clone(),
-                    provider_name: provider.map(|p| p.name).unwrap_or_default(),
-                    quota_type: quota.quota_type.clone(),
-                    limit_count: quota.limit_count,
-                    is_enabled: false,
-                    gateway_count: 0,
-                    calibration_offset: 0,
-                    estimated_total: 0,
-                    remaining: quota.limit_count,
-                    usage_percent: 0.0,
-                    period_start: String::new(),
-                    period_current: now_str.clone(),
-                });
+                result.push(self.compute_quota_usage(quota, &provider_name, &now, 0, None));
                 continue;
             }
 
-            let (period_start, period_end) = Self::get_quota_period(&quota.quota_type, &now);
+            let (window_mode, window_size) = if quota.window_mode.is_empty() {
+                Self::normalize_quota_type(&quota.quota_type)
+            } else {
+                (quota.window_mode.clone(), quota.window_size.clone())
+            };
+            let (period_start, period_end) = Self::get_quota_period(&window_mode, &window_size, &now);
             let period_start_str = period_start.format("%Y-%m-%d %H:%M:%S").to_string();
             let period_end_str = period_end.format("%Y-%m-%d %H:%M:%S").to_string();
 
-            // Count gateway requests in this period
             let gateway_count = self.count_provider_requests(
                 &quota.provider_id,
                 &period_start_str,
                 &period_end_str,
             ).await.unwrap_or(0);
 
-            // Get calibration offset
-            let calibration_offset = self.get_quota_calibration(&quota.provider_id, &quota.quota_type)
-                .await.ok().flatten()
-                .map(|c| c.calibration_offset)
-                .unwrap_or(0);
+            let calibration = self.get_quota_calibration(&quota.provider_id, &quota.quota_type)
+                .await.ok().flatten();
 
-            let estimated_total = gateway_count + calibration_offset;
-            let remaining = (quota.limit_count - estimated_total).max(0);
-            let usage_percent = if quota.limit_count > 0 {
-                (estimated_total as f64 / quota.limit_count as f64) * 100.0
-            } else {
-                0.0
-            };
-
-            let provider = self.get_provider(&quota.provider_id).await.ok().flatten();
-
-            result.push(QuotaUsageInfo {
-                provider_id: quota.provider_id.clone(),
-                provider_name: provider.map(|p| p.name).unwrap_or_default(),
-                quota_type: quota.quota_type.clone(),
-                limit_count: quota.limit_count,
-                is_enabled: quota.is_enabled,
-                gateway_count,
-                calibration_offset,
-                estimated_total,
-                remaining,
-                usage_percent: usage_percent.min(100.0),
-                period_start: period_start_str,
-                period_current: now_str.clone(),
-            });
+            result.push(self.compute_quota_usage(quota, &provider_name, &now, gateway_count, calibration));
         }
 
         Ok(result)
@@ -2020,31 +2084,22 @@ impl Database {
         let mut result = Vec::new();
 
         let now = chrono::Utc::now();
-        let now_str = now.format("%Y-%m-%d %H:%M:%S").to_string();
 
         let provider = self.get_provider(provider_id).await.ok().flatten();
         let provider_name = provider.map(|p| p.name).unwrap_or_default();
 
         for quota in &quotas {
             if !quota.is_enabled {
-                result.push(QuotaUsageInfo {
-                    provider_id: quota.provider_id.clone(),
-                    provider_name: provider_name.clone(),
-                    quota_type: quota.quota_type.clone(),
-                    limit_count: quota.limit_count,
-                    is_enabled: false,
-                    gateway_count: 0,
-                    calibration_offset: 0,
-                    estimated_total: 0,
-                    remaining: quota.limit_count,
-                    usage_percent: 0.0,
-                    period_start: String::new(),
-                    period_current: now_str.clone(),
-                });
+                result.push(self.compute_quota_usage(quota, &provider_name, &now, 0, None));
                 continue;
             }
 
-            let (period_start, period_end) = Self::get_quota_period(&quota.quota_type, &now);
+            let (window_mode, window_size) = if quota.window_mode.is_empty() {
+                Self::normalize_quota_type(&quota.quota_type)
+            } else {
+                (quota.window_mode.clone(), quota.window_size.clone())
+            };
+            let (period_start, period_end) = Self::get_quota_period(&window_mode, &window_size, &now);
             let period_start_str = period_start.format("%Y-%m-%d %H:%M:%S").to_string();
             let period_end_str = period_end.format("%Y-%m-%d %H:%M:%S").to_string();
 
@@ -2054,33 +2109,10 @@ impl Database {
                 &period_end_str,
             ).await.unwrap_or(0);
 
-            let calibration_offset = self.get_quota_calibration(&quota.provider_id, &quota.quota_type)
-                .await.ok().flatten()
-                .map(|c| c.calibration_offset)
-                .unwrap_or(0);
+            let calibration = self.get_quota_calibration(&quota.provider_id, &quota.quota_type)
+                .await.ok().flatten();
 
-            let estimated_total = gateway_count + calibration_offset;
-            let remaining = (quota.limit_count - estimated_total).max(0);
-            let usage_percent = if quota.limit_count > 0 {
-                (estimated_total as f64 / quota.limit_count as f64) * 100.0
-            } else {
-                0.0
-            };
-
-            result.push(QuotaUsageInfo {
-                provider_id: quota.provider_id.clone(),
-                provider_name: provider_name.clone(),
-                quota_type: quota.quota_type.clone(),
-                limit_count: quota.limit_count,
-                is_enabled: quota.is_enabled,
-                gateway_count,
-                calibration_offset,
-                estimated_total,
-                remaining,
-                usage_percent: usage_percent.min(100.0),
-                period_start: period_start_str,
-                period_current: now_str.clone(),
-            });
+            result.push(self.compute_quota_usage(quota, &provider_name, &now, gateway_count, calibration));
         }
 
         Ok(result)
@@ -2089,53 +2121,180 @@ impl Database {
     /// Calculate the period start and end times for a quota type
     /// quota_type: "5h", "weekly", "monthly"
     /// Returns (period_start, period_end)
-    fn get_quota_period(quota_type: &str, now: &chrono::DateTime<chrono::Utc>) -> (chrono::DateTime<chrono::Utc>, chrono::DateTime<chrono::Utc>) {
+    /// Calculate the period start and end times for a quota
+    /// Supports both fixed and sliding window modes
+    pub fn get_quota_period(window_mode: &str, window_size: &str, now: &chrono::DateTime<chrono::Utc>) -> (chrono::DateTime<chrono::Utc>, chrono::DateTime<chrono::Utc>) {
         use chrono::Datelike;
-        match quota_type {
-            "5h" => {
-                // Rolling 5-hour window: from (now - 5h) to now
-                let start = *now - chrono::Duration::hours(5);
+
+        let duration = Self::parse_window_size(window_size);
+
+        match window_mode {
+            "fixed" => {
+                Self::get_fixed_window_period(window_size, duration, now)
+            }
+            "sliding" => {
+                // Sliding window: from (now - duration) to now
+                let start = *now - duration;
                 (start, *now)
-            }
-            "weekly" => {
-                // Current week: Monday 00:00 UTC to next Monday 00:00 UTC
-                let weekday = now.weekday().num_days_from_monday();
-                let week_start_naive = now.date_naive()
-                    .checked_sub_signed(chrono::Duration::days(weekday as i64))
-                    .map(|d| d.and_hms_opt(0, 0, 0).unwrap())
-                    .unwrap_or_else(|| now.date_naive().and_hms_opt(0, 0, 0).unwrap());
-                let start = chrono::DateTime::parse_from_rfc3339(
-                    &format!("{}T00:00:00Z", week_start_naive.format("%Y-%m-%d"))
-                ).unwrap_or_else(|_| chrono::DateTime::parse_from_rfc3339("2000-01-01T00:00:00Z").unwrap()).to_utc();
-                let end = start + chrono::Duration::weeks(1);
-                (start, end)
-            }
-            "monthly" => {
-                // Current month: 1st 00:00 UTC to 1st of next month 00:00 UTC
-                let month_start_date = chrono::NaiveDate::from_ymd_opt(now.year(), now.month(), 1)
-                    .unwrap_or_else(|| chrono::NaiveDate::from_ymd_opt(2000, 1, 1).unwrap());
-                let month_start_naive = month_start_date.and_hms_opt(0, 0, 0).unwrap();
-                let start = chrono::DateTime::parse_from_rfc3339(
-                    &format!("{}T00:00:00Z", month_start_naive.format("%Y-%m-%d"))
-                ).unwrap_or_else(|_| chrono::DateTime::parse_from_rfc3339("2000-01-01T00:00:00Z").unwrap()).to_utc();
-
-                // Next month
-                let next_month = if now.month() == 12 {
-                    chrono::NaiveDate::from_ymd_opt(now.year() + 1, 1, 1)
-                } else {
-                    chrono::NaiveDate::from_ymd_opt(now.year(), now.month() + 1, 1)
-                }.unwrap_or_else(|| chrono::NaiveDate::from_ymd_opt(2000, 1, 1).unwrap());
-                let end_naive = next_month.and_hms_opt(0, 0, 0).unwrap();
-                let end = chrono::DateTime::parse_from_rfc3339(
-                    &format!("{}T00:00:00Z", end_naive.format("%Y-%m-%d"))
-                ).unwrap_or_else(|_| chrono::DateTime::parse_from_rfc3339("2000-01-01T00:00:00Z").unwrap()).to_utc();
-
-                (start, end)
             }
             _ => {
-                // Default: rolling 24h
+                // Default: sliding 24h
                 let start = *now - chrono::Duration::hours(24);
                 (start, *now)
+            }
+        }
+    }
+
+    /// Parse window_size string like "5h", "7d", "30d" into a Duration
+    fn parse_window_size(window_size: &str) -> chrono::Duration {
+        let window_size = window_size.trim();
+        if let Some(hours) = window_size.strip_suffix('h') {
+            if let Ok(h) = hours.parse::<i64>() {
+                return chrono::Duration::hours(h);
+            }
+        }
+        if let Some(days) = window_size.strip_suffix('d') {
+            if let Ok(d) = days.parse::<i64>() {
+                return chrono::Duration::days(d);
+            }
+        }
+        // Default: 5 hours
+        chrono::Duration::hours(5)
+    }
+
+    /// Calculate fixed window period aligned to natural boundaries
+    fn get_fixed_window_period(window_size: &str, duration: chrono::Duration, now: &chrono::DateTime<chrono::Utc>) -> (chrono::DateTime<chrono::Utc>, chrono::DateTime<chrono::Utc>) {
+        use chrono::Datelike;
+
+        if window_size.ends_with('h') {
+            // Hour-based fixed window: align to 0:00 of the day, then step by N-hour intervals
+            // e.g. 5h → windows at 0:00, 5:00, 10:00, 15:00, 20:00
+            if let Some(hours_str) = window_size.strip_suffix('h') {
+                if let Ok(window_hours) = hours_str.parse::<i64>() {
+                    if window_hours > 0 {
+                        let day_start = now.date_naive().and_hms_opt(0, 0, 0).unwrap();
+                        let day_start_utc = day_start.and_utc();
+                        let hours_since_day_start = (*now - day_start_utc).num_hours();
+                        let window_index = hours_since_day_start / window_hours;
+                        let period_start = day_start_utc + chrono::Duration::hours(window_index * window_hours);
+                        let period_end = period_start + chrono::Duration::hours(window_hours);
+                        return (period_start, period_end);
+                    }
+                }
+            }
+        }
+
+        if window_size.ends_with('d') {
+            if let Some(days_str) = window_size.strip_suffix('d') {
+                if let Ok(window_days) = days_str.parse::<i64>() {
+                    if window_days == 1 {
+                        // 1d = today 0:00 to tomorrow 0:00
+                        let day_start = now.date_naive().and_hms_opt(0, 0, 0).unwrap();
+                        let start = day_start.and_utc();
+                        let end = start + chrono::Duration::days(1);
+                        return (start, end);
+                    } else if window_days == 7 {
+                        // 7d = this week Monday 0:00 to next Monday 0:00
+                        let weekday = now.weekday().num_days_from_monday();
+                        let week_start_naive = now.date_naive()
+                            .checked_sub_signed(chrono::Duration::days(weekday as i64))
+                            .map(|d| d.and_hms_opt(0, 0, 0).unwrap())
+                            .unwrap_or_else(|| now.date_naive().and_hms_opt(0, 0, 0).unwrap());
+                        let start = week_start_naive.and_utc();
+                        let end = start + chrono::Duration::weeks(1);
+                        return (start, end);
+                    } else if window_days == 30 || window_days == 31 {
+                        // 30d/31d = this month 1st 0:00 to next month 1st 0:00
+                        let month_start_date = chrono::NaiveDate::from_ymd_opt(now.year(), now.month(), 1)
+                            .unwrap_or_else(|| chrono::NaiveDate::from_ymd_opt(2000, 1, 1).unwrap());
+                        let month_start_naive = month_start_date.and_hms_opt(0, 0, 0).unwrap();
+                        let start = month_start_naive.and_utc();
+                        let next_month = if now.month() == 12 {
+                            chrono::NaiveDate::from_ymd_opt(now.year() + 1, 1, 1)
+                        } else {
+                            chrono::NaiveDate::from_ymd_opt(now.year(), now.month() + 1, 1)
+                        }.unwrap_or_else(|| chrono::NaiveDate::from_ymd_opt(2000, 1, 1).unwrap());
+                        let end_naive = next_month.and_hms_opt(0, 0, 0).unwrap();
+                        let end = end_naive.and_utc();
+                        return (start, end);
+                    } else {
+                        // Generic N-day fixed window: align to epoch-like start
+                        // Simplification: align to most recent N-day boundary from a reference point
+                        // Use days since 2000-01-01 as reference
+                        let ref_date = chrono::NaiveDate::from_ymd_opt(2000, 1, 1).unwrap();
+                        let ref_date_utc = ref_date.and_hms_opt(0, 0, 0).unwrap().and_utc();
+                        let days_since_ref = (*now - ref_date_utc).num_days();
+                        let window_index = days_since_ref / window_days;
+                        let period_start_date = ref_date.checked_add_signed(chrono::Duration::days(window_index * window_days)).unwrap();
+                        let period_start_naive = period_start_date.and_hms_opt(0, 0, 0).unwrap();
+                        let period_end_date = period_start_date.checked_add_signed(chrono::Duration::days(window_days)).unwrap();
+                        let period_end_naive = period_end_date.and_hms_opt(0, 0, 0).unwrap();
+                        let start = period_start_naive.and_utc();
+                        let end = period_end_naive.and_utc();
+                        return (start, end);
+                    }
+                }
+            }
+        }
+
+        // Default: fixed 5h window
+        Self::get_fixed_window_period("5h", chrono::Duration::hours(5), now)
+    }
+
+    /// Check if a calibration is still valid in the current window period
+    pub fn is_calibration_valid(
+        cal: &ProviderQuotaCalibrationRow,
+        window_mode: &str,
+        current_period_start: &chrono::DateTime<chrono::Utc>,
+        current_period_end: &chrono::DateTime<chrono::Utc>,
+    ) -> bool {
+        match window_mode {
+            "fixed" => {
+                // Fixed window: calibration is valid only if its window boundaries
+                // exactly match the current window boundaries
+                if let (Some(cal_start), Some(cal_end)) = (&cal.calibration_window_start, &cal.calibration_window_end) {
+                    let current_start_str = current_period_start.format("%Y-%m-%d %H:%M:%S").to_string();
+                    let current_end_str = current_period_end.format("%Y-%m-%d %H:%M:%S").to_string();
+                    // Compare as strings (UTC format)
+                    cal_start == &current_start_str && cal_end == &current_end_str
+                } else {
+                    // No window info recorded → invalid (old calibration without window binding)
+                    false
+                }
+            }
+            "sliding" => {
+                // Sliding window: calibration is valid if calibrated_at is within
+                // the current sliding window period
+                if let Ok(calibrated_at) = chrono::DateTime::parse_from_rfc3339(
+                    &format!("{}Z", cal.calibrated_at.replace(' ', "T"))
+                ) {
+                    let calibrated_utc = calibrated_at.to_utc();
+                    calibrated_utc >= *current_period_start && calibrated_utc <= *current_period_end
+                } else {
+                    false
+                }
+            }
+            _ => false,
+        }
+    }
+
+    /// Normalize a legacy quota_type to the new format
+    /// "5h" → ("sliding", "5h")  — old 5h was rolling/sliding
+    /// "weekly" → ("fixed", "7d")
+    /// "monthly" → ("fixed", "30d")
+    pub fn normalize_quota_type(quota_type: &str) -> (String, String) {
+        match quota_type {
+            "5h" => ("sliding".to_string(), "5h".to_string()),
+            "weekly" => ("fixed".to_string(), "7d".to_string()),
+            "monthly" => ("fixed".to_string(), "30d".to_string()),
+            other => {
+                // New format: "fixed:5h" or "sliding:5h"
+                if let Some((mode, size)) = other.split_once(':') {
+                    (mode.to_string(), size.to_string())
+                } else {
+                    // Unknown format → default to fixed
+                    ("fixed".to_string(), other.to_string())
+                }
             }
         }
     }
@@ -2366,6 +2525,8 @@ pub struct ProviderQuotaRow {
     pub id: i64,
     pub provider_id: String,
     pub quota_type: String,
+    pub window_mode: String,
+    pub window_size: String,
     pub limit_count: i64,
     pub is_enabled: bool,
     pub created_at: String,
@@ -2379,6 +2540,8 @@ pub struct ProviderQuotaCalibrationRow {
     pub quota_type: String,
     pub calibration_offset: i64,
     pub calibrated_at: String,
+    pub calibration_window_start: Option<String>,
+    pub calibration_window_end: Option<String>,
     pub note: Option<String>,
 }
 
@@ -2388,13 +2551,20 @@ pub struct QuotaUsageInfo {
     pub provider_id: String,
     pub provider_name: String,
     pub quota_type: String,
+    pub window_mode: String,
+    pub window_size: String,
     pub limit_count: i64,
     pub is_enabled: bool,
     /// Requests counted by the gateway in the current period
     pub gateway_count: i64,
     /// Manual calibration offset (for requests made outside the gateway)
     pub calibration_offset: i64,
-    /// Total estimated usage = gateway_count + calibration_offset
+    /// Whether the calibration is still valid in the current window
+    pub calibration_valid: bool,
+    /// The window period when the calibration was set
+    pub calibration_window_start: Option<String>,
+    pub calibration_window_end: Option<String>,
+    /// Total estimated usage = gateway_count + calibration_offset (only if calibration_valid)
     pub estimated_total: i64,
     /// Remaining = limit_count - estimated_total
     pub remaining: i64,

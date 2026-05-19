@@ -455,3 +455,166 @@ src/
 
 **实现状态**: 📋 待开发 / 🔧 开发中 / ✅ 已完成
 ```
+
+---
+
+## 用量配额：固定窗口 vs 滑动窗口 + 校准窗口期绑定
+
+### 需求
+
+1. **两种窗口模式**：
+   - **固定窗口**：从周期起点开始计算，如"每月1号0点"、"每周一0点"、"每5小时整点（0:00/5:00/10:00/15:00/20:00）"
+   - **滑动窗口**：从当前时刻往前推算，如"最近5小时"、"最近7天"、"最近30天"
+
+2. **校准窗口期绑定**：
+   - 校准时记录校准时刻和当时的窗口期范围
+   - 校准偏移只在对应的窗口期内生效
+   - 窗口期切换后（如从5:00-10:00切换到10:00-15:00），旧校准自动失效
+   - 滑动窗口：校准记录包含 `calibrated_at`，只有当 `calibrated_at` 在当前滑动窗口内时才生效
+
+3. **用户可自定义窗口大小**：
+   - 不再硬编码 `5h`/`weekly`/`monthly`
+   - 用户可输入窗口时长（如 3h、12h、2d、7d、30d）
+   - 同时选择窗口模式（固定/滑动）
+
+### 数据库变更
+
+#### `provider_quotas` 表
+
+```sql
+CREATE TABLE IF NOT EXISTS provider_quotas (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    provider_id TEXT NOT NULL,
+    quota_type TEXT NOT NULL,        -- 保留兼容，但新格式为 "fixed:5h"/"sliding:5h"/"fixed:7d"/"sliding:30d"
+    window_mode TEXT NOT NULL DEFAULT 'fixed',  -- 'fixed' 或 'sliding'
+    window_size TEXT NOT NULL DEFAULT '5h',     -- 窗口大小，如 '5h'/'12h'/'7d'/'30d'
+    limit_count INTEGER NOT NULL,
+    is_enabled BOOLEAN NOT NULL DEFAULT 1,
+    created_at TEXT NOT NULL DEFAULT (datetime('now')),
+    updated_at TEXT NOT NULL DEFAULT (datetime('now')),
+    FOREIGN KEY (provider_id) REFERENCES providers(id) ON DELETE CASCADE,
+    UNIQUE(provider_id, quota_type)
+);
+```
+
+#### `provider_quota_calibrations` 表
+
+```sql
+CREATE TABLE IF NOT EXISTS provider_quota_calibrations (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    provider_id TEXT NOT NULL,
+    quota_type TEXT NOT NULL,
+    calibration_offset INTEGER NOT NULL DEFAULT 0,
+    calibrated_at TEXT NOT NULL DEFAULT (datetime('now')),
+    -- 新增：校准时的窗口期范围，用于判断校准是否仍在有效窗口内
+    calibration_window_start TEXT,   -- 校准时所属窗口的起始时间
+    calibration_window_end TEXT,     -- 校准时所属窗口的结束时间
+    note TEXT,
+    FOREIGN KEY (provider_id) REFERENCES providers(id) ON DELETE CASCADE,
+    UNIQUE(provider_id, quota_type)
+);
+```
+
+### 窗口计算逻辑
+
+#### 固定窗口（fixed）
+
+```
+window_size = "5h" → 对齐到 0:00/5:00/10:00/15:00/20:00
+window_size = "1d" → 对齐到当天 0:00
+window_size = "7d" → 对齐到本周一 0:00
+window_size = "30d" → 对齐到本月1号 0:00
+
+period_start = 当前时间对齐到窗口起点
+period_end = period_start + window_size
+```
+
+对齐规则：
+- 小时级（Nh）：从当天0:00开始，每N小时一个窗口
+- 天级（Nd）：从epoch开始，每N天一个窗口（简化为从最近N天整数倍对齐）
+- 实际简化：1d=当天0:00，7d=本周一0:00，30d=本月1号0:00
+
+#### 滑动窗口（sliding）
+
+```
+period_start = now - window_size
+period_end = now
+```
+
+### 校准有效性判断
+
+```rust
+fn is_calibration_valid(cal: &CalibrationRow, period_start: &DateTime<Utc>, period_end: &DateTime<Utc>, window_mode: &str) -> bool {
+    match window_mode {
+        "fixed" => {
+            // 固定窗口：校准时的窗口范围必须与当前窗口范围完全一致
+            // 即 calibration_window_start == period_start && calibration_window_end == period_end
+            cal.calibration_window_start.as_deref() == Some(&period_start_str) &&
+            cal.calibration_window_end.as_deref() == Some(&period_end_str)
+        }
+        "sliding" => {
+            // 滑动窗口：校准时刻必须在当前滑动窗口内
+            // 即 calibrated_at >= period_start && calibrated_at <= period_end
+            cal.calibrated_at >= period_start_str && cal.calibrated_at <= period_end_str
+        }
+        _ => false
+    }
+}
+```
+
+### API 变更
+
+#### `POST /api/v1/quotas/:provider_id`
+
+```json
+{
+    "window_mode": "fixed",     // "fixed" 或 "sliding"
+    "window_size": "5h",        // Nh/Nd 格式
+    "limit_count": 500,
+    "is_enabled": true
+}
+```
+
+- `quota_type` 自动生成为 `{window_mode}:{window_size}`，如 `fixed:5h`、`sliding:30d`
+- 向后兼容：仍接受 `quota_type` 字段（"5h"/"weekly"/"monthly"），自动转换为 `fixed:5h`/`fixed:7d`/`fixed:30d`
+
+#### `POST /api/v1/quotas/:provider_id/calibration`
+
+```json
+{
+    "quota_type": "fixed:5h",
+    "calibration_offset": 50,
+    "note": "手动校准"
+}
+```
+
+- 服务端自动记录 `calibration_window_start` 和 `calibration_window_end`
+
+### `QuotaUsageInfo` 响应变更
+
+```json
+{
+    "provider_id": "minimax",
+    "quota_type": "fixed:5h",
+    "window_mode": "fixed",
+    "window_size": "5h",
+    "limit_count": 500,
+    "gateway_count": 200,
+    "calibration_offset": 50,
+    "calibration_valid": true,       // 新增：校准是否在当前窗口内有效
+    "calibration_window_start": "2026-05-19 10:00:00",  // 新增
+    "calibration_window_end": "2026-05-19 15:00:00",    // 新增
+    "estimated_total": 250,
+    "remaining": 250,
+    "usage_percent": 50.0,
+    "period_start": "2026-05-19 10:00:00",
+    "period_current": "2026-05-19 12:30:00"
+}
+```
+
+### 前端变更
+
+1. 配额类型选择改为：窗口模式（固定/滑动）+ 窗口大小（输入框，如 5h/7d/30d）
+2. 校准模态框显示当前窗口期范围，提示校准只在此窗口内生效
+3. 配额表格显示窗口模式和大小，校准列显示是否有效
+4. 向后兼容旧数据（quota_type 为 "5h"/"weekly"/"monthly" 的自动映射）
