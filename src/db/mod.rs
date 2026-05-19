@@ -235,6 +235,13 @@ impl Database {
         .execute(&self.pool)
         .await;
 
+        // Migration: Add chart_color column to providers table
+        let _ = sqlx::query(
+            "ALTER TABLE providers ADD COLUMN chart_color TEXT"
+        )
+        .execute(&self.pool)
+        .await;
+
         Ok(())
     }
 
@@ -518,6 +525,7 @@ impl Database {
             bypass_proxy: r.try_get::<i64, _>("bypass_proxy").unwrap_or(0) != 0,
             response_content_path: r.try_get("response_content_path").unwrap_or_else(|_| "choices.0.message.content".to_string()),
             response_reasoning_path: r.try_get("response_reasoning_path").unwrap_or_else(|_| "choices.0.delta.reasoning_content".to_string()),
+            chart_color: opt_str(r, "chart_color"),
             created_at: r.try_get("created_at").unwrap_or_default(),
             updated_at: r.try_get("updated_at").unwrap_or_default(),
         }
@@ -599,6 +607,7 @@ impl Database {
         bypass_proxy: bool,
         response_content_path: &str,
         response_reasoning_path: &str,
+        chart_color: Option<&str>,
     ) -> Result<(), sqlx::Error> {
         // If ID changed, cascade update all related tables
         // Disable FK checks temporarily since we're updating the referenced key
@@ -628,6 +637,7 @@ impl Database {
                 bypass_proxy = ?,
                 response_content_path = ?,
                 response_reasoning_path = ?,
+                chart_color = ?,
                 updated_at = datetime('now')
                 WHERE id = ?"#
         )
@@ -657,11 +667,24 @@ impl Database {
         .bind(bypass_proxy)
         .bind(response_content_path)
         .bind(response_reasoning_path)
+        .bind(chart_color)
         .bind(old_id)
         .execute(&self.pool)
         .await?;
 
 
+        Ok(())
+    }
+
+    /// Update provider chart color only
+    pub async fn update_provider_chart_color(&self, id: &str, chart_color: Option<&str>) -> Result<(), sqlx::Error> {
+        sqlx::query(
+            "UPDATE providers SET chart_color = ?, updated_at = datetime('now') WHERE id = ?"
+        )
+        .bind(chart_color)
+        .bind(id)
+        .execute(&self.pool)
+        .await?;
         Ok(())
     }
 
@@ -2116,6 +2139,7 @@ pub struct ProviderRow {
     pub bypass_proxy: bool,
     pub response_content_path: String,
     pub response_reasoning_path: String,
+    pub chart_color: Option<String>,
     pub created_at: String,
     pub updated_at: String,
 }

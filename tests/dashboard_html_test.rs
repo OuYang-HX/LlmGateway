@@ -1,10 +1,10 @@
 //! Dashboard HTML correctness tests
 //!
 //! Covers issues found during development:
-//! 1. Token rate chart hidden dataset default not set correctly
-//! 2. Chart.js legend click handler used wrong API
-//! 3. Token rate legend text not updated on chart init
-//! 4. Chart.js CDN loaded twice
+//! 1. Token rate charts split into output and input
+//! 2. Multi-provider datasets with auto colors
+//! 3. Chart color persistence via API
+//! 4. Chart.js CDN loaded once
 
 use std::fs;
 
@@ -21,14 +21,30 @@ fn test_dashboard_html_has_no_duplicate_chartjs_cdn() {
 }
 
 #[test]
-fn test_dashboard_html_token_rate_input_hidden_by_default() {
+fn test_dashboard_html_token_rate_has_two_separate_charts() {
     let content = fs::read_to_string("src/dashboard.html").unwrap();
 
-    // The Input dataset should be hidden by default (hidden: true)
-    // This is critical for the "default show Output only" requirement
+    // Should have separate output and input chart canvases
     assert!(
-        content.contains("hidden: true"),
-        "Chart dataset should have 'hidden: true' for the default-hidden Input line"
+        content.contains("output-rate-chart"),
+        "Should have output-rate-chart canvas"
+    );
+    assert!(
+        content.contains("input-rate-chart"),
+        "Should have input-rate-chart canvas"
+    );
+}
+
+#[test]
+fn test_dashboard_html_token_rate_output_before_input() {
+    let content = fs::read_to_string("src/dashboard.html").unwrap();
+
+    // Output chart should appear before input chart in HTML
+    let output_pos = content.find("output-rate-chart").expect("Should have output-rate-chart");
+    let input_pos = content.find("input-rate-chart").expect("Should have input-rate-chart");
+    assert!(
+        output_pos < input_pos,
+        "Output chart should appear before input chart in HTML"
     );
 }
 
@@ -44,35 +60,10 @@ fn test_dashboard_html_token_rate_has_legend_onclick_handler() {
 }
 
 #[test]
-fn test_dashboard_html_token_rate_legend_updated_on_init() {
-    let content = fs::read_to_string("src/dashboard.html").unwrap();
-
-    // In the else branch (chart first creation), updateTokenRateLegend must be called AFTER tokenRateChart = new Chart
-    // We look for: '} else {' followed by 'tokenRateChart = new Chart', then later 'updateTokenRateLegend(tokenRateChart)'
-    let else_pattern = content.find("} else {\n            tokenRateChart = new Chart");
-    assert!(else_pattern.is_some(), "Should find else branch with chart creation");
-
-    // Get everything after the else pattern start
-    let after_else = &content[else_pattern.unwrap()..];
-
-    // The else block ends at the next '});\n        }' - find the chart creation and update in this scope
-    let chart_in_else = after_else.find("tokenRateChart = new Chart");
-    let update_in_else = after_else.find("updateTokenRateLegend(tokenRateChart)");
-
-    assert!(chart_in_else.is_some(), "Should find chart creation in else branch");
-    assert!(update_in_else.is_some(), "Should find updateTokenRateLegend call in else branch");
-    assert!(
-        update_in_else > chart_in_else,
-        "updateTokenRateLegend should be called AFTER chart creation in else branch"
-    );
-}
-
-#[test]
 fn test_dashboard_html_token_rate_uses_elapsed_seconds() {
     let content = fs::read_to_string("src/dashboard.html").unwrap();
 
     // Frontend should use elapsed_seconds from backend for accurate rate calculation
-    // NOT a hardcoded 10-second interval
     assert!(
         content.contains("elapsed_seconds"),
         "Frontend should use elapsed_seconds from backend"
@@ -86,24 +77,40 @@ fn test_dashboard_html_token_rate_uses_elapsed_seconds() {
 }
 
 #[test]
-fn test_dashboard_html_token_rate_legend_text_function_exists() {
+fn test_dashboard_html_token_rate_has_updateRateLegends() {
     let content = fs::read_to_string("src/dashboard.html").unwrap();
 
     assert!(
-        content.contains("function updateTokenRateLegend"),
-        "updateTokenRateLegend function should exist"
+        content.contains("function updateRateLegends"),
+        "updateRateLegends function should exist"
     );
 }
 
 #[test]
-fn test_dashboard_html_token_rate_legend_shows_only_visible_datasets() {
+fn test_dashboard_html_token_rate_syncs_legend_between_charts() {
     let content = fs::read_to_string("src/dashboard.html").unwrap();
 
-    // The legend text should only show peaks for VISIBLE datasets
-    // This is the key logic fix - previously it always showed both
+    // Clicking legend on one chart should sync hidden state to the other
     assert!(
-        content.contains("visible.length"),
-        "Legend text should check visible datasets"
+        content.contains("syncChartLegend"),
+        "Should have syncChartLegend function to sync legend state between charts"
+    );
+}
+
+#[test]
+fn test_dashboard_html_token_rate_has_provider_color_system() {
+    let content = fs::read_to_string("src/dashboard.html").unwrap();
+
+    // Should have default color palette
+    assert!(
+        content.contains("DEFAULT_COLORS"),
+        "Should have DEFAULT_COLORS palette for auto-assigning colors"
+    );
+
+    // Should have getProviderColor function
+    assert!(
+        content.contains("function getProviderColor"),
+        "Should have getProviderColor function"
     );
 }
 
@@ -111,16 +118,11 @@ fn test_dashboard_html_token_rate_legend_shows_only_visible_datasets() {
 fn test_dashboard_html_token_rate_uses_local_timezone() {
     let content = fs::read_to_string("src/dashboard.html").unwrap();
 
-    // snapshot_time from backend is UTC ISO format (ending in Z)
-    // Frontend should parse it with new Date() and display in local time
-    // toLocaleTimeString handles timezone automatically
     assert!(
         content.contains("toLocaleTimeString"),
         "Should use toLocaleTimeString for local timezone display"
     );
 
-    // Should NOT use getUTCHours or UTC-based manual formatting
-    // (which would show UTC time instead of local time)
     assert!(
         !content.contains("getUTCHours"),
         "Should NOT use UTC methods that ignore local timezone"
@@ -128,10 +130,39 @@ fn test_dashboard_html_token_rate_uses_local_timezone() {
 }
 
 #[test]
-fn test_dashboard_html_api_key_usage_chart_has_detail_table() {
+fn test_dashboard_html_chart_color_modal_exists() {
     let content = fs::read_to_string("src/dashboard.html").unwrap();
 
-    // API Key usage section should have a detail table element
+    // Should have chart color modal
+    assert!(
+        content.contains("chart-color-modal"),
+        "Should have chart-color-modal for setting provider colors"
+    );
+    assert!(
+        content.contains("openChartColorModal"),
+        "Should have openChartColorModal function"
+    );
+    assert!(
+        content.contains("saveChartColors"),
+        "Should have saveChartColors function"
+    );
+}
+
+#[test]
+fn test_dashboard_html_chart_color_api_endpoint() {
+    let content = fs::read_to_string("src/dashboard.html").unwrap();
+
+    // Should call the chart-color API endpoint
+    assert!(
+        content.contains("/chart-color"),
+        "Should reference chart-color API endpoint for persisting colors"
+    );
+}
+
+#[test]
+fn test_dashboard_html_api_key_usage_has_detail_table() {
+    let content = fs::read_to_string("src/dashboard.html").unwrap();
+
     assert!(
         content.contains("apikey-usage-detail"),
         "Should have apikey-usage-detail element for per-key stats table"
@@ -139,10 +170,9 @@ fn test_dashboard_html_api_key_usage_chart_has_detail_table() {
 }
 
 #[test]
-fn test_dashboard_html_api_key_usage_chart_uses_getApiKeyName() {
+fn test_dashboard_html_api_key_usage_uses_getApiKeyName() {
     let content = fs::read_to_string("src/dashboard.html").unwrap();
 
-    // Chart labels should use getApiKeyName to show readable names, not raw IDs
     assert!(
         content.contains("getApiKeyName"),
         "API Key usage chart should use getApiKeyName for labels"
@@ -153,7 +183,6 @@ fn test_dashboard_html_api_key_usage_chart_uses_getApiKeyName() {
 fn test_dashboard_html_api_key_edit_modal_exists() {
     let content = fs::read_to_string("src/dashboard.html").unwrap();
 
-    // API Key modal should have edit mode support
     assert!(
         content.contains("ak-modal-title"),
         "Should have ak-modal-title element for edit/create mode"
@@ -172,8 +201,6 @@ fn test_dashboard_html_api_key_edit_modal_exists() {
 fn test_dashboard_html_shows_input_checkbox_removed() {
     let content = fs::read_to_string("src/dashboard.html").unwrap();
 
-    // The "显示输入" checkbox was removed - it should NOT be present
-    // (users now click the legend directly to toggle curves)
     assert!(
         !content.contains("显示输入"),
         "Should NOT have '显示输入' checkbox (replaced by legend click)"
@@ -187,7 +214,6 @@ fn test_dashboard_html_shows_input_checkbox_removed() {
 #[test]
 fn test_dashboard_html_error_row_highlighting_in_logs() {
     let content = fs::read_to_string("src/dashboard.html").unwrap();
-    // Error rows in logs should have visual distinction (red background/border)
     assert!(
         content.contains("error") && (content.contains("color:#ef4444") || content.contains("background:#ef") || content.contains("rgb(239")),
         "Logs table should highlight error rows with red color"
@@ -197,7 +223,6 @@ fn test_dashboard_html_error_row_highlighting_in_logs() {
 #[test]
 fn test_dashboard_html_logs_pagination_controls() {
     let content = fs::read_to_string("src/dashboard.html").unwrap();
-    // Logs tab should have pagination with prev/next buttons
     assert!(
         (content.contains("prev") || content.contains("previous") || content.contains("上一页") || content.contains("前一页")) &&
         (content.contains("next") || content.contains("下一页") || content.contains("后一页")),
@@ -208,7 +233,6 @@ fn test_dashboard_html_logs_pagination_controls() {
 #[test]
 fn test_dashboard_html_time_range_filter() {
     let content = fs::read_to_string("src/dashboard.html").unwrap();
-    // Should have time range filter for logs/stats
     assert!(
         content.contains("time") || content.contains("时间") || content.contains("range") || content.contains("范围"),
         "Should have time range filter"
@@ -218,7 +242,6 @@ fn test_dashboard_html_time_range_filter() {
 #[test]
 fn test_dashboard_html_stats_by_api_key() {
     let content = fs::read_to_string("src/dashboard.html").unwrap();
-    // Overview should show stats grouped by API key
     assert!(
         content.contains("api-key") || content.contains("api_key") || content.contains("API Key") || content.contains("apiKey"),
         "Should have API key usage stats"
@@ -228,7 +251,6 @@ fn test_dashboard_html_stats_by_api_key() {
 #[test]
 fn test_dashboard_html_csv_export_in_logs() {
     let content = fs::read_to_string("src/dashboard.html").unwrap();
-    // Logs tab should have CSV export button
     assert!(
         content.contains("csv") || content.contains("CSV") || content.contains("export") || content.contains("导出"),
         "Should have CSV export for logs"
@@ -238,7 +260,6 @@ fn test_dashboard_html_csv_export_in_logs() {
 #[test]
 fn test_dashboard_html_refresh_token_button() {
     let content = fs::read_to_string("src/dashboard.html").unwrap();
-    // Provider management should have refresh token button for dynamic token providers
     assert!(
         content.contains("refresh") || content.contains("刷新") || content.contains("refresh-token"),
         "Should have refresh token functionality"
@@ -248,7 +269,6 @@ fn test_dashboard_html_refresh_token_button() {
 #[test]
 fn test_dashboard_html_logs_model_filter() {
     let content = fs::read_to_string("src/dashboard.html").unwrap();
-    // Logs should have model filter
     assert!(
         content.contains("model") || content.contains("模型"),
         "Should have model filter in logs"
@@ -258,7 +278,6 @@ fn test_dashboard_html_logs_model_filter() {
 #[test]
 fn test_dashboard_html_batch_provider_toggle() {
     let content = fs::read_to_string("src/dashboard.html").unwrap();
-    // Provider management should have batch enable/disable
     assert!(
         content.contains("batch") || content.contains("批量"),
         "Should have batch provider operations"

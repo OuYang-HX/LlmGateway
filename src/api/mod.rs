@@ -444,6 +444,7 @@ pub struct UpdateProviderRequest {
     pub is_active: Option<bool>,
     pub response_content_path: Option<String>,
     pub response_reasoning_path: Option<String>,
+    pub chart_color: Option<String>,
     pub new_id: Option<String>,
 }
 
@@ -498,6 +499,7 @@ pub async fn update_provider(
     let bypass_proxy = req.bypass_proxy.unwrap_or(existing.bypass_proxy);
     let response_content_path = req.response_content_path.as_deref().unwrap_or(&existing.response_content_path);
     let response_reasoning_path = req.response_reasoning_path.as_deref().unwrap_or(&existing.response_reasoning_path);
+    let chart_color = req.chart_color.as_deref().or(existing.chart_color.as_deref());
     let new_id = req.new_id.as_deref().unwrap_or(&existing.id);
 
     // Check if new_id conflicts with an existing provider (when ID is changing)
@@ -519,6 +521,7 @@ pub async fn update_provider(
         token_expiry_seconds, weight, is_active, bypass_proxy,
         response_content_path,
         response_reasoning_path,
+        chart_color,
     ).await {
         Ok(()) => (StatusCode::OK, Json(serde_json::json!({"id": id}))).into_response(),
         Err(e) => {
@@ -1073,6 +1076,29 @@ pub async fn get_top_provider(
         Ok(None) => Json(serde_json::json!({ "provider_id": null })).into_response(),
         Err(e) => {
             tracing::error!("Failed to get top provider: {}", e);
+            (StatusCode::INTERNAL_SERVER_ERROR, Json(serde_json::json!({"error": e.to_string()}))).into_response()
+        }
+    }
+}
+
+/// Update provider chart color
+#[derive(Debug, Deserialize)]
+pub struct UpdateChartColorRequest {
+    pub chart_color: Option<String>,
+}
+
+pub async fn update_provider_chart_color(
+    State(state): State<AppState>,
+    Path(id): Path<String>,
+    Json(req): Json<UpdateChartColorRequest>,
+) -> impl IntoResponse {
+    if state.db.get_provider(&id).await.ok().flatten().is_none() {
+        return (StatusCode::NOT_FOUND, Json(serde_json::json!({"error": "Provider not found"}))).into_response();
+    }
+    match state.db.update_provider_chart_color(&id, req.chart_color.as_deref()).await {
+        Ok(()) => (StatusCode::OK, Json(serde_json::json!({"id": id}))).into_response(),
+        Err(e) => {
+            tracing::error!("Failed to update chart color: {}", e);
             (StatusCode::INTERNAL_SERVER_ERROR, Json(serde_json::json!({"error": e.to_string()}))).into_response()
         }
     }

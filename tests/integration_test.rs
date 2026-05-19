@@ -654,6 +654,8 @@ async fn test_stats_collector_take_snapshot() {
 
     collector.record_usage("test-provider", 1000, 500).await;
 
+    // Wait >1s so elapsed >= 1.0 (snapshots with elapsed < 1s are skipped)
+    tokio::time::sleep(std::time::Duration::from_millis(1100)).await;
     let rate = collector.take_snapshot("test-provider").await.unwrap();
     assert!(rate > 0.0, "Token rate should be positive");
 
@@ -670,11 +672,13 @@ async fn test_stats_collector_multiple_snapshots() {
     let collector = StatsCollector::new(db.clone());
 
     collector.record_usage("test-provider", 100, 50).await;
+    tokio::time::sleep(std::time::Duration::from_millis(1100)).await;
     let rate1 = collector.take_snapshot("test-provider").await.unwrap();
     assert!(rate1 > 0.0);
 
     // After snapshot, window is reset
     collector.record_usage("test-provider", 200, 100).await;
+    tokio::time::sleep(std::time::Duration::from_millis(1100)).await;
     let rate2 = collector.take_snapshot("test-provider").await.unwrap();
     assert!(rate2 > 0.0);
 
@@ -1339,7 +1343,7 @@ async fn test_provider_reasoning_path_field() {
         "prov-reason", "prov-reason", "Updated Provider", "https://r.com", "openai", "api_key",
         Some("key2"), None, None, None, None, None, None, None, None, None, None,
         "token", "refreshToken", "Authorization", "Bearer ", 86400, 1, true, false,
-        "custom.content.path", "custom.reasoning.path",
+        "custom.content.path", "custom.reasoning.path", None,
     ).await.unwrap();
 
     let updated = db.get_provider("prov-reason").await.unwrap().unwrap();

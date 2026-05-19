@@ -123,14 +123,21 @@
         <div class="stats-grid" id="summary-stats"></div>
         <div class="panel">
             <h2>Token 速率曲线 <span style="font-size:12px;color:#64748b">(最近 1 小时)</span>
-                <select id="tr-provider" onchange="loadTokenRateChart()" style="margin-left:12px;font-size:12px;background:#1e293b;color:#e2e8f0;border:1px solid #334155;border-radius:4px;padding:2px 6px">
+                <select id="tr-provider" onchange="loadTokenRateCharts()" style="margin-left:12px;font-size:12px;background:#1e293b;color:#e2e8f0;border:1px solid #334155;border-radius:4px;padding:2px 6px">
                     <option value="">全部</option>
                 </select>
+                <button class="btn btn-sm" onclick="openChartColorModal()" style="margin-left:8px;font-size:11px">🎨 样式</button>
             </h2>
-            <div style="position:relative;height:200px">
-                <canvas id="token-rate-chart"></canvas>
+            <h3 style="font-size:13px;color:#94a3b8;margin:8px 0 4px">Output Tokens/s</h3>
+            <div style="position:relative;height:180px">
+                <canvas id="output-rate-chart"></canvas>
             </div>
-            <div id="token-rate-legend" style="text-align:center;font-size:12px;color:#64748b;margin-top:4px">加载中...</div>
+            <div id="output-rate-legend" style="text-align:center;font-size:12px;color:#64748b;margin-top:4px">加载中...</div>
+            <h3 style="font-size:13px;color:#94a3b8;margin:12px 0 4px">Input Tokens/s</h3>
+            <div style="position:relative;height:180px">
+                <canvas id="input-rate-chart"></canvas>
+            </div>
+            <div id="input-rate-legend" style="text-align:center;font-size:12px;color:#64748b;margin-top:4px">加载中...</div>
         </div>
         <div class="panel">
             <h2>API Key 使用量 <span style="font-size:12px;color:#64748b">(Token 消耗 Top 10)</span>
@@ -140,10 +147,7 @@
                     <option value="30d">近30天</option>
                 </select>
             </h2>
-            <div style="position:relative;height:180px">
-                <canvas id="apikey-usage-chart"></canvas>
-            </div>
-            <div id="apikey-usage-detail" style="margin-top:12px"></div>
+            <div id="apikey-usage-detail"></div>
         </div>
         <div class="panel">
             <h2>用量趋势 <span style="font-size:12px;color:#64748b">(近30天)</span>
@@ -269,7 +273,8 @@
                 <th>服务商</th>
                 <th class="hide-mobile">模型</th>
                 <th style="cursor:pointer" onclick="toggleLogSort('response_status')">状态码 <span id="sort-response_status"></span></th>
-                <th style="cursor:pointer" onclick="toggleLogSort('total_tokens')">Tokens <span id="sort-total_tokens"></span></th>
+                <th style="cursor:pointer" onclick="toggleLogSort('prompt_tokens')">输入 <span id="sort-prompt_tokens"></span></th>
+                <th style="cursor:pointer" onclick="toggleLogSort('completion_tokens')">输出 <span id="sort-completion_tokens"></span></th>
                 <th class="hide-mobile" style="cursor:pointer" onclick="toggleLogSort('duration_ms')">耗时 <span id="sort-duration_ms"></span></th>
                 <th class="hide-mobile">流式</th><th class="hide-mobile">限流</th><th class="hide-mobile">错误</th><th>详情</th><th>删除</th>
             </tr></thead><tbody></tbody></table>
@@ -443,7 +448,6 @@ async function loadSummary(){
             <div class="stat-card"><div class="label">活跃服务商</div><div class="value green">${d.active_providers}</div></div>
             <div class="stat-card"><div class="label">24h 请求数</div><div class="value blue">${d.total_requests_24h}</div></div>
             <div class="stat-card"><div class="label">24h Tokens</div><div class="value green">${d.total_tokens_24h.toLocaleString()}</div></div>
-            <div class="stat-card"><div class="label">Avg Tokens/s</div><div class="value yellow">${d.avg_tokens_per_second.toFixed(1)}</div></div>
             <div class="stat-card"><div class="label">24h 限流</div><div class="value red">${d.throttle_count_24h}</div></div>`;
     }catch(e){console.error(e)}
 }
@@ -490,119 +494,270 @@ async function loadOverviewApiKeys(){
 }
 
 // ========== 实时 Token 速率曲线 ==========
-let tokenRateChart = null;
+let outputRateChart = null;
+let inputRateChart = null;
 let tokenRateInterval = null;
+let allProviders = [];
 
-async function loadTokenRateChart(){
+// Default color palette for providers without a saved color
+const DEFAULT_COLORS = [
+    '59,130,246',  // blue
+    '34,197,94',   // green
+    '249,115,22',  // orange
+    '168,85,247',  // purple
+    '236,72,153',  // pink
+    '14,165,233',  // sky
+    '234,179,8',   // yellow
+    '239,68,68',   // red
+    '20,184,166',  // teal
+    '132,204,22',  // lime
+];
+
+function getProviderChartStyle(providerId) {
+    const p = allProviders.find(x => x.id === providerId);
+    if (p && p.chart_color) {
+        // Try parse as JSON (new format: {rgb, line_width, line_style})
+        try {
+            const obj = JSON.parse(p.chart_color);
+            return {
+                rgb: obj.rgb || DEFAULT_COLORS[0],
+                line_width: obj.line_width || 1.5,
+                line_style: obj.line_style || 'solid',
+            };
+        } catch(e) {
+            // Old format: plain RGB string like "59,130,246"
+            return { rgb: p.chart_color, line_width: 1.5, line_style: 'solid' };
+        }
+    }
+    // Auto-assign from palette
+    const idx = allProviders.findIndex(x => x.id === providerId);
+    return { rgb: DEFAULT_COLORS[idx % DEFAULT_COLORS.length], line_width: 1.5, line_style: 'solid' };
+}
+
+function getProviderColor(providerId) {
+    return getProviderChartStyle(providerId).rgb;
+}
+
+function rgba(rgb, alpha) {
+    return `rgba(${rgb},${alpha})`;
+}
+
+async function loadTokenRateCharts(){
     try{
         const provFilter=document.getElementById('tr-provider').value;
         const url=API+'/dashboard/token-rate'+(provFilter?'?provider_id='+encodeURIComponent(provFilter):'');
         const data = await(await fetch(url)).json();
-        if(!data || data.length === 0){
-            document.getElementById('token-rate-legend').textContent = '暂无数据';
-            return;
-        }
-        const labels = data.map(d => {
-            const t = new Date(d.snapshot_time);
-            return t.toLocaleTimeString('zh-CN', {hour: '2-digit', minute: '2-digit', hour12: false, timeZoneName: undefined});
+        if(!data) data = [];
+
+        // Group data by provider_id
+        const providerMap = new Map();
+        const timeSet = new Set();
+        data.forEach(d => {
+            const pid = d.provider_id || 'unknown';
+            if(!providerMap.has(pid)) providerMap.set(pid, []);
+            providerMap.get(pid).push(d);
+            timeSet.add(d.snapshot_time);
         });
-        const ctx = document.getElementById('token-rate-chart').getContext('2d');
-        // Use elapsed_seconds from backend for accurate rate calculation
-        const promptRates = data.map(d => d.prompt_tokens / (d.elapsed_seconds || 10));
-        const completionRates = data.map(d => d.completion_tokens / (d.elapsed_seconds || 10));
-        if(tokenRateChart){
-            tokenRateChart.data.labels = labels;
-            tokenRateChart.data.datasets[0].data = promptRates;
-            tokenRateChart.data.datasets[1].data = completionRates;
-            tokenRateChart.update('none');
-            updateTokenRateLegend(tokenRateChart);
-        } else {
-            tokenRateChart = new Chart(ctx, {
-                type: 'line',
-                data: {
-                    labels: labels,
-                    datasets: [
-                        {
-                            label: 'Input Tokens/s',
-                            data: promptRates,
-                            borderColor: 'rgba(59,130,246,1)',
-                            backgroundColor: 'rgba(59,130,246,0.1)',
-                            fill: true,
-                            tension: 0.3,
-                            pointRadius: 0,
-                            borderWidth: 2,
-                            hidden: true,
-                        },
-                        {
-                            label: 'Output Tokens/s',
-                            data: completionRates,
-                            borderColor: 'rgba(34,197,94,1)',
-                            backgroundColor: 'rgba(34,197,94,0.1)',
-                            fill: true,
-                            tension: 0.3,
-                            pointRadius: 0,
-                            borderWidth: 2,
-                        }
-                    ]
-                },
-                options: {
-                    responsive: true,
-                    maintainAspectRatio: false,
-                    animation: false,
-                    interaction: { mode: 'index', intersect: false },
-                    plugins: {
-                        legend: {
-                            display: true,
-                            labels: { color: '#94a3b8', font: { size: 11 } },
-                            onClick: function(e, legendItem, legend) {
-                                const idx = legendItem.datasetIndex;
-                                legend.chart.data.datasets[idx].hidden = !legend.chart.data.datasets[idx].hidden;
-                                legend.chart.update();
-                                updateTokenRateLegend(legend.chart);
-                            }
-                        },
-                        tooltip: {
-                            callbacks: {
-                                label: ctx => ctx.dataset.label + ': ' + ctx.parsed.y.toFixed(2)
-                            }
-                        }
+
+        // Build sorted time labels
+        const labels = [...timeSet].sort().map(t => {
+            const dt = new Date(t);
+            return dt.toLocaleTimeString('zh-CN', {hour: '2-digit', minute: '2-digit', hour12: false, timeZoneName: undefined});
+        });
+        const timeKeys = [...timeSet].sort();
+
+        // Build datasets per provider — include ALL providers (even those with no data)
+        // so the legend always shows every provider. Providers with no data
+        // get hidden datasets (all-null data) so their legend entry appears
+        // but no line is drawn until they have data.
+        const outputDatasets = [];
+        const inputDatasets = [];
+
+        // Use allProviders as the source of truth for the legend order
+        allProviders.forEach(provider => {
+            const pid = provider.id;
+            const name = provider.name || pid;
+            const style = getProviderChartStyle(pid);
+            const color = style.rgb;
+            const hasData = providerMap.has(pid);
+            const snapshots = hasData ? providerMap.get(pid) : [];
+
+            // Build rate arrays with smoothing
+            // Raw rate = tokens / elapsed_seconds, but this is unreliable when
+            // elapsed is very short (e.g. request just completed right before snapshot).
+            // Use a 3-point moving average to smooth out spikes.
+            const rawOutputRates = snapshots.map(s => {
+                const elapsed = s.elapsed_seconds || 10;
+                if (elapsed < 1.0 || s.request_count === 0) return 0;
+                return s.completion_tokens / elapsed;
+            });
+            const rawInputRates = snapshots.map(s => {
+                const elapsed = s.elapsed_seconds || 10;
+                if (elapsed < 1.0 || s.request_count === 0) return 0;
+                return s.prompt_tokens / elapsed;
+            });
+
+            // 3-point moving average smoothing
+            function smooth(arr) {
+                return arr.map((v, i) => {
+                    const neighbors = [arr[i-1], v, arr[i+1]].filter(x => x !== undefined && x !== null);
+                    return neighbors.reduce((a,b) => a+b, 0) / neighbors.length;
+                });
+            }
+            const smoothOutput = smooth(rawOutputRates);
+            const smoothInput = smooth(rawInputRates);
+
+            // Build time->rate maps
+            const outputMap = new Map();
+            const inputMap = new Map();
+            snapshots.forEach((s, i) => {
+                outputMap.set(s.snapshot_time, smoothOutput[i]);
+                inputMap.set(s.snapshot_time, smoothInput[i]);
+            });
+
+            const outputData = timeKeys.length > 0
+                ? timeKeys.map(t => outputMap.has(t) ? outputMap.get(t) : (hasData ? null : 0))
+                : [];  // No time points → empty array (chart renders with no data)
+            const inputData = timeKeys.length > 0
+                ? timeKeys.map(t => inputMap.has(t) ? inputMap.get(t) : (hasData ? null : 0))
+                : [];
+
+            const baseStyle = {
+                borderColor: rgba(color, 1),
+                backgroundColor: rgba(color, 0.1),
+                fill: false,
+                tension: 0.3,
+                pointRadius: 0,
+                borderWidth: style.line_width,
+                spanGaps: true,
+                provider_id: pid,
+                // Hide datasets with no data by default — legend entry still visible
+                hidden: !hasData,
+            };
+            if (style.line_style === 'dashed') baseStyle.borderDash = [6, 3];
+            else if (style.line_style === 'dotted') baseStyle.borderDash = [2, 3];
+
+            outputDatasets.push({ label: name, data: outputData, ...baseStyle });
+            inputDatasets.push({ label: name, data: inputData, ...baseStyle });
+        });
+
+        const chartOpts = (title) => ({
+            responsive: true,
+            maintainAspectRatio: false,
+            animation: false,
+            interaction: { mode: 'index', intersect: false },
+            plugins: {
+                legend: {
+                    display: true,
+                    position: 'top',
+                    labels: {
+                        color: '#94a3b8',
+                        font: { size: 11 },
+                        usePointStyle: true,
+                        pointStyle: 'line',
+                        padding: 12,
                     },
-                    scales: {
-                        x: {
-                            grid: { color: 'rgba(100,116,139,0.1)' },
-                            ticks: { color: '#64748b', maxTicksLimit: 12, font: { size: 11 } }
-                        },
-                        y: {
-                            grid: { color: 'rgba(100,116,139,0.1)' },
-                            ticks: { color: '#64748b', font: { size: 11 } },
-                            beginAtZero: true,
-                        }
+                    onClick: function(e, legendItem, legend) {
+                        const idx = legendItem.datasetIndex;
+                        const chart = legend.chart;
+                        const meta = chart.getDatasetMeta(idx);
+                        meta.hidden = meta.hidden === null ? !chart.data.datasets[idx].hidden : !meta.hidden;
+                        chart.update();
+                        // Sync hidden state with the other chart
+                        syncChartLegend(chart === outputRateChart ? inputRateChart : outputRateChart, chart.data.datasets[idx].provider_id, meta.hidden);
+                        updateRateLegends();
+                    }
+                },
+                tooltip: {
+                    callbacks: {
+                        label: ctx => ctx.dataset.label + ': ' + (ctx.parsed.y !== null ? ctx.parsed.y.toFixed(2) : 'N/A')
                     }
                 }
+            },
+            scales: {
+                x: {
+                    grid: { color: 'rgba(100,116,139,0.1)' },
+                    ticks: { color: '#64748b', maxTicksLimit: 12, font: { size: 11 } }
+                },
+                y: {
+                    grid: { color: 'rgba(100,116,139,0.1)' },
+                    ticks: { color: '#64748b', font: { size: 11 } },
+                    beginAtZero: true,
+                    title: { display: true, text: title, color: '#64748b', font: { size: 11 } }
+                }
+            }
+        });
+
+        // Output chart
+        const outCtx = document.getElementById('output-rate-chart').getContext('2d');
+        if(outputRateChart){
+            outputRateChart.data.labels = labels;
+            outputRateChart.data.datasets = outputDatasets;
+            outputRateChart.options = chartOpts('Output Tokens/s');
+            outputRateChart.update('none');
+        } else {
+            outputRateChart = new Chart(outCtx, {
+                type: 'line',
+                data: { labels, datasets: outputDatasets },
+                options: chartOpts('Output Tokens/s'),
             });
-            updateTokenRateLegend(tokenRateChart);
         }
+
+        // Input chart
+        const inCtx = document.getElementById('input-rate-chart').getContext('2d');
+        if(inputRateChart){
+            inputRateChart.data.labels = labels;
+            inputRateChart.data.datasets = inputDatasets;
+            inputRateChart.options = chartOpts('Input Tokens/s');
+            inputRateChart.update('none');
+        } else {
+            inputRateChart = new Chart(inCtx, {
+                type: 'line',
+                data: { labels, datasets: inputDatasets },
+                options: chartOpts('Input Tokens/s'),
+            });
+        }
+
+        updateRateLegends();
     }catch(e){console.error('Token rate chart error:', e)}
 }
 
-function updateTokenRateLegend(chart){
-    if(!chart) return;
-    const visible = chart.data.datasets.filter(d => !d.hidden);
-    const promptRates = chart.data.datasets[0].data;
-    const completionRates = chart.data.datasets[1].data;
-    const maxPrompt = Math.max(...promptRates, 0);
-    const maxCompletion = Math.max(...completionRates, 0);
-    let text = '';
-    if(visible.length === 1){
-        const label = visible[0].label;
-        const val = label.includes('Input') ? maxPrompt : maxCompletion;
-        text = label + ' 峰值: ' + val.toFixed(1) + ' tokens/s';
-    } else if(visible.length === 2){
-        text = 'Input 峰值: ' + maxPrompt.toFixed(1) + ' | Output 峰值: ' + maxCompletion.toFixed(1) + ' tokens/s';
-    } else {
-        text = '暂无数据';
-    }
-    document.getElementById('token-rate-legend').textContent = text;
+function syncChartLegend(targetChart, providerId, hidden) {
+    if(!targetChart) return;
+    targetChart.data.datasets.forEach((ds, i) => {
+        if(ds.provider_id === providerId) {
+            const meta = targetChart.getDatasetMeta(i);
+            meta.hidden = hidden;
+        }
+    });
+    targetChart.update('none');
+}
+
+function updateRateLegends(){
+    if(!outputRateChart) return;
+    const outVisible = outputRateChart.data.datasets.filter(d => {
+        const meta = outputRateChart.getDatasetMeta(outputRateChart.data.datasets.indexOf(d));
+        return !meta.hidden;
+    });
+    const inVisible = inputRateChart ? inputRateChart.data.datasets.filter(d => {
+        const meta = inputRateChart.getDatasetMeta(inputRateChart.data.datasets.indexOf(d));
+        return !meta.hidden;
+    }) : [];
+
+    const fmtPeak = (chart) => {
+        if(!chart) return '暂无数据';
+        const visible = chart.data.datasets.filter(d => {
+            const meta = chart.getDatasetMeta(chart.data.datasets.indexOf(d));
+            return !meta.hidden;
+        });
+        if(!visible.length) return '暂无数据';
+        return visible.map(ds => {
+            const max = Math.max(...ds.data.filter(v => v !== null), 0);
+            return ds.label + ': ' + max.toFixed(1);
+        }).join(' | ');
+    };
+    document.getElementById('output-rate-legend').textContent = 'Output 峰值 → ' + fmtPeak(outputRateChart) + ' tokens/s';
+    document.getElementById('input-rate-legend').textContent = 'Input 峰值 → ' + fmtPeak(inputRateChart) + ' tokens/s';
 }
 
 function getApiKeyName(keyId){
@@ -614,24 +769,91 @@ function getApiKeyName(keyId){
 async function loadProviderOptionsForTokenRate(){
     try{
         const ps=await(await fetch(API+'/providers')).json();
+        allProviders = ps;
         const sel=document.getElementById('tr-provider');
         sel.innerHTML='<option value="">全部</option>'+ps.map(p=>`<option value="${p.id}">${p.name||p.id}</option>`).join('');
     }catch(e){console.error('Failed to load provider options for token rate:',e)}
 }
 
-function startTokenRateAutoRefresh(){
-    loadProviderOptionsForTokenRate();
-    loadTokenRateChart();
+async function startTokenRateAutoRefresh(){
+    await loadProviderOptionsForTokenRate();
+    loadTokenRateCharts();
     startApiKeyUsageAutoRefresh();
     if(tokenRateInterval) clearInterval(tokenRateInterval);
-    tokenRateInterval = setInterval(loadTokenRateChart, 10000);
+    tokenRateInterval = setInterval(loadTokenRateCharts, 10000);
 }
 
 function stopTokenRateAutoRefresh(){
     if(tokenRateInterval){clearInterval(tokenRateInterval);tokenRateInterval=null;}
 }
 
-let apiKeyUsageChart = null;
+// ========== Chart Style Modal ==========
+const LINE_STYLES = [
+    { value: 'solid', label: '实线' },
+    { value: 'dashed', label: '虚线' },
+    { value: 'dotted', label: '点线' },
+];
+
+function openChartColorModal(){
+    const list = document.getElementById('chart-color-list');
+    list.innerHTML = allProviders.map(p => {
+        const style = getProviderChartStyle(p.id);
+        const lineStyleOptions = LINE_STYLES.map(ls =>
+            `<option value="${ls.value}"${style.line_style === ls.value ? ' selected' : ''}>${ls.label}</option>`
+        ).join('');
+        return `<div style="padding:8px 0;border-bottom:1px solid #334155">
+            <div style="display:flex;align-items:center;gap:8px;margin-bottom:4px">
+                <div style="width:20px;height:20px;border-radius:4px;background:rgba(${style.rgb},1);flex-shrink:0"></div>
+                <span style="flex:1;font-size:13px;font-weight:600">${escapeHtml(p.name || p.id)}</span>
+            </div>
+            <div style="display:flex;align-items:center;gap:8px;padding-left:28px">
+                <label style="font-size:11px;color:#94a3b8;width:40px">颜色</label>
+                <input type="text" id="cc-rgb-${p.id}" value="${style.rgb}" placeholder="R,G,B" style="width:110px;font-size:12px;background:#1e293b;color:#e2e8f0;border:1px solid #334155;border-radius:4px;padding:3px 6px;font-family:monospace">
+                <label style="font-size:11px;color:#94a3b8;width:40px">线宽</label>
+                <input type="number" id="cc-lw-${p.id}" value="${style.line_width}" min="0.5" max="5" step="0.5" style="width:60px;font-size:12px;background:#1e293b;color:#e2e8f0;border:1px solid #334155;border-radius:4px;padding:3px 6px">
+                <label style="font-size:11px;color:#94a3b8;width:40px">线型</label>
+                <select id="cc-ls-${p.id}" style="font-size:12px;background:#1e293b;color:#e2e8f0;border:1px solid #334155;border-radius:4px;padding:3px 6px">${lineStyleOptions}</select>
+            </div>
+        </div>`;
+    }).join('');
+    document.getElementById('chart-color-modal').classList.remove('hidden');
+}
+
+function closeChartColorModal(){
+    document.getElementById('chart-color-modal').classList.add('hidden');
+}
+
+async function saveChartColors(){
+    const promises = allProviders.map(p => {
+        const rgbInput = document.getElementById('cc-rgb-' + p.id);
+        const lwInput = document.getElementById('cc-lw-' + p.id);
+        const lsInput = document.getElementById('cc-ls-' + p.id);
+        if(!rgbInput) return Promise.resolve();
+
+        const rgbVal = rgbInput.value.trim();
+        const match = rgbVal.match(/^(\d{1,3}),(\d{1,3}),(\d{1,3})$/);
+        if(!match) return Promise.resolve(); // skip invalid RGB
+
+        const line_width = parseFloat(lwInput.value) || 1.5;
+        const line_style = lsInput.value || 'solid';
+        const newStyle = JSON.stringify({ rgb: rgbVal, line_width: Math.max(0.5, Math.min(5, line_width)), line_style });
+
+        // Check if changed
+        const oldStyle = p.chart_color || JSON.stringify(getProviderChartStyle(p.id));
+        if(newStyle === oldStyle) return Promise.resolve();
+
+        p.chart_color = newStyle; // update local cache
+        return fetch(API+'/providers/'+encodeURIComponent(p.id)+'/chart-color', {
+            method: 'PUT',
+            headers: {'Content-Type': 'application/json'},
+            body: JSON.stringify({chart_color: newStyle}),
+        });
+    });
+    await Promise.all(promises);
+    closeChartColorModal();
+    loadTokenRateCharts(); // refresh charts with new styles
+}
+
 let apiKeyUsageInterval = null;
 
 function getTimeRangeParams(range){
@@ -655,60 +877,8 @@ async function loadApiKeyUsageChart(){
         if(!resp.ok) return;
         const data = await resp.json();
         if(!data.length){
-            const chartDiv = document.getElementById('apikey-usage-chart')?.parentElement;
-            if(chartDiv) chartDiv.style.display='none';
             document.getElementById('apikey-usage-detail').innerHTML='<p style="color:#64748b;font-size:13px;text-align:center;padding:12px">暂无数据</p>';
             return;
-        }
-        const chartDiv = document.getElementById('apikey-usage-chart')?.parentElement;
-        if(chartDiv) chartDiv.style.display='';
-
-        const labels = data.map(d => {
-            const name = getApiKeyName(d.api_key_id);
-            return name;
-        });
-        const promptTokens = data.map(d => d.total_prompt_tokens);
-        const completionTokens = data.map(d => d.total_completion_tokens);
-        const ctx = document.getElementById('apikey-usage-chart').getContext('2d');
-        if(apiKeyUsageChart){
-            apiKeyUsageChart.data.labels = labels;
-            apiKeyUsageChart.data.datasets[0].data = promptTokens;
-            apiKeyUsageChart.data.datasets[1].data = completionTokens;
-            apiKeyUsageChart.update('none');
-        } else {
-            apiKeyUsageChart = new Chart(ctx, {
-                type: 'bar',
-                data: {
-                    labels,
-                    datasets: [
-                        {
-                            label: 'Prompt Tokens',
-                            data: promptTokens,
-                            backgroundColor: 'rgba(59,130,246,0.7)',
-                            borderColor: 'rgba(59,130,246,1)',
-                            borderWidth: 1,
-                            borderRadius: 2,
-                        },
-                        {
-                            label: 'Completion Tokens',
-                            data: completionTokens,
-                            backgroundColor: 'rgba(34,197,94,0.7)',
-                            borderColor: 'rgba(34,197,94,1)',
-                            borderWidth: 1,
-                            borderRadius: 2,
-                        }
-                    ]
-                },
-                options: {
-                    responsive: true,
-                    maintainAspectRatio: false,
-                    plugins: { legend: { display: true, labels: { color: '#94a3b8', font: { size: 11 } } } },
-                    scales: {
-                        x: { ticks: { color: '#94a3b8', font: { size: 10 } }, grid: { display: false } },
-                        y: { beginAtZero: true, stacked: true, ticks: { color: '#94a3b8', font: { size: 10 } }, title: { display: true, text: 'Tokens', color: '#64748b' } }
-                    }
-                }
-            });
         }
 
         // Render API key usage detail table
@@ -826,7 +996,6 @@ async function loadUsageTrendChart(){
 }
 
 // ========== 服务商管理 ==========
-let allProviders=[];
 let allApiKeys=[];
 let currentLogPage=1;
 let currentLogPageSize=20;
@@ -1381,7 +1550,7 @@ async function loadLogs(){
             return `<tr style="${rowStyle}">
             <td>${fmtTime(l.created_at)}</td><td class="hide-mobile">${getApiKeyName(l.api_key_id)}</td>
             <td>${l.provider_id}</td><td class="hide-mobile">${l.model||'-'}</td><td style="${l.response_status&&l.response_status>=400?'color:#ef4444;font-weight:bold':''}">${l.response_status||'-'}</td>
-            <td>${l.total_tokens}</td><td class="hide-mobile">${l.duration_ms?l.duration_ms+'ms':'-'}</td>
+            <td>${l.prompt_tokens||0}</td><td>${l.completion_tokens||0}</td><td class="hide-mobile">${l.duration_ms?l.duration_ms+'ms':'-'}</td>
             <td class="hide-mobile">${l.is_streaming?'✅':'❌'}</td><td class="hide-mobile">${l.is_throttled?'⚠️':'✅'}</td><td class="hide-mobile">${l.error_message?'<span style="color:red" title="'+l.error_message+'">❌</span>':'✅'}</td><td><button class="btn btn-sm" onclick='showLogDetail(${l.id})'>📋</button></td><td><button class="btn btn-sm btn-danger" onclick='deleteSingleLog(${l.id})'>🗑</button></td>
         </tr>`;}).join('')||'<tr><td colspan="12" class="empty-state">暂无日志</td></tr>';
     }catch(e){console.error(e)}
@@ -2119,6 +2288,18 @@ showTab=function(name,btn){
     <div id="log-detail-content"></div>
     <div class="form-actions" style="margin-top:16px">
         <button class="btn" onclick="closeLogDetailModal()">关闭</button>
+    </div>
+</div>
+</div>
+
+<div id="chart-color-modal" class="modal-overlay hidden">
+<div class="modal" style="max-width:500px">
+    <h3>🎨 服务商曲线样式</h3>
+    <p style="color:#64748b;font-size:12px;margin:4px 0 12px">设置各服务商在 Token 速率曲线中的颜色、线宽和线型</p>
+    <div id="chart-color-list" style="max-height:400px;overflow-y:auto"></div>
+    <div class="form-actions" style="margin-top:16px">
+        <button class="btn" onclick="closeChartColorModal()">关闭</button>
+        <button class="btn btn-success" onclick="saveChartColors()">保存</button>
     </div>
 </div>
 </div>

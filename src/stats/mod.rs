@@ -15,12 +15,14 @@ pub struct TokenWindow {
     pub prompt_tokens: i64,
     pub completion_tokens: i64,
     pub request_count: i64,
-    pub start_time: Instant,
+    /// Time when the last snapshot was taken (or window creation time for the first interval).
+    /// Used as the denominator for rate = tokens / time_since_last_snapshot.
+    pub last_snapshot_time: Instant,
 }
 
 impl Default for TokenWindow {
     fn default() -> Self {
-        Self { prompt_tokens: 0, completion_tokens: 0, request_count: 0, start_time: Instant::now() }
+        Self { prompt_tokens: 0, completion_tokens: 0, request_count: 0, last_snapshot_time: Instant::now() }
     }
 }
 
@@ -40,11 +42,33 @@ impl StatsCollector {
     pub async fn take_snapshot(&self, provider_id: &str) -> Result<f64, sqlx::Error> {
         let mut windows = self.windows.write().await;
         let window = windows.get_mut(provider_id).ok_or(sqlx::Error::RowNotFound)?;
-        let elapsed = window.start_time.elapsed().as_secs_f64();
+
+        let elapsed = window.last_snapshot_time.elapsed().as_secs_f64();
+
+        // No requests in this window — just reset the timer.
+        if window.request_count == 0 {
+            window.last_snapshot_time = Instant::now();
+            return Ok(0.0);
+        }
+
+        // Skip snapshot if elapsed time is too short (< 1s) — the rate would be
+        // unreliable (e.g. a request just completed and snapshot fired immediately,
+        // yielding artificially high rates like 694 tokens/s from 39 tokens / 0.056s).
+        if elapsed < 1.0 {
+            return Ok(0.0);
+        }
+
         let total = window.prompt_tokens + window.completion_tokens;
-        let tps = if elapsed > 0.0 { total as f64 / elapsed } else { 0.0 };
+        let tps = total as f64 / elapsed;
+
         self.db.insert_token_rate_snapshot(Some(provider_id), tps, window.prompt_tokens, window.completion_tokens, window.request_count, elapsed).await?;
-        *window = TokenWindow { start_time: Instant::now(), ..Default::default() };
+
+        // Reset counters but keep the timing chain — next snapshot measures from now.
+        window.prompt_tokens = 0;
+        window.completion_tokens = 0;
+        window.request_count = 0;
+        window.last_snapshot_time = Instant::now();
+
         Ok(tps)
     }
 

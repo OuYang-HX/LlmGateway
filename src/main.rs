@@ -68,6 +68,7 @@ async fn main() -> anyhow::Result<()> {
         .route("/api/v1/providers/batch-update-status", post(api::batch_update_provider_status))
         .route("/api/v1/providers/:id", get(api::get_provider).delete(api::delete_provider).put(api::update_provider))
         .route("/api/v1/providers/:id/refresh-token", post(api::refresh_provider_token))
+        .route("/api/v1/providers/:id/chart-color", put(api::update_provider_chart_color))
         .route("/api/v1/providers/:id/models", post(api::add_provider_model).get(api::list_provider_models))
         .route("/api/v1/providers/:id/models/:model_id", delete(api::remove_provider_model))
         .route("/api/v1/providers/:id/models/:model_id/test", post(api::test_provider_model))
