@@ -246,6 +246,64 @@ impl Database {
         .execute(&self.pool)
         .await;
 
+        // Migration: Add window_mode and window_size columns to provider_quotas
+        let _ = sqlx::query(
+            "ALTER TABLE provider_quotas ADD COLUMN window_mode TEXT NOT NULL DEFAULT 'fixed'"
+        )
+        .execute(&self.pool)
+        .await;
+        let _ = sqlx::query(
+            "ALTER TABLE provider_quotas ADD COLUMN window_size TEXT NOT NULL DEFAULT '5h'"
+        )
+        .execute(&self.pool)
+        .await;
+
+        // Migration: Add calibration_window_start and calibration_window_end columns
+        let _ = sqlx::query(
+            "ALTER TABLE provider_quota_calibrations ADD COLUMN calibration_window_start TEXT"
+        )
+        .execute(&self.pool)
+        .await;
+        let _ = sqlx::query(
+            "ALTER TABLE provider_quota_calibrations ADD COLUMN calibration_window_end TEXT"
+        )
+        .execute(&self.pool)
+        .await;
+
+        // Migration: Update legacy quota_type values to new format
+        // "5h" → "sliding:5h", "weekly" → "fixed:7d", "monthly" → "fixed:30d"
+        let _ = sqlx::query(
+            "UPDATE provider_quotas SET quota_type = 'sliding:5h', window_mode = 'sliding', window_size = '5h' WHERE quota_type = '5h'"
+        )
+        .execute(&self.pool)
+        .await;
+        let _ = sqlx::query(
+            "UPDATE provider_quotas SET quota_type = 'fixed:7d', window_mode = 'fixed', window_size = '7d' WHERE quota_type = 'weekly'"
+        )
+        .execute(&self.pool)
+        .await;
+        let _ = sqlx::query(
+            "UPDATE provider_quotas SET quota_type = 'fixed:30d', window_mode = 'fixed', window_size = '30d' WHERE quota_type = 'monthly'"
+        )
+        .execute(&self.pool)
+        .await;
+        // Also update corresponding calibrations
+        let _ = sqlx::query(
+            "UPDATE provider_quota_calibrations SET quota_type = 'sliding:5h' WHERE quota_type = '5h'"
+        )
+        .execute(&self.pool)
+        .await;
+        let _ = sqlx::query(
+            "UPDATE provider_quota_calibrations SET quota_type = 'fixed:7d' WHERE quota_type = 'weekly'"
+        )
+        .execute(&self.pool)
+        .await;
+        let _ = sqlx::query(
+            "UPDATE provider_quota_calibrations SET quota_type = 'fixed:30d' WHERE quota_type = 'monthly'"
+        )
+        .execute(&self.pool)
+        .await;
+
         Ok(())
     }
 
