@@ -2236,7 +2236,11 @@ function setQuota(){
     if(!windowSize){alert('请输入窗口大小');return;}
     if(!limitCount||limitCount<=0){alert('请输入有效的限制次数');return;}
     const body={window_mode:windowMode,window_size:windowSize,limit_count:limitCount,is_enabled:true};
-    if(windowMode==='fixed'&&windowStart){body.window_start_override=windowStart.replace('T',' ')+'+00:00';}
+    if(windowMode==='fixed'&&windowStart){
+        // datetime-local is local time, convert to UTC before sending
+        const d=new Date(windowStart);
+        body.window_start_override=d.toISOString().replace('T',' ').replace(/\.\d{3}Z$/,'+00:00');
+    }
     fetch(API+'/quotas/'+providerId,{
         method:'POST',
         headers:{'Content-Type':'application/json'},
@@ -2269,8 +2273,10 @@ function openEditQuotaModal(providerId,quotaType,windowMode,windowSize,windowSta
     if(windowMode==='fixed'){
         document.getElementById('edit-quota-start-row').style.display='';
         if(windowStartOverride){
-            const dt=windowStartOverride.replace(/\+00:00$/,'').replace(' ','T').substring(0,16);
-            document.getElementById('edit-quota-start').value=dt;
+            // Server returns UTC, convert to local time for datetime-local
+            const d=new Date(windowStartOverride.replace(' ','T'));
+            const pad=n=>String(n).padStart(2,'0');
+            document.getElementById('edit-quota-start').value=d.getFullYear()+'-'+pad(d.getMonth()+1)+'-'+pad(d.getDate())+'T'+pad(d.getHours())+':'+pad(d.getMinutes());
         }else{
             document.getElementById('edit-quota-start').value='';
         }
@@ -2353,7 +2359,11 @@ function saveEditQuota(){
     if(!limitCount||limitCount<=0){alert('请输入有效的限制次数');return;}
     const newQuotaType=windowMode+':'+windowSize;
     const body={window_mode:windowMode,window_size:windowSize,limit_count:limitCount,is_enabled:isEnabled};
-    if(windowMode==='fixed'&&windowStart){body.window_start_override=windowStart.replace('T',' ')+'+00:00';}
+    if(windowMode==='fixed'&&windowStart){
+        // datetime-local is local time, convert to UTC before sending
+        const d=new Date(windowStart);
+        body.window_start_override=d.toISOString().replace('T',' ').replace(/\.\d{3}Z$/,'+00:00');
+    }
     else{body.window_start_override=null;}
     const saveQuota=()=>{
         fetch(API+'/quotas/'+providerId,{
