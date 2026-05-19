@@ -2190,7 +2190,7 @@ function loadAllQuotaUsage(){
             const calColor=q.calibration_offset>0?(calValid?'#34d399':'#f87171'):'#94a3b8';
             const calBadge=q.calibration_offset>0?'+'+q.calibration_offset:'0';
             const statusBadge=q.is_enabled?'<span class="badge badge-green">启用</span>':'<span class="badge badge-red">停用</span>';
-            const periodStartDisplay=q.period_start;
+            const periodStartDisplay=q.period_start?(()=>{const d=new Date(q.period_start.replace(' ','T')+'Z');const pad=n=>String(n).padStart(2,'0');return d.getFullYear()+'-'+pad(d.getMonth()+1)+'-'+pad(d.getDate())+' '+pad(d.getHours())+':'+pad(d.getMinutes())+':'+pad(d.getSeconds())})():'-';
             return `<tr>
                 <td>${q.provider_name}<br><span style="font-size:11px;color:#64748b">${q.provider_id}</span></td>
                 <td>${modeLabel}</td>
