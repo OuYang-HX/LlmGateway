@@ -1374,8 +1374,8 @@ async function exportLogsCsv(){
         const end=document.getElementById('log-end').value;
         if(prov)params.set('provider_id',prov);
         if(search)params.set('search',search);
-        if(start)params.set('start_time',new Date(start).toISOString());
-        if(end)params.set('end_time',new Date(end).toISOString());
+        if(start)params.set('start_time',new Date(start).toISOString().replace('T',' ').replace(/\.\d{3}Z$/,''));
+        if(end)params.set('end_time',new Date(end).toISOString().replace('T',' ').replace(/\.\d{3}Z$/,''));
         const model=document.getElementById('log-model').value.trim();
         if(model)params.set('model',model);
         params.set('page','1');
@@ -1529,8 +1529,8 @@ async function loadLogs(){
         const end=document.getElementById('log-end').value;
         if(prov)params.set('provider_id',prov);
         if(search)params.set('search',search); // searches request_body AND response_body (via OR)
-        if(start)params.set('start_time',new Date(start).toISOString());
-        if(end)params.set('end_time',new Date(end).toISOString());
+        if(start)params.set('start_time',new Date(start).toISOString().replace('T',' ').replace(/\.\d{3}Z$/,''));
+        if(end)params.set('end_time',new Date(end).toISOString().replace('T',' ').replace(/\.\d{3}Z$/,''));
         const model=document.getElementById('log-model').value.trim();
         if(model)params.set('model',model);
         params.set('page',currentLogPage);
