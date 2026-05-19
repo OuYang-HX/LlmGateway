@@ -561,6 +561,14 @@ pub async fn remove_provider_model(
     State(state): State<AppState>,
     Path((id, model_id)): Path<(String, String)>,
 ) -> impl IntoResponse {
+    // First, clean up any model_mappings that reference this provider+model
+    // A provider_model can be mapped as provider_model_id in model_mappings.
+    // We need to remove mappings where provider_id = this provider AND provider_model_id = this model.
+    if let Err(e) = state.db.cleanup_mappings_for_provider_model(&id, &model_id).await {
+        tracing::warn!("Failed to cleanup mappings for provider model {}/{}, error: {}", id, model_id, e);
+        // Non-fatal: continue with model removal even if cleanup fails
+    }
+
     match state.db.remove_provider_model(&id, &model_id).await {
         Ok(true) => (StatusCode::OK, Json(serde_json::json!({"message": "Model removed"}))).into_response(),
         Ok(false) => (StatusCode::NOT_FOUND, Json(serde_json::json!({"error": "Model not found"}))).into_response(),

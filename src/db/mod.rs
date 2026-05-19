@@ -763,6 +763,52 @@ impl Database {
         Ok(result.rows_affected() > 0)
     }
 
+    /// Clean up model_mappings when a provider model is removed.
+    /// Deletes mappings where provider_id matches AND provider_model_id matches,
+    /// then removes any unified models that no longer have any mappings.
+    pub async fn cleanup_mappings_for_provider_model(
+        &self,
+        provider_id: &str,
+        provider_model_id: &str,
+    ) -> Result<(), sqlx::Error> {
+        // Find all model_ids in model_mappings that have this provider+provider_model_id
+        let affected_model_ids: Vec<String> = sqlx::query_scalar(
+            r#"SELECT model_id FROM model_mappings WHERE provider_id = ? AND provider_model_id = ?"#
+        )
+        .bind(provider_id)
+        .bind(provider_model_id)
+        .fetch_all(&self.pool)
+        .await?;
+
+        // Delete the mappings
+        sqlx::query(
+            r#"DELETE FROM model_mappings WHERE provider_id = ? AND provider_model_id = ?"#
+        )
+        .bind(provider_id)
+        .bind(provider_model_id)
+        .execute(&self.pool)
+        .await?;
+
+        // Clean up unified models that no longer have any mappings
+        for model_id in &affected_model_ids {
+            let remaining: i64 = sqlx::query_scalar(
+                "SELECT COUNT(*) FROM model_mappings WHERE model_id = ?"
+            )
+            .bind(model_id)
+            .fetch_one(&self.pool)
+            .await?;
+
+            if remaining == 0 {
+                sqlx::query("DELETE FROM models WHERE id = ?")
+                    .bind(model_id)
+                    .execute(&self.pool)
+                    .await?;
+            }
+        }
+
+        Ok(())
+    }
+
     /// List all models for a provider
     pub async fn list_provider_models(
         &self,
