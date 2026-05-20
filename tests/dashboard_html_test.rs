@@ -584,3 +584,87 @@ fn test_dashboard_html_provider_table_renders_mock_badge() {
         "Provider table should render Mock badge for mock_mode providers"
     );
 }
+
+// ========== More Dashboard UI Validation Tests ==========
+
+#[test]
+fn test_dashboard_html_has_csv_export_button() {
+    let content = include_str!("../src/dashboard.html");
+    // Should have CSV export functionality
+    assert!(
+        content.contains("export") && (content.contains("csv") || content.contains("CSV") || content.contains("download")),
+        "Dashboard should have CSV export/download capability"
+    );
+}
+
+fn test_dashboard_html_logs_pagination_controls_exist() {
+    let content = include_str!("../src/dashboard.html");
+    // Logs tab should have pagination controls
+    assert!(
+        content.contains("currentLogPage") || content.contains("pageSize") || content.contains("loadLogs"),
+        "Dashboard should have pagination controls for logs"
+    );
+    assert!(
+        content.contains("prev") || content.contains("previous") || content.contains("page"),
+        "Logs should have prev/next pagination controls"
+    );
+}
+
+#[test]
+fn test_dashboard_html_time_presets_in_logs() {
+    let content = include_str!("../src/dashboard.html");
+    // Should have time preset buttons (1h, 24h, 7d, etc.)
+    let time_presets = ["1h", "24h", "7d", "30d"];
+    let found_count = time_presets.iter().filter(|p| content.contains(&format!("\"{}\"", p)) || content.contains(&format!(">{}<", p))).count();
+    assert!(found_count >= 3, "Dashboard should have at least 3 time preset buttons");
+}
+
+#[test]
+fn test_dashboard_html_batch_external_id_area() {
+    let content = include_str!("../src/dashboard.html");
+    // Batch external ID feature exists
+    assert!(
+        content.contains("batch-external-id") || content.contains("batchExt"),
+        "Dashboard should have batch external ID area"
+    );
+}
+
+#[test]
+fn test_dashboard_html_logs_tab_has_model_filter() {
+    let content = include_str!("../src/dashboard.html");
+    // Logs tab should have model filter
+    assert!(
+        (content.contains("log-model") || content.contains("model-filter")) && content.contains("logs"),
+        "Dashboard logs tab should have model filter input"
+    );
+}
+
+#[test]
+fn test_dashboard_html_logs_tab_has_provider_filter() {
+    let content = include_str!("../src/dashboard.html");
+    // Logs tab should have provider filter
+    assert!(
+        content.contains("log-provider") || content.contains("provider-filter"),
+        "Dashboard logs tab should have provider filter input"
+    );
+}
+
+#[test]
+fn test_dashboard_html_provider_health_table_renders() {
+    let content = include_str!("../src/dashboard.html");
+    // Provider health table should exist
+    assert!(
+        content.contains("provider-health-table") || content.contains("health"),
+        "Dashboard should have provider health table"
+    );
+}
+
+#[test]
+fn test_dashboard_html_stats_by_api_key_has_time_filter() {
+    let content = include_str!("../src/dashboard.html");
+    // Stats by API key should have time filter options
+    assert!(
+        content.contains("stats") && content.contains("24h") || content.contains("7d") || content.contains("30d"),
+        "Stats should have time range filter options"
+    );
+}
