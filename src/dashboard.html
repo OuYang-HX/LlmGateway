@@ -1986,8 +1986,9 @@ function renderLogDetail() {
 }
 
 function renderLogDetailQA(log) {
+    qaCopyStore = []; // 重置复制存储
     // 解析请求和响应体，提取 QA 内容
-    let question = '';
+    let question = '';;
     let answer = '';
     let reqJson = null;
     let resJson = null;
@@ -2110,10 +2111,12 @@ function renderLogDetailQA(log) {
     
     // 如果没有提取到 QA，显示原始请求/响应
     if (!question && log.request_body) {
-        html += `<div class="qa-section"><h4>请求体（原始）</h4><div class="qa-content">${escapeHtml(prettyJson(log.request_body))}</div></div>`;
+        const rqIdx = qaCopyStore.push(prettyJson(log.request_body)) - 1;
+        html += `<div class="qa-section"><div style="display:flex;justify-content:space-between;align-items:center"><h4>请求体（原始）</h4><button class="btn btn-sm" onclick="copyQaText(this,${rqIdx})">📋 复制</button></div><div class="qa-content">${escapeHtml(prettyJson(log.request_body))}</div></div>`;
     }
     if (!answer && log.response_body) {
-        html += `<div class="qa-section"><h4>响应体（原始）</h4><div class="qa-content">${escapeHtml(prettyJson(log.response_body))}</div></div>`;
+        const raIdx = qaCopyStore.push(prettyJson(log.response_body)) - 1;
+        html += `<div class="qa-section"><div style="display:flex;justify-content:space-between;align-items:center"><h4>响应体（原始）</h4><button class="btn btn-sm" onclick="copyQaText(this,${raIdx})">📋 复制</button></div><div class="qa-content">${escapeHtml(prettyJson(log.response_body))}</div></div>`;
     }
     
     // 错误信息
@@ -2125,6 +2128,7 @@ function renderLogDetailQA(log) {
 }
 
 function renderLogDetailRaw(log) {
+    qaCopyStore = []; // 重置复制存储
     let html = '';
     
     // 请求信息
@@ -2153,22 +2157,26 @@ function renderLogDetailRaw(log) {
     
     // 请求头
     if (log.request_headers) {
-        html += `<div class="qa-section"><div style="display:flex;justify-content:space-between;align-items:center"><h4>📝 请求头</h4><button class="btn btn-sm" onclick="copyJson(this,'${escapeHtml(prettyJson(log.request_headers)).replace(/'/g,"\\'")}')">📋 复制</button></div><pre class="qa-content" style="margin:0">${escapeHtml(prettyJson(log.request_headers))}</pre></div>`;
+        const rhIdx = qaCopyStore.push(prettyJson(log.request_headers)) - 1;
+        html += `<div class="qa-section"><div style="display:flex;justify-content:space-between;align-items:center"><h4>📝 请求头</h4><button class="btn btn-sm" onclick="copyQaText(this,${rhIdx})">📋 复制</button></div><pre class="qa-content" style="margin:0">${escapeHtml(prettyJson(log.request_headers))}</pre></div>`;
     }
     
     // 请求体
     if (log.request_body) {
-        html += `<div class="qa-section"><div style="display:flex;justify-content:space-between;align-items:center"><h4>📤 请求体</h4><button class="btn btn-sm" onclick="copyJson(this,'${escapeHtml(prettyJson(log.request_body)).replace(/'/g,"\\'")}')">📋 复制</button></div><pre class="qa-content" style="margin:0">${escapeHtml(prettyJson(log.request_body))}</pre></div>`;
+        const rbIdx = qaCopyStore.push(prettyJson(log.request_body)) - 1;
+        html += `<div class="qa-section"><div style="display:flex;justify-content:space-between;align-items:center"><h4>📤 请求体</h4><button class="btn btn-sm" onclick="copyQaText(this,${rbIdx})">📋 复制</button></div><pre class="qa-content" style="margin:0">${escapeHtml(prettyJson(log.request_body))}</pre></div>`;
     }
     
     // 响应头
     if (log.response_headers) {
-        html += `<div class="qa-section"><div style="display:flex;justify-content:space-between;align-items:center"><h4>📝 响应头</h4><button class="btn btn-sm" onclick="copyJson(this,'${escapeHtml(prettyJson(log.response_headers)).replace(/'/g,"\\'")}')">📋 复制</button></div><pre class="qa-content" style="margin:0">${escapeHtml(prettyJson(log.response_headers))}</pre></div>`;
+        const rshIdx = qaCopyStore.push(prettyJson(log.response_headers)) - 1;
+        html += `<div class="qa-section"><div style="display:flex;justify-content:space-between;align-items:center"><h4>📝 响应头</h4><button class="btn btn-sm" onclick="copyQaText(this,${rshIdx})">📋 复制</button></div><pre class="qa-content" style="margin:0">${escapeHtml(prettyJson(log.response_headers))}</pre></div>`;
     }
     
     // 响应体
     if (log.response_body) {
-        html += `<div class="qa-section"><div style="display:flex;justify-content:space-between;align-items:center"><h4>📥 响应体</h4><button class="btn btn-sm" onclick="copyJson(this,'${escapeHtml(prettyJson(log.response_body)).replace(/'/g,"\\'")}')">📋 复制</button></div><pre class="qa-content" style="margin:0">${escapeHtml(prettyJson(log.response_body))}</pre></div>`;
+        const rsbIdx = qaCopyStore.push(prettyJson(log.response_body)) - 1;
+        html += `<div class="qa-section"><div style="display:flex;justify-content:space-between;align-items:center"><h4>📥 响应体</h4><button class="btn btn-sm" onclick="copyQaText(this,${rsbIdx})">📋 复制</button></div><pre class="qa-content" style="margin:0">${escapeHtml(prettyJson(log.response_body))}</pre></div>`;
     }
     
     // 错误信息
