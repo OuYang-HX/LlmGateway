@@ -812,7 +812,7 @@ function getApiKeyName(keyId){
 function getApiKeyNameDetail(keyId){
     if(!keyId||!allApiKeys.length)return keyId?keyId.slice(0,8)+'...':'-';
     const k=allApiKeys.find(a=>a.id===keyId);
-    return k?(k.name+' ('+k.key_prefix+')'):(keyId.slice(0,8)+'...');
+    return k?(k.name+' ('+k.key+')'):(keyId.slice(0,8)+'...');
 }
 
 async function loadProviderOptionsForTokenRate(){
