@@ -1435,6 +1435,7 @@ dependencies = [
  "jsonwebtoken",
  "lazy_static",
  "prometheus",
+ "rand",
  "regex",
  "reqwest",
  "serde",

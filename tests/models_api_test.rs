@@ -63,6 +63,7 @@ async fn test_api_model_mappings_crud() {
         Some("POST"), Some("json"), Some("username"), Some("password"),
         None, None, None,
         "token", "refreshToken", "Authorization", "Bearer ", 86400, 1, false,
+        false,
         "choices.0.message.content", "choices.0.delta.reasoning_content",
     ).await.unwrap();
 
@@ -124,6 +125,7 @@ async fn test_api_key_update_allowed_providers() {
         Some("POST"), Some("json"), Some("username"), Some("password"),
         None, None, None,
         "token", "refreshToken", "Authorization", "Bearer ", 86400, 1, false,
+        false,
         "choices.0.message.content", "choices.0.delta.reasoning_content",
     ).await.unwrap();
     db.create_api_key("key-ap", "AP Test", "lgk-ap", "lgk-ap", None).await.unwrap();
@@ -147,6 +149,7 @@ async fn test_list_models_excludes_inactive() {
         Some("POST"), Some("json"), Some("username"), Some("password"),
         None, None, None,
         "token", "refreshToken", "Authorization", "Bearer ", 86400, 1, false,
+        false,
         "choices.0.message.content", "choices.0.delta.reasoning_content",
     ).await.unwrap();
     db.create_model("active-model", "Active", None, "chat", 50, None).await.unwrap();
@@ -185,6 +188,7 @@ async fn test_list_models_with_mappings_includes_provider() {
         Some("POST"), Some("json"), Some("username"), Some("password"),
         None, None, None,
         "token", "refreshToken", "Authorization", "Bearer ", 86400, 1, false,
+        false,
         "choices.0.message.content", "choices.0.delta.reasoning_content",
     ).await.unwrap();
     db.create_model("with-prov", "With Provider", None, "chat", 50, None).await.unwrap();

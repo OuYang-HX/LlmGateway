@@ -330,6 +330,11 @@ impl Database {
         )
         .execute(&self.pool)
         .await;
+        let _ = sqlx::query(
+            "ALTER TABLE providers ADD COLUMN mock_mode BOOLEAN DEFAULT 0"
+        )
+        .execute(&self.pool)
+        .await;
 
         Ok(())
     }
@@ -479,12 +484,13 @@ impl Database {
         token_expiry_seconds: i64,
         weight: i64,
         bypass_proxy: bool,
+        mock_mode: bool,
         response_content_path: &str,
         response_reasoning_path: &str,
     ) -> Result<(), sqlx::Error> {
         sqlx::query(
-            r#"INSERT INTO providers (id, name, base_url, api_type, auth_type, api_key, token_url, token_username, token_password, token_request_method, token_content_type, token_username_field, token_password_field, token_body_template, token_extra_headers, token_cookies, token_field, refresh_token_field, token_header_field, token_header_prefix, token_expiry_seconds, weight, bypass_proxy, response_content_path, response_reasoning_path)
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)"#
+            r#"INSERT INTO providers (id, name, base_url, api_type, auth_type, api_key, token_url, token_username, token_password, token_request_method, token_content_type, token_username_field, token_password_field, token_body_template, token_extra_headers, token_cookies, token_field, refresh_token_field, token_header_field, token_header_prefix, token_expiry_seconds, weight, bypass_proxy, mock_mode, response_content_path, response_reasoning_path)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)"#
         )
         .bind(id)
         .bind(name)
@@ -509,6 +515,7 @@ impl Database {
         .bind(token_expiry_seconds)
         .bind(weight)
         .bind(bypass_proxy)
+        .bind(mock_mode)
         .bind(response_content_path)
         .bind(response_reasoning_path)
         .execute(&self.pool)
@@ -542,7 +549,7 @@ impl Database {
             api_key, token_url, token_username, token_password,
             None, None, None, None, None, None, None,
             token_field, refresh_token_field, token_header_field, token_header_prefix,
-            token_expiry_seconds, weight, false, "choices.0.message.content", "choices.0.delta.reasoning_content",
+            token_expiry_seconds, weight, false, false, "choices.0.message.content", "choices.0.delta.reasoning_content",
         ).await
     }
 
@@ -616,6 +623,7 @@ impl Database {
             response_reasoning_path: r.try_get("response_reasoning_path").unwrap_or_else(|_| "choices.0.delta.reasoning_content".to_string()),
             chart_color: opt_str(r, "chart_color"),
             subscription_start: opt_str(r, "subscription_start"),
+            mock_mode: r.try_get::<i64, _>("mock_mode").unwrap_or(0) != 0,
             created_at: r.try_get("created_at").unwrap_or_default(),
             updated_at: r.try_get("updated_at").unwrap_or_default(),
         }
@@ -695,6 +703,7 @@ impl Database {
         weight: i64,
         is_active: bool,
         bypass_proxy: bool,
+        mock_mode: bool,
         response_content_path: &str,
         response_reasoning_path: &str,
         chart_color: Option<&str>,
@@ -730,6 +739,7 @@ impl Database {
                 response_reasoning_path = ?,
                 chart_color = ?,
                 subscription_start = ?,
+                mock_mode = ?,
                 updated_at = datetime('now')
                 WHERE id = ?"#
         )
@@ -761,6 +771,7 @@ impl Database {
         .bind(response_reasoning_path)
         .bind(chart_color)
         .bind(subscription_start)
+        .bind(mock_mode)
         .bind(old_id)
         .execute(&self.pool)
         .await?;
@@ -2819,6 +2830,7 @@ pub struct ProviderRow {
     pub response_reasoning_path: String,
     pub chart_color: Option<String>,
     pub subscription_start: Option<String>,
+    pub mock_mode: bool,
     pub created_at: String,
     pub updated_at: String,
 }

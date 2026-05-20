@@ -257,6 +257,8 @@ pub struct CreateProviderRequest {
     #[serde(default = "default_response_reasoning_path")]
     pub response_reasoning_path: String,
     pub subscription_start: Option<String>,
+    #[serde(default)]
+    pub mock_mode: bool,
 }
 
 fn default_api_type() -> String { "openai".to_string() }
@@ -304,6 +306,7 @@ pub async fn create_provider(
         req.token_expiry_seconds,
         req.weight,
         req.bypass_proxy,
+        req.mock_mode,
         &req.response_content_path,
         &req.response_reasoning_path,
     ).await {
@@ -448,6 +451,7 @@ pub struct UpdateProviderRequest {
     pub chart_color: Option<String>,
     pub subscription_start: Option<String>,
     pub new_id: Option<String>,
+    pub mock_mode: Option<bool>,
 }
 
 pub async fn update_provider(
@@ -504,6 +508,7 @@ pub async fn update_provider(
     let chart_color = req.chart_color.as_deref().or(existing.chart_color.as_deref());
     let subscription_start = req.subscription_start.as_deref().or(existing.subscription_start.as_deref());
     let new_id = req.new_id.as_deref().unwrap_or(&existing.id);
+    let mock_mode = req.mock_mode.unwrap_or(existing.mock_mode);
 
     // Check if new_id conflicts with an existing provider (when ID is changing)
     if new_id != id {
@@ -522,6 +527,7 @@ pub async fn update_provider(
         token_cookies,
         token_field, refresh_token_field, token_header_field, token_header_prefix,
         token_expiry_seconds, weight, is_active, bypass_proxy,
+        mock_mode,
         response_content_path,
         response_reasoning_path,
         chart_color,

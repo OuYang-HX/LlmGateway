@@ -618,3 +618,47 @@ fn is_calibration_valid(cal: &CalibrationRow, period_start: &DateTime<Utc>, peri
 2. 校准模态框显示当前窗口期范围，提示校准只在此窗口内生效
 3. 配额表格显示窗口模式和大小，校准列显示是否有效
 4. 向后兼容旧数据（quota_type 为 "5h"/"weekly"/"monthly" 的自动映射）
+
+---
+
+## Mock Provider（模拟器模式）
+
+### 需求背景
+
+虚拟网关在开发/测试场景下，需要一种不消耗真实 LLM Token 的工作模式。开启后，请求会被拦截并返回随机生成的模拟响应，同时正常记录用量日志。
+
+### 技术方案
+
+**数据库变更**：
+- `providers` 表新增 `mock_mode BOOLEAN DEFAULT 0` 列
+
+**ProviderRow 新增字段**：
+```rust
+pub mock_mode: bool,
+```
+
+**Proxy 层拦截逻辑** (`proxy/handler.rs`)：
+- 在获取 provider 后，检测 `provider.mock_mode`
+- 若为 true，**跳过所有上游转发**，直接生成模拟响应
+- 模拟响应格式为标准 OpenAI ChatCompletion JSON
+- 支持流式（streaming）和非流式两种模式
+- 流式模式：分批发送 SSE chunks，模拟打字效果
+- 请求仍记录到 `request_logs`，token 数量基于内容估算
+
+**模拟响应生成规则**：
+- 内容：基于预定义句库随机拼接，目标长度由 `max_tokens` 控制
+- Token：基于 `usage::estimate_completion_tokens()` 估算
+- 延迟：流式模式下每 chunk 间隔 15ms，模拟真实打字
+
+**API 变更**：
+- `POST /api/v1/providers` 新增 `mock_mode: bool`（可选，默认为 false）
+- `PUT /api/v1/providers/:id` 新增 `mock_mode: bool`
+- `GET /api/v1/providers/:id` 返回值包含 `mock_mode` 字段
+
+**虚拟网关配置**：
+- 每个虚拟网关（A/B/C）默认配置一个 `mock-simulator` 提供商
+- `mock_mode: true`，`base_url: http://mock-simulator`（任意值，不被使用）
+- 映射模型：`MiniMax-M2.7-highspeed` 和 `astron-code-latest`
+- 与真实提供商 `生产环境` 共存，可按需切换
+
+### 实现状态**: ✅ 已完成

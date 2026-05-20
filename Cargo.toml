@@ -67,6 +67,9 @@ hex = "0.4"
 # Bytes
 bytes = "1"
 
+# Random for mock responses
+rand = "0.8"
+
 [lib]
 name = "llm_gateway"
 path = "src/lib.rs"

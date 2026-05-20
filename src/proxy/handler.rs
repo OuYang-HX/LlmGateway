@@ -259,11 +259,27 @@ pub async fn proxy_request(
         }
     };
 
-    // Replace model name in body and inject stream_options for streaming
+    // Parse streaming flag before mock check (needed by both paths)
     let is_streaming = serde_json::from_slice::<serde_json::Value>(&body_bytes)
         .ok()
         .and_then(|v| v.get("stream")?.as_bool())
         .unwrap_or(false);
+
+    // === Mock mode: intercept request and return fake response without calling upstream ===
+    if provider.mock_mode {
+        return handle_mock_request(
+            &provider,
+            &request_model_id,
+            &selected_mapping.provider_model_id,
+            is_streaming,
+            &body_bytes,
+            &api_key_row.id,
+            state.stats_collector.clone(),
+            state.db.clone(),
+        ).await.into_response();
+    }
+
+    // Replace model name in body and inject stream_options for streaming
 
     let final_body = if let Ok(mut body_json) = serde_json::from_slice::<serde_json::Value>(&body_bytes) {
         if let Some(obj) = body_json.as_object_mut() {
@@ -610,6 +626,224 @@ pub async fn proxy_request(
             (StatusCode::BAD_GATEWAY, format!("Upstream error: {}", e)).into_response()
         }
     }
+}
+
+/// Handle mock request: generate fake LLM response without calling upstream
+async fn handle_mock_request(
+    provider: &crate::db::ProviderRow,
+    model_id: &str,
+    provider_model_id: &str,
+    is_streaming: bool,
+    body_bytes: &[u8],
+    api_key_id: &str,
+    stats_collector: std::sync::Arc<crate::stats::StatsCollector>,
+    db: std::sync::Arc<crate::db::Database>,
+) -> impl axum::response::IntoResponse {
+    use axum::{response::Response, body::Body, http::HeaderMap};
+    use std::time::Instant;
+
+    let start = Instant::now();
+    let duration_ms = start.elapsed().as_millis() as i64;
+
+    // Parse request body to extract max_tokens
+    let max_tokens = serde_json::from_slice::<serde_json::Value>(body_bytes)
+        .ok()
+        .and_then(|v| v.get("max_tokens").and_then(|m| m.as_i64()))
+        .unwrap_or(1024)
+        .min(4096) as i64;
+
+    // Generate realistic mock content
+    let mock_content = generate_mock_content(max_tokens as usize);
+    let completion_tokens = crate::usage::estimate_completion_tokens(&mock_content);
+    let prompt_tokens = crate::usage::estimate_prompt_tokens(&String::from_utf8_lossy(body_bytes).as_ref());
+    let total_tokens = prompt_tokens + completion_tokens;
+
+    // Log the mock request
+    let request_body_str = String::from_utf8_lossy(body_bytes).to_string();
+    let _ = db.insert_request_log(
+        api_key_id,
+        &provider.id,
+        Some(model_id),
+        "/v1/chat/completions",
+        "POST",
+        None,
+        Some(&request_body_str),
+        Some(200),
+        None,
+        None,
+        prompt_tokens,
+        completion_tokens,
+        total_tokens,
+        Some(duration_ms),
+        is_streaming,
+        false,
+        None,
+    ).await;
+
+    // Record usage for token rate tracking
+    let _ = stats_collector.record_usage(&provider.id, prompt_tokens, completion_tokens).await;
+
+    let response_id = format!("chatcmpl-{}", uuid::Uuid::new_v4());
+
+    if is_streaming {
+        // Streaming: yield multiple SSE chunks with a short delay between each
+        let (tx, rx) = tokio::sync::mpsc::channel::<Result<axum::body::Bytes, std::convert::Infallible>>(32);
+
+        let mock_content_clone = mock_content.clone();
+        let response_id_clone = response_id.clone();
+        let model_id_clone = model_id.to_string();
+        let api_key_id_clone = api_key_id.to_string();
+        let provider_id = provider.id.clone();
+        let db_clone = db.clone();
+        let stats_clone = stats_collector.clone();
+        let duration_ms_copy = duration_ms;
+
+        tokio::spawn(async move {
+            // Split content into chunks to simulate streaming
+            let chunks: Vec<String> = mock_content_clone.chars()
+                .collect::<Vec<_>>()
+                .chunks(8)
+                .map(|c| c.iter().collect::<String>())
+                .collect();
+
+            if chunks.is_empty() {
+                // Empty response - send done
+                let _ = tx.send(Ok(axum::body::Bytes::from("data: [DONE]\n\n"))).await;
+                return;
+            }
+
+            // Send each chunk with a small delay
+            for (i, chunk) in chunks.iter().enumerate() {
+                let is_last = i == chunks.len() - 1;
+                let choice_json = if is_last {
+                    serde_json::json!({
+                        "index": 0,
+                        "delta": {},
+                        "finish_reason": "stop"
+                    })
+                } else {
+                    serde_json::json!({
+                        "index": 0,
+                        "delta": { "content": chunk }
+                    })
+                };
+
+                let sse_line = format!("data: {}\n\n", choice_json);
+                let _ = tx.send(Ok(axum::body::Bytes::from(sse_line))).await;
+                tokio::time::sleep(std::time::Duration::from_millis(15)).await;
+            }
+
+            // Send final usage chunk (OpenAI SSE format for stream_options)
+            let usage_chunk = format!(
+                "data: {}\n\ndata: [DONE]\n\n",
+                serde_json::json!({
+                    "id": response_id_clone,
+                    "object": "chat.completion.chunk",
+                    "created": chrono::Utc::now().timestamp(),
+                    "model": model_id_clone,
+                    "choices": [{"index": 0, "delta": {}, "finish_reason": "stop"}],
+                    "usage": {
+                        "prompt_tokens": prompt_tokens,
+                        "completion_tokens": completion_tokens,
+                        "total_tokens": total_tokens
+                    }
+                })
+            );
+            let _ = tx.send(Ok(axum::body::Bytes::from(usage_chunk))).await;
+
+            // Log final streaming stats
+            let _ = db_clone.insert_request_log(
+                &api_key_id_clone,
+                &provider_id,
+                Some(&model_id_clone),
+                "/v1/chat/completions",
+                "POST",
+                None,
+                None,
+                Some(200),
+                None,
+                None,
+                prompt_tokens,
+                completion_tokens,
+                total_tokens,
+                Some(duration_ms_copy),
+                true,
+                false,
+                None,
+            ).await;
+            let _ = stats_clone.record_usage(&provider_id, prompt_tokens, completion_tokens).await;
+        });
+
+        let body_stream = tokio_stream::wrappers::ReceiverStream::new(rx);
+        Response::builder()
+            .status(StatusCode::OK)
+            .header("content-type", "text/event-stream")
+            .header("cache-control", "no-cache")
+            .header("connection", "keep-alive")
+            .body(Body::from_stream(body_stream))
+            .unwrap()
+            .into_response()
+    } else {
+        // Non-streaming: return complete mock response immediately
+        let response = serde_json::json!({
+            "id": response_id,
+            "object": "chat.completion",
+            "created": chrono::Utc::now().timestamp(),
+            "model": model_id,
+            "choices": [{
+                "index": 0,
+                "message": {
+                    "role": "assistant",
+                    "content": mock_content
+                },
+                "finish_reason": "stop"
+            }],
+            "usage": {
+                "prompt_tokens": prompt_tokens,
+                "completion_tokens": completion_tokens,
+                "total_tokens": total_tokens
+            }
+        });
+
+        (StatusCode::OK, [("content-type", "application/json")], serde_json::to_string(&response).unwrap_or_default()).into_response()
+    }
+}
+
+/// Generate random mock content for LLM responses
+fn generate_mock_content(target_len: usize) -> String {
+    use rand::Rng;
+    let mut rng = rand::thread_rng();
+
+    // Realistic-looking response sentences
+    let sentences = [
+        "This is a simulated response from the mock LLM provider.",
+        "The request was processed successfully without calling the upstream LLM.",
+        "Mock responses are useful for testing and development purposes.",
+        "The system generated this content without consuming any API credits.",
+        "You can enable mock mode on a provider to intercept requests.",
+        "This helps avoid unnecessary token costs during development.",
+        "The response content is randomly generated for demonstration.",
+        "In production, replace mock mode with a real provider configuration.",
+    ];
+
+    let mut result = String::new();
+    while result.len() < target_len {
+        let sentence = sentences[rng.gen_range(0..sentences.len())];
+        result.push_str(sentence);
+        result.push(' ');
+        // Add some variation
+        if rng.gen_bool(0.3) {
+            result.push_str("Here is some additional context. ");
+        }
+    }
+    result.truncate(target_len);
+    if !result.is_empty() {
+        // Remove trailing partial word
+        if let Some(last_space) = result.rfind(' ') {
+            result.truncate(last_space);
+        }
+    }
+    result
 }
 
 /// Extract API key from Authorization header
