@@ -369,8 +369,9 @@ pub async fn proxy_request(
                                 // Parse SSE lines and accumulate content
                                 for line in chunk_str.split('\n') {
                                     let trimmed = line.trim();
-                                    if !trimmed.starts_with("data: ") { continue; }
-                                    let json_str = &trimmed[6..];
+                                    if !trimmed.starts_with("data:") { continue; }
+                                    let json_str = trimmed.strip_prefix("data:").unwrap_or(trimmed).trim_start();
+                                    if json_str.is_empty() { continue; }
                                     if json_str == "[DONE]" { continue; }
 
                                     if let Ok(v) = serde_json::from_str::<serde_json::Value>(json_str) {
@@ -460,6 +461,18 @@ pub async fn proxy_request(
                     let final_model = response_model.clone().or(Some(log_model));
                     // Strip thinking tags from accumulated delta content
                     let clean_content = strip_thinking_tags(&all_delta_content);
+
+                    // If API returned 0 for both prompt and completion tokens, estimate from content
+                    // This handles cases where the upstream provider doesn't report accurate usage
+                    if prompt_tokens == 0 && completion_tokens == 0 {
+                        if !all_delta_content.is_empty() {
+                            completion_tokens = crate::usage::estimate_completion_tokens(&clean_content);
+                        }
+                        if let Some(ref req_body) = request_body_str {
+                            prompt_tokens = crate::usage::estimate_prompt_tokens(req_body);
+                        }
+                        total_tokens = prompt_tokens + completion_tokens;
+                    }
 
                     // If we detected a rate-limit error in the SSE stream and got no useful content,
                     // log it with a warning so the operator knows the upstream is throttling
