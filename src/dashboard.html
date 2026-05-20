@@ -806,6 +806,12 @@ function updateRateLegends(){
 function getApiKeyName(keyId){
     if(!keyId||!allApiKeys.length)return keyId?keyId.slice(0,8)+'...':'-';
     const k=allApiKeys.find(a=>a.id===keyId);
+    return k?k.name:(keyId.slice(0,8)+'...');
+}
+
+function getApiKeyNameDetail(keyId){
+    if(!keyId||!allApiKeys.length)return keyId?keyId.slice(0,8)+'...':'-';
+    const k=allApiKeys.find(a=>a.id===keyId);
     return k?(k.name+' ('+k.key_prefix+')'):(keyId.slice(0,8)+'...');
 }
 
@@ -2137,7 +2143,7 @@ function renderLogDetailRaw(log) {
     html += `<tr><td style="padding:4px 8px;color:#94a3b8;width:120px;border-bottom:1px solid #334155">请求路径</td><td style="padding:4px 8px;border-bottom:1px solid #334155;font-family:monospace">${log.request_method} ${log.request_path}</td></tr>`;
     html += `<tr><td style="padding:4px 8px;color:#94a3b8;border-bottom:1px solid #334155">服务商</td><td style="padding:4px 8px;border-bottom:1px solid #334155">${log.provider_id}</td></tr>`;
     html += `<tr><td style="padding:4px 8px;color:#94a3b8;border-bottom:1px solid #334155">模型</td><td style="padding:4px 8px;border-bottom:1px solid #334155">${log.model || '-'}</td></tr>`;
-    html += `<tr><td style="padding:4px 8px;color:#94a3b8;border-bottom:1px solid #334155">API Key</td><td style="padding:4px 8px;border-bottom:1px solid #334155;font-family:monospace;font-size:12px">${log.api_key_id}</td></tr>`;
+    html += `<tr><td style="padding:4px 8px;color:#94a3b8;border-bottom:1px solid #334155">API Key</td><td style="padding:4px 8px;border-bottom:1px solid #334155;font-family:monospace;font-size:12px">${getApiKeyNameDetail(log.api_key_id)}</td></tr>`;
     html += `<tr><td style="padding:4px 8px;color:#94a3b8;border-bottom:1px solid #334155">状态码</td><td style="padding:4px 8px;border-bottom:1px solid #334155"><span class="badge ${log.response_status && log.response_status < 400 ? 'badge-green' : 'badge-red'}">${log.response_status || '-'}</span></td></tr>`;
     html += `<tr><td style="padding:4px 8px;color:#94a3b8;border-bottom:1px solid #334155">耗时</td><td style="padding:4px 8px;border-bottom:1px solid #334155">${log.duration_ms ? log.duration_ms + 'ms' : '-'}</td></tr>`;
     html += `<tr><td style="padding:4px 8px;color:#94a3b8;border-bottom:1px solid #334155">流式</td><td style="padding:4px 8px;border-bottom:1px solid #334155">${log.is_streaming ? '是' : '否'}</td></tr>`;
