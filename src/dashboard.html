@@ -589,51 +589,34 @@ async function loadTokenRateCharts(){
         const data = await(await fetch(url)).json();
         if(!data) data = [];
 
+        // Compute range start/end timestamps for X axis
+        const now = new Date();
+        const rangeMs = {'1h':3600000,'5h':18000000,'1d':86400000,'1w':604800000,'1m':2592000000,'all':0}[range]||3600000;
+        const xMin = rangeMs > 0 ? now.getTime() - rangeMs : null;
+        const xMax = now.getTime();
+
+        // Time label formatter for ticks and tooltips
+        const curRange=range;
+        const fmtTimeLabel = (ts) => {
+            const dt = new Date(ts);
+            if(curRange==='1w'||curRange==='1m'||curRange==='all'){
+                return (dt.getMonth()+1)+'/'+dt.getDate()+' '+dt.toLocaleTimeString('zh-CN',{hour:'2-digit',minute:'2-digit',hour12:false});
+            }
+            return dt.toLocaleTimeString('zh-CN',{hour:'2-digit',minute:'2-digit',hour12:false,timeZoneName:undefined});
+        };
+
         // Group data by provider_id
         const providerMap = new Map();
-        const timeSet = new Set();
         data.forEach(d => {
             const pid = d.provider_id || 'unknown';
             if(!providerMap.has(pid)) providerMap.set(pid, []);
             providerMap.get(pid).push(d);
-            timeSet.add(d.snapshot_time);
         });
 
-        // Compute range start/end for X axis
-        const now = new Date();
-        const rangeMs = {'1h':3600000,'5h':18000000,'1d':86400000,'1w':604800000,'1m':2592000000,'all':0}[range]||3600000;
-        const rangeStart = range > 0 ? new Date(now.getTime() - rangeMs) : null;
-
-        // Add range boundaries to timeSet so the X axis spans the full range
-        if(rangeStart) {
-            timeSet.add(rangeStart.toISOString().replace(/\.\d{3}Z$/, 'Z'));
-            timeSet.add(now.toISOString().replace(/\.\d{3}Z$/, 'Z'));
-        }
-
-        // Build sorted time labels
-        const curRange=range;
-        const fmtLabel = (t) => {
-            const dt = new Date(t);
-            if(curRange==='1w'||curRange==='1m'||curRange==='all'){
-                return (dt.getMonth()+1)+'/'+dt.getDate()+' '+dt.toLocaleTimeString('zh-CN',{hour:'2-digit',minute:'2-digit',hour12:false});
-            }
-            return dt.toLocaleTimeString('zh-CN', {hour: '2-digit', minute: '2-digit', hour12: false, timeZoneName: undefined});
-        };
-        const timeKeys = [...timeSet].sort();
-        const labels = timeKeys.map(fmtLabel);
-
-        // X axis min/max labels for full range display
-        const xMin = rangeStart ? fmtLabel(rangeStart.toISOString().replace(/\.\d{3}Z$/, 'Z')) : undefined;
-        const xMax = rangeStart ? fmtLabel(now.toISOString().replace(/\.\d{3}Z$/, 'Z')) : undefined;
-
-        // Build datasets per provider — include ALL providers (even those with no data)
-        // so the legend always shows every provider. Providers with no data
-        // get hidden datasets (all-null data) so their legend entry appears
-        // but no line is drawn until they have data.
+        // Build datasets per provider — use {x, y} data points with numeric timestamps
         const outputDatasets = [];
         const inputDatasets = [];
 
-        // Use allProviders as the source of truth for the legend order
         allProviders.forEach(provider => {
             const pid = provider.id;
             const name = provider.name || pid;
@@ -642,10 +625,6 @@ async function loadTokenRateCharts(){
             const hasData = providerMap.has(pid);
             const snapshots = hasData ? providerMap.get(pid) : [];
 
-            // Build rate arrays with smoothing
-            // Raw rate = tokens / elapsed_seconds, but this is unreliable when
-            // elapsed is very short (e.g. request just completed right before snapshot).
-            // Use a 3-point moving average to smooth out spikes.
             const rawOutputRates = snapshots.map(s => {
                 const elapsed = s.elapsed_seconds || 10;
                 if (elapsed < 1.0 || s.request_count === 0) return 0;
@@ -657,7 +636,6 @@ async function loadTokenRateCharts(){
                 return s.prompt_tokens / elapsed;
             });
 
-            // 3-point moving average smoothing
             function smooth(arr) {
                 return arr.map((v, i) => {
                     const neighbors = [arr[i-1], v, arr[i+1]].filter(x => x !== undefined && x !== null);
@@ -667,20 +645,9 @@ async function loadTokenRateCharts(){
             const smoothOutput = smooth(rawOutputRates);
             const smoothInput = smooth(rawInputRates);
 
-            // Build time->rate maps
-            const outputMap = new Map();
-            const inputMap = new Map();
-            snapshots.forEach((s, i) => {
-                outputMap.set(s.snapshot_time, smoothOutput[i]);
-                inputMap.set(s.snapshot_time, smoothInput[i]);
-            });
-
-            const outputData = timeKeys.length > 0
-                ? timeKeys.map(t => outputMap.has(t) ? outputMap.get(t) : (hasData ? null : 0))
-                : [];  // No time points → empty array (chart renders with no data)
-            const inputData = timeKeys.length > 0
-                ? timeKeys.map(t => inputMap.has(t) ? inputMap.get(t) : (hasData ? null : 0))
-                : [];
+            // Build {x, y} data points using timestamp as x value
+            const outputData = snapshots.map((s, i) => ({ x: new Date(s.snapshot_time).getTime(), y: smoothOutput[i] }));
+            const inputData = snapshots.map((s, i) => ({ x: new Date(s.snapshot_time).getTime(), y: smoothInput[i] }));
 
             const baseStyle = {
                 borderColor: rgba(color, 1),
@@ -691,7 +658,6 @@ async function loadTokenRateCharts(){
                 borderWidth: style.line_width,
                 spanGaps: true,
                 provider_id: pid,
-                // Hide datasets with no data by default — legend entry still visible
                 hidden: !hasData,
             };
             if (style.line_style === 'dashed') baseStyle.borderDash = [6, 3];
@@ -705,7 +671,7 @@ async function loadTokenRateCharts(){
             responsive: true,
             maintainAspectRatio: false,
             animation: false,
-            interaction: { mode: 'index', intersect: false },
+            interaction: { mode: 'nearest', intersect: false },
             plugins: {
                 legend: {
                     display: true,
@@ -723,21 +689,27 @@ async function loadTokenRateCharts(){
                         const meta = chart.getDatasetMeta(idx);
                         meta.hidden = meta.hidden === null ? !chart.data.datasets[idx].hidden : !meta.hidden;
                         chart.update();
-                        // Sync hidden state with the other chart
                         syncChartLegend(chart === outputRateChart ? inputRateChart : outputRateChart, chart.data.datasets[idx].provider_id, meta.hidden);
                         updateRateLegends();
                     }
                 },
                 tooltip: {
                     callbacks: {
+                        title: (items) => items.length ? fmtTimeLabel(items[0].parsed.x) : '',
                         label: ctx => ctx.dataset.label + ': ' + (ctx.parsed.y !== null ? ctx.parsed.y.toFixed(2) : 'N/A')
                     }
                 }
             },
             scales: {
                 x: {
+                    type: 'linear',
                     grid: { color: 'rgba(100,116,139,0.1)' },
-                    ticks: { color: '#64748b', maxTicksLimit: 12, font: { size: 11 } },
+                    ticks: {
+                        color: '#64748b',
+                        maxTicksLimit: 12,
+                        font: { size: 11 },
+                        callback: function(value) { return fmtTimeLabel(value); }
+                    },
                     min: xMin,
                     max: xMax,
                 },
@@ -753,14 +725,13 @@ async function loadTokenRateCharts(){
         // Output chart
         const outCtx = document.getElementById('output-rate-chart').getContext('2d');
         if(outputRateChart){
-            outputRateChart.data.labels = labels;
             outputRateChart.data.datasets = outputDatasets;
             outputRateChart.options = chartOpts('Output Tokens/s');
             outputRateChart.update('none');
         } else {
             outputRateChart = new Chart(outCtx, {
                 type: 'line',
-                data: { labels, datasets: outputDatasets },
+                data: { datasets: outputDatasets },
                 options: chartOpts('Output Tokens/s'),
             });
         }
@@ -768,14 +739,13 @@ async function loadTokenRateCharts(){
         // Input chart
         const inCtx = document.getElementById('input-rate-chart').getContext('2d');
         if(inputRateChart){
-            inputRateChart.data.labels = labels;
             inputRateChart.data.datasets = inputDatasets;
             inputRateChart.options = chartOpts('Input Tokens/s');
             inputRateChart.update('none');
         } else {
             inputRateChart = new Chart(inCtx, {
                 type: 'line',
-                data: { labels, datasets: inputDatasets },
+                data: { datasets: inputDatasets },
                 options: chartOpts('Input Tokens/s'),
             });
         }
@@ -814,7 +784,7 @@ function updateRateLegends(){
         });
         if(!visible.length) return '暂无数据';
         return visible.map(ds => {
-            const max = Math.max(...ds.data.filter(v => v !== null), 0);
+            const max = Math.max(...ds.data.filter(v => v !== null && v.y !== null).map(v => v.y), 0);
             return ds.label + ': ' + max.toFixed(1);
         }).join(' | ');
     };
