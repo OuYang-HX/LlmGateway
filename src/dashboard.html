@@ -1532,11 +1532,31 @@ function doDeleteLogsByApiKey(){
 }
 
 function deleteAllLogs(){
-    if(!confirm('⚠️ 确定清理所有请求日志？\n此操作不可恢复！所有统计数据将归零！'))return;
-    if(!confirm('再次确认：真的要删除全部日志吗？'))return;
-    fetch(API+'/logs/delete-all',{method:'POST'}).then(r=>r.json()).then(d=>{
+    // Build the same filter params as loadLogs
+    const params=new URLSearchParams();
+    const prov=document.getElementById('log-provider').value;
+    const search=document.getElementById('log-search').value.trim();
+    const start=document.getElementById('log-start').value;
+    const end=document.getElementById('log-end').value;
+    const model=document.getElementById('log-model').value.trim();
+    const statusFilter=document.getElementById('log-status-filter').value;
+    if(prov)params.set('provider_id',prov);
+    if(search)params.set('search',search);
+    if(start)params.set('start_time',new Date(start).toISOString().replace('T',' ').replace(/\.\d{3}Z$/,''));
+    if(end)params.set('end_time',new Date(end).toISOString().replace('T',' ').replace(/\.\d{3}Z$/,''));
+    if(model)params.set('model',model);
+    if(statusFilter)params.set('status_filter',statusFilter);
+
+    const hasFilters=params.toString();
+    const confirmMsg=hasFilters
+        ?'⚠️ 确定清理当前搜索结果中的所有日志？\n此操作不可恢复！'
+        :'⚠️ 确定清理所有请求日志？\n此操作不可恢复！所有统计数据将归零！';
+    if(!confirm(confirmMsg))return;
+    if(!confirm('再次确认：真的要删除吗？'))return;
+    const url=hasFilters?API+'/logs/delete-all?'+params:API+'/logs/delete-all';
+    fetch(url,{method:'POST'}).then(r=>r.json()).then(d=>{
         if(d.error){alert('清理失败: '+d.error);return;}
-        alert(`已清理全部 ${d.deleted} 条日志`);
+        alert(`已清理 ${d.deleted} 条日志`);
         loadLogs();
     }).catch(e=>alert('请求失败: '+e));
 }

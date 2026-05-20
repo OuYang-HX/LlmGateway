@@ -953,14 +953,50 @@ pub async fn delete_request_logs_batch(
     }
 }
 
-/// Delete all request logs
+#[derive(Debug, Deserialize)]
+pub struct DeleteAllLogsParams {
+    pub api_key_id: Option<String>,
+    pub provider_id: Option<String>,
+    pub model: Option<String>,
+    pub start_time: Option<String>,
+    pub end_time: Option<String>,
+    pub search: Option<String>,
+    pub status_filter: Option<String>,
+}
+
+/// Delete request logs matching current search/filter criteria
+/// If no filters provided, deletes all logs (same as before)
 pub async fn delete_all_request_logs(
     State(state): State<AppState>,
+    Query(params): Query<DeleteAllLogsParams>,
 ) -> impl IntoResponse {
-    match state.db.delete_all_request_logs().await {
-        Ok(count) => (StatusCode::OK, Json(serde_json::json!({"deleted": count, "message": format!("Deleted all {} log entries", count)}))).into_response(),
+    // If no filters are specified, delete everything
+    let has_filters = params.provider_id.is_some()
+        || params.api_key_id.is_some()
+        || params.start_time.is_some()
+        || params.end_time.is_some()
+        || params.search.is_some()
+        || params.model.is_some()
+        || params.status_filter.is_some();
+
+    let result = if has_filters {
+        state.db.delete_request_logs_filtered(
+            params.api_key_id.as_deref(),
+            params.provider_id.as_deref(),
+            params.start_time.as_deref(),
+            params.end_time.as_deref(),
+            params.search.as_deref(),
+            params.model.as_deref(),
+            params.status_filter.as_deref(),
+        ).await
+    } else {
+        state.db.delete_all_request_logs().await
+    };
+
+    match result {
+        Ok(count) => (StatusCode::OK, Json(serde_json::json!({"deleted": count, "message": format!("Deleted {} log entries", count)}))).into_response(),
         Err(e) => {
-            tracing::error!("Failed to delete all request logs: {}", e);
+            tracing::error!("Failed to delete request logs: {}", e);
             (StatusCode::INTERNAL_SERVER_ERROR, Json(serde_json::json!({"error": e.to_string()}))).into_response()
         }
     }
