@@ -97,3 +97,37 @@
   - 窗口期始终基于订阅时间偏移（如 03:47:22），不会对齐到整点（如 04:00:00）
   - 刷新时刻决定"何时步进"，订阅时间决定"步进到哪里"
   - rolling 模式**必须设置订阅开始时间**
+
+### 5. rsync 对 Rust 项目不可靠，同步源码用 cp
+- **问题**：对 Rust 项目（src/、Cargo.toml）执行 `rsync -av --delete`，部分文件内容未同步到目标目录，但 rsync 报告成功
+- **根因**：rsync 默认以"文件大小 + 修改时间"判断是否更新。如果目标目录已存在同名文件且大小相同，即使内容不同，rsync 也可能跳过
+- **修复**：对 Rust 项目使用 `cp -av` 或 `cp --remove-destination`，强制覆盖目标
+- **验证**：同步后检查目标文件的 `wc -c` 或 `cargo build --release` 确认编译成功
+
+### 6. Rust 函数签名变更后，必须找到所有调用点并更新
+- **场景**：给 `create_provider()` 添加第 25 个参数 `mock_mode: bool`，导致所有测试中调用此函数的地方全部编译失败
+- **常见模式**：
+  - `db.create_provider()` 签名变化 → 更新所有 tests 中的调用
+  - `db.update_provider()` 签名变化 → 更新所有 tests 中的调用
+  - 任何 pub async fn 签名变化 → 所有调用点需同步
+- **Python 批量修复的坑**：用 Python 字符串替换修复 `.bind()` 调用时，`"choices\.0"` 中的转义点号可能被错误处理。如果原文件使用普通 `"choices.0"`，Python 替换后变成 `"choices\\.0"`，Rust 编译器报 `unknown character escape: \.`
+- **正确做法**：
+  1. 修改函数签名后，`cargo build --tests 2>&1 | grep "E0061"` 找所有缺失参数的调用
+  2. Python 批量替换时注意转义：若原文本是 `"choices.0"`，替换字符串也要是 `"choices.0"`，不是 `"choices\.0"`
+  3. 如果不确定，先 `git checkout` 恢复原文件，再用 Python 精确匹配原文本
+
+### 7. 测试中引用 Vec 而非 json! 数组时，小心 as_array().unwrap() panic
+- **场景**：`serde_json::Value` 的 `["mappings"]` 字段实际是对象而非数组，`as_array().unwrap()` panic
+- **修复**：先检查字段类型，或用 `get("mappings").and_then(|v| v.as_array())`
+- **教训**：从 HTTP API 返回的 JSON 形状不一定是你期望的，测试中用 `.unwrap()` 前先 assert 字段存在性
+
+### 8. axum-test 的 `.json()` 方法是链式 builder 模式
+- **错误用法**：`server.post("/path", &body)` — 编译错误"this method takes 1 argument"
+- **正确用法**：`server.post("/path").json(&body).await`
+- **模式**：`method(path)` 返回 builder，builder 提供 `.json(val)` 添加 body，`.await` 执行请求
+
+### 9. 三个虚拟网关各自独立数据库
+- **架构**：开发机运行三个虚拟网关（A=49129, B=49130, C=49131），每个有独立 SQLite DB
+- **每个 DB 需要单独迁移**：新增列后，每个虚拟网关的 DB 需要手动执行 `ALTER TABLE`
+- **API Key 也独立**：每个虚拟网关有自己的 API Key 数据库，不同网关的 API Key 不能混用
+- **Mock Provider 配置**：每个虚拟网关需要单独添加 mock provider 才能启用模拟模式
