@@ -599,16 +599,32 @@ async function loadTokenRateCharts(){
             timeSet.add(d.snapshot_time);
         });
 
+        // Compute range start/end for X axis
+        const now = new Date();
+        const rangeMs = {'1h':3600000,'5h':18000000,'1d':86400000,'1w':604800000,'1m':2592000000,'all':0}[range]||3600000;
+        const rangeStart = range > 0 ? new Date(now.getTime() - rangeMs) : null;
+
+        // Add range boundaries to timeSet so the X axis spans the full range
+        if(rangeStart) {
+            timeSet.add(rangeStart.toISOString().replace(/\.\d{3}Z$/, 'Z'));
+            timeSet.add(now.toISOString().replace(/\.\d{3}Z$/, 'Z'));
+        }
+
         // Build sorted time labels
         const curRange=range;
-        const labels = [...timeSet].sort().map(t => {
+        const fmtLabel = (t) => {
             const dt = new Date(t);
             if(curRange==='1w'||curRange==='1m'||curRange==='all'){
                 return (dt.getMonth()+1)+'/'+dt.getDate()+' '+dt.toLocaleTimeString('zh-CN',{hour:'2-digit',minute:'2-digit',hour12:false});
             }
             return dt.toLocaleTimeString('zh-CN', {hour: '2-digit', minute: '2-digit', hour12: false, timeZoneName: undefined});
-        });
+        };
         const timeKeys = [...timeSet].sort();
+        const labels = timeKeys.map(fmtLabel);
+
+        // X axis min/max labels for full range display
+        const xMin = rangeStart ? fmtLabel(rangeStart.toISOString().replace(/\.\d{3}Z$/, 'Z')) : undefined;
+        const xMax = rangeStart ? fmtLabel(now.toISOString().replace(/\.\d{3}Z$/, 'Z')) : undefined;
 
         // Build datasets per provider — include ALL providers (even those with no data)
         // so the legend always shows every provider. Providers with no data
@@ -721,7 +737,9 @@ async function loadTokenRateCharts(){
             scales: {
                 x: {
                     grid: { color: 'rgba(100,116,139,0.1)' },
-                    ticks: { color: '#64748b', maxTicksLimit: 12, font: { size: 11 } }
+                    ticks: { color: '#64748b', maxTicksLimit: 12, font: { size: 11 } },
+                    min: xMin,
+                    max: xMax,
                 },
                 y: {
                     grid: { color: 'rgba(100,116,139,0.1)' },
