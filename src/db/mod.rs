@@ -1286,6 +1286,45 @@ impl Database {
         Ok(result.rows_affected())
     }
 
+    /// Delete request logs matching the same filters as query_request_logs_lightweight
+    pub async fn delete_request_logs_filtered(
+        &self,
+        api_key_id: Option<&str>,
+        provider_id: Option<&str>,
+        start_time: Option<&str>,
+        end_time: Option<&str>,
+        search: Option<&str>,
+        model: Option<&str>,
+        status_filter: Option<&str>,
+    ) -> Result<u64, sqlx::Error> {
+        let mut query = String::from("DELETE FROM request_logs WHERE 1=1");
+        if api_key_id.is_some() { query.push_str(" AND api_key_id = ?"); }
+        if provider_id.is_some() { query.push_str(" AND provider_id = ?"); }
+        if start_time.is_some() { query.push_str(" AND created_at >= ?"); }
+        if end_time.is_some() { query.push_str(" AND created_at <= ?"); }
+        if search.is_some() { query.push_str(" AND (request_body LIKE ? OR response_body LIKE ?)"); }
+        if model.is_some() { query.push_str(" AND model = ?"); }
+        if status_filter == Some("success") {
+            query.push_str(" AND response_status >= 200 AND response_status < 400 AND (error_message IS NULL OR error_message = '')");
+        } else if status_filter == Some("error") {
+            query.push_str(" AND (response_status < 200 OR response_status >= 400 OR (error_message IS NOT NULL AND error_message != ''))");
+        }
+
+        let mut q = sqlx::query(&query);
+        if let Some(v) = api_key_id { q = q.bind(v); }
+        if let Some(v) = provider_id { q = q.bind(v); }
+        if let Some(v) = start_time { q = q.bind(v); }
+        if let Some(v) = end_time { q = q.bind(v); }
+        if let Some(ref v) = search {
+            q = q.bind(format!("%{}%", v));
+            q = q.bind(format!("%{}%", v));
+        }
+        if let Some(v) = model { q = q.bind(v); }
+
+        let result = q.execute(&self.pool).await?;
+        Ok(result.rows_affected())
+    }
+
     // ========== Statistics operations ==========
 
     /// Get aggregate statistics
