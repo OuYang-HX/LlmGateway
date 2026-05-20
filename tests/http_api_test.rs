@@ -44,6 +44,9 @@ async fn build_test_app() -> TestServer {
         .route("/api/v1/models/:id", get(llm_gateway::api::get_model).delete(llm_gateway::api::delete_model).put(llm_gateway::api::update_model))
         .route("/api/v1/models/:id/mappings", get(llm_gateway::api::list_model_mappings).post(llm_gateway::api::add_model_mapping))
         .route("/api/v1/models/:id/mappings/:provider_id", put(llm_gateway::api::update_model_mapping).delete(llm_gateway::api::remove_model_mapping))
+        .route("/api/v1/quotas/:provider_id", get(llm_gateway::api::get_provider_quota_usage).post(llm_gateway::api::set_provider_quota))
+        .route("/api/v1/quotas/:provider_id/:quota_type", delete(llm_gateway::api::delete_provider_quota))
+        .route("/api/v1/quotas/:provider_id/calibration", post(llm_gateway::api::set_quota_calibration).get(llm_gateway::api::get_provider_calibrations))
         .route("/api/v1/stats", get(llm_gateway::api::get_stats))
         .route("/api/v1/stats/bucketed", get(llm_gateway::api::get_time_bucketed_stats))
         .route("/api/v1/logs", get(llm_gateway::api::get_request_logs))
@@ -1605,4 +1608,116 @@ async fn test_http_update_provider_mock_mode() {
     let resp = server.get("/api/v1/providers/upd-mock").await;
     let provider: serde_json::Value = resp.json();
     assert_eq!(provider["mock_mode"], true);
+}
+
+// ========== Model Mapping API Tests ==========
+
+#[tokio::test]
+async fn test_http_model_mapping_crud_operations() {
+    let server = build_test_app().await;
+    
+    // Create provider and model
+    server.post("/api/v1/providers").json(&serde_json::json!({
+        "id":"map-prov","name":"Map Provider","base_url":"https://m.com",
+        "api_type":"openai","auth_type":"api_key","api_key":"key","weight":1
+    })).await;
+    server.post("/api/v1/models").json(&serde_json::json!({
+        "id":"map-model","name":"Map Model"
+    })).await;
+    
+    // Add mapping
+    let resp = server.post("/api/v1/models/map-model/mappings")
+        .json(&serde_json::json!({
+            "provider_id":"map-prov","provider_model_id":"map-model",
+            "is_active":true,"weight":5,"cost_multiplier":1.5
+        }))
+        .await;
+    assert!(resp.status_code() == StatusCode::OK || resp.status_code() == StatusCode::CREATED, "Add mapping should succeed");
+    
+    // List mappings
+    let resp = server.get("/api/v1/models/map-model/mappings").await;
+    assert_eq!(resp.status_code(), StatusCode::OK);
+    let mappings: Vec<serde_json::Value> = resp.json();
+    assert!(!mappings.is_empty(), "Should have at least one mapping");
+    
+    // Update mapping
+    let resp = server.put("/api/v1/models/map-model/mappings/map-prov")
+        .json(&serde_json::json!({"provider_model_id":"map-model","weight":10,"cost_multiplier":2.0,"is_active":false}))
+        .await;
+    assert_eq!(resp.status_code(), StatusCode::OK);
+    
+    // Verify update via model endpoint which includes nested provider
+    let resp = server.get("/api/v1/models/map-model").await;
+    let model: serde_json::Value = resp.json();
+    let mappings = model["mappings"].as_array().unwrap();
+    let updated = mappings.iter().find(|m| m["provider"]["id"] == "map-prov").unwrap();
+    assert_eq!(updated["mapping"]["weight"], 10);
+    assert_eq!(updated["mapping"]["cost_multiplier"], 2.0);
+    assert_eq!(updated["mapping"]["is_active"], false);
+}
+
+#[tokio::test]
+async fn test_http_model_mapping_delete_cascades() {
+    let server = build_test_app().await;
+    
+    // Setup
+    server.post("/api/v1/providers").json(&serde_json::json!({
+        "id":"del-prov","name":"Del Provider","base_url":"https://d.com",
+        "api_type":"openai","auth_type":"api_key","api_key":"key","weight":1
+    })).await;
+    server.post("/api/v1/models").json(&serde_json::json!({
+        "id":"del-model","name":"Del Model"
+    })).await;
+    server.post("/api/v1/models/del-model/mappings")
+        .json(&serde_json::json!({
+            "provider_id":"del-prov","provider_model_id":"del-model",
+            "is_active":true,"weight":1
+        }))
+        .await;
+    
+    // Delete mapping
+    let resp = server.delete("/api/v1/models/del-model/mappings/del-prov").await;
+    assert_eq!(resp.status_code(), StatusCode::OK);
+    
+    // Verify deleted
+    let resp = server.get("/api/v1/models/del-model/mappings").await;
+    let mappings: Vec<serde_json::Value> = resp.json();
+    assert!(mappings.iter().all(|m| m["provider"]["id"] != "del-prov"));
+}
+
+#[tokio::test]
+async fn test_http_model_mapping_update_changes_weight() {
+    let server = build_test_app().await;
+    
+    // Setup
+    server.post("/api/v1/providers").json(&serde_json::json!({
+        "id":"up-prov","name":"Up Provider","base_url":"https://u.com",
+        "api_type":"openai","auth_type":"api_key","api_key":"key","weight":1
+    })).await;
+    server.post("/api/v1/models").json(&serde_json::json!({
+        "id":"up-model","name":"Up Model"
+    })).await;
+    server.post("/api/v1/models/up-model/mappings")
+        .json(&serde_json::json!({
+            "provider_id":"up-prov","provider_model_id":"up-model",
+            "is_active":true,"weight":5,"cost_multiplier":1.0
+        }))
+        .await;
+    
+    // Update only weight - API requires all fields including provider_model_id
+    let resp = server.put("/api/v1/models/up-model/mappings/up-prov")
+        .json(&serde_json::json!({
+            "provider_model_id":"up-model",
+            "is_active":true,"weight":20,"cost_multiplier":1.0
+        }))
+        .await;
+    assert_eq!(resp.status_code(), StatusCode::OK);
+    
+    // Verify weight was updated
+    let resp = server.get("/api/v1/models/up-model").await;
+    let model: serde_json::Value = resp.json();
+    let mappings = model["mappings"].as_array().unwrap();
+    let updated = mappings.iter().find(|m| m["provider"]["id"] == "up-prov").unwrap();
+    assert_eq!(updated["mapping"]["weight"], 20, "weight should be updated to 20");
+    assert_eq!(updated["mapping"]["cost_multiplier"], 1.0, "cost_multiplier should remain 1.0");
 }
