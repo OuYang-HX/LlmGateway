@@ -1055,13 +1055,37 @@ pub async fn get_token_rate(
     State(state): State<AppState>,
     Query(params): Query<TokenRateParams>,
 ) -> impl IntoResponse {
-    let one_hour_ago = chrono::Utc::now() - chrono::Duration::hours(1);
-    let start_time = one_hour_ago.format("%Y-%m-%dT%H:%M:%SZ").to_string();
+    let range = params.range.as_deref().unwrap_or("1h");
+    let (start_time, limit) = match range {
+        "5h" => {
+            let t = chrono::Utc::now() - chrono::Duration::hours(5);
+            (t.format("%Y-%m-%dT%H:%M:%SZ").to_string(), 18000)
+        }
+        "1d" => {
+            let t = chrono::Utc::now() - chrono::Duration::days(1);
+            (t.format("%Y-%m-%dT%H:%M:%SZ").to_string(), 86400)
+        }
+        "1w" => {
+            let t = chrono::Utc::now() - chrono::Duration::weeks(1);
+            (t.format("%Y-%m-%dT%H:%M:%SZ").to_string(), 604800)
+        }
+        "1m" => {
+            let t = chrono::Utc::now() - chrono::Duration::days(30);
+            (t.format("%Y-%m-%dT%H:%M:%SZ").to_string(), 2592000)
+        }
+        "all" => {
+            ("2000-01-01T00:00:00Z".to_string(), 99999999)
+        }
+        _ => {  // "1h" default
+            let t = chrono::Utc::now() - chrono::Duration::hours(1);
+            (t.format("%Y-%m-%dT%H:%M:%SZ").to_string(), 3600)
+        }
+    };
 
     match state.db.get_token_rate_snapshots(
         params.provider_id.as_deref(),
         &start_time,
-        3600,
+        limit,
     ).await {
         Ok(snapshots) => Json(snapshots).into_response(),
         Err(e) => {
@@ -1081,6 +1105,7 @@ pub struct StatsByApiKeyParams {
 #[derive(Debug, Deserialize)]
 pub struct TokenRateParams {
     pub provider_id: Option<String>,
+    pub range: Option<String>,  // "1h", "5h", "1d", "1w", "1m", "all"
 }
 
 pub async fn get_top_provider(
