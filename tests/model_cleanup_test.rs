@@ -96,7 +96,7 @@ async fn test_query_request_logs_lightweight_basic() {
     ).await.unwrap();
     
     // Query lightweight
-    let logs = db.query_request_logs_lightweight(None, None, None, None, None, None, 10, 0).await.unwrap();
+    let logs = db.query_request_logs_lightweight(None, None, None, None, None, None, None, 10, 0).await.unwrap();
     assert_eq!(logs.len(), 1);
     assert_eq!(logs[0].model, Some("gpt-4".to_string()));
     assert_eq!(logs[0].response_status, Some(200));
@@ -126,7 +126,7 @@ async fn test_query_request_logs_lightweight_with_search() {
     ).await.unwrap();
     
     // Search should still work even with lightweight query
-    let logs = db.query_request_logs_lightweight(None, None, None, None, Some("hello"), None, 10, 0).await.unwrap();
+    let logs = db.query_request_logs_lightweight(None, None, None, None, Some("hello"), None, None, 10, 0).await.unwrap();
     assert_eq!(logs.len(), 1);
     assert_eq!(logs[0].model, Some("gpt-4".to_string()));
 }
@@ -152,7 +152,7 @@ async fn test_query_request_logs_lightweight_with_model_filter() {
     ).await.unwrap();
     
     // Filter by model
-    let logs = db.query_request_logs_lightweight(None, None, None, None, None, Some("gpt-4"), 10, 0).await.unwrap();
+    let logs = db.query_request_logs_lightweight(None, None, None, None, None, Some("gpt-4"), None, 10, 0).await.unwrap();
     assert_eq!(logs.len(), 1);
     assert_eq!(logs[0].model, Some("gpt-4".to_string()));
 }
@@ -179,7 +179,7 @@ async fn test_query_request_logs_lightweight_with_provider_filter() {
     ).await.unwrap();
     
     // Filter by provider
-    let logs = db.query_request_logs_lightweight(None, Some("provider-a"), None, None, None, None, 10, 0).await.unwrap();
+    let logs = db.query_request_logs_lightweight(None, Some("provider-a"), None, None, None, None, None, 10, 0).await.unwrap();
     assert_eq!(logs.len(), 1);
     assert_eq!(logs[0].provider_id, "provider-a");
 }
@@ -200,13 +200,13 @@ async fn test_query_request_logs_lightweight_pagination() {
         ).await.unwrap();
     }
     
-    let page1 = db.query_request_logs_lightweight(None, None, None, None, None, None, 2, 0).await.unwrap();
+    let page1 = db.query_request_logs_lightweight(None, None, None, None, None, None, None, 2, 0).await.unwrap();
     assert_eq!(page1.len(), 2);
     
-    let page2 = db.query_request_logs_lightweight(None, None, None, None, None, None, 2, 2).await.unwrap();
+    let page2 = db.query_request_logs_lightweight(None, None, None, None, None, None, None, 2, 2).await.unwrap();
     assert_eq!(page2.len(), 2);
     
-    let page3 = db.query_request_logs_lightweight(None, None, None, None, None, None, 2, 4).await.unwrap();
+    let page3 = db.query_request_logs_lightweight(None, None, None, None, None, None, None, 2, 4).await.unwrap();
     assert_eq!(page3.len(), 1);
 }
 
@@ -225,7 +225,7 @@ async fn test_request_log_list_row_has_error_fields() {
         Some("RecvFromEngineError:Engine Busy"),
     ).await.unwrap();
     
-    let logs = db.query_request_logs_lightweight(None, None, None, None, None, None, 10, 0).await.unwrap();
+    let logs = db.query_request_logs_lightweight(None, None, None, None, None, None, None, 10, 0).await.unwrap();
     assert_eq!(logs.len(), 1);
     assert_eq!(logs[0].response_status, Some(503));
     assert_eq!(logs[0].error_message, Some("RecvFromEngineError:Engine Busy".to_string()));
@@ -247,7 +247,7 @@ async fn test_request_log_list_row_has_throttle_flag() {
         Some("rate_limit_exceeded"),
     ).await.unwrap();
     
-    let logs = db.query_request_logs_lightweight(None, None, None, None, None, None, 10, 0).await.unwrap();
+    let logs = db.query_request_logs_lightweight(None, None, None, None, None, None, None, 10, 0).await.unwrap();
     assert_eq!(logs.len(), 1);
     assert!(logs[0].is_throttled);
     assert_eq!(logs[0].response_status, Some(429));

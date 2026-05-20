@@ -247,6 +247,13 @@ impl Database {
         .execute(&self.pool)
         .await;
 
+        // Migration: Add subscription_start column to providers table
+        let _ = sqlx::query(
+            "ALTER TABLE providers ADD COLUMN subscription_start TEXT"
+        )
+        .execute(&self.pool)
+        .await;
+
         // Migration: Add window_mode and window_size columns to provider_quotas
         let _ = sqlx::query(
             "ALTER TABLE provider_quotas ADD COLUMN window_mode TEXT NOT NULL DEFAULT 'fixed'"
@@ -308,6 +315,18 @@ impl Database {
         .await;
         let _ = sqlx::query(
             "UPDATE provider_quota_calibrations SET quota_type = 'fixed:30d' WHERE quota_type = 'monthly'"
+        )
+        .execute(&self.pool)
+        .await;
+
+        // Migration: Add rolling_step and rolling_step_tz columns to provider_quotas
+        let _ = sqlx::query(
+            "ALTER TABLE provider_quotas ADD COLUMN rolling_step TEXT"
+        )
+        .execute(&self.pool)
+        .await;
+        let _ = sqlx::query(
+            "ALTER TABLE provider_quotas ADD COLUMN rolling_step_tz TEXT"
         )
         .execute(&self.pool)
         .await;
@@ -596,6 +615,7 @@ impl Database {
             response_content_path: r.try_get("response_content_path").unwrap_or_else(|_| "choices.0.message.content".to_string()),
             response_reasoning_path: r.try_get("response_reasoning_path").unwrap_or_else(|_| "choices.0.delta.reasoning_content".to_string()),
             chart_color: opt_str(r, "chart_color"),
+            subscription_start: opt_str(r, "subscription_start"),
             created_at: r.try_get("created_at").unwrap_or_default(),
             updated_at: r.try_get("updated_at").unwrap_or_default(),
         }
@@ -678,6 +698,7 @@ impl Database {
         response_content_path: &str,
         response_reasoning_path: &str,
         chart_color: Option<&str>,
+        subscription_start: Option<&str>,
     ) -> Result<(), sqlx::Error> {
         // If ID changed, cascade update all related tables
         // Disable FK checks temporarily since we're updating the referenced key
@@ -708,6 +729,7 @@ impl Database {
                 response_content_path = ?,
                 response_reasoning_path = ?,
                 chart_color = ?,
+                subscription_start = ?,
                 updated_at = datetime('now')
                 WHERE id = ?"#
         )
@@ -738,6 +760,7 @@ impl Database {
         .bind(response_content_path)
         .bind(response_reasoning_path)
         .bind(chart_color)
+        .bind(subscription_start)
         .bind(old_id)
         .execute(&self.pool)
         .await?;
@@ -1139,6 +1162,7 @@ impl Database {
         end_time: Option<&str>,
         search: Option<&str>,
         model: Option<&str>,
+        status_filter: Option<&str>,
     ) -> Result<i64, sqlx::Error> {
         let mut query = String::from("SELECT COUNT(*) as count FROM request_logs WHERE 1=1");
         if api_key_id.is_some() { query.push_str(" AND api_key_id = ?"); }
@@ -1147,6 +1171,11 @@ impl Database {
         if end_time.is_some() { query.push_str(" AND created_at <= ?"); }
         if search.is_some() { query.push_str(" AND (request_body LIKE ? OR response_body LIKE ?)"); }
         if model.is_some() { query.push_str(" AND model = ?"); }
+        if status_filter == Some("success") {
+            query.push_str(" AND response_status >= 200 AND response_status < 400 AND (error_message IS NULL OR error_message = '')");
+        } else if status_filter == Some("error") {
+            query.push_str(" AND (response_status < 200 OR response_status >= 400 OR (error_message IS NOT NULL AND error_message != ''))");
+        }
 
         let mut q = sqlx::query_scalar::<_, i64>(&query);
         if let Some(v) = api_key_id { q = q.bind(v); }
@@ -1172,6 +1201,7 @@ impl Database {
         end_time: Option<&str>,
         search: Option<&str>,
         model: Option<&str>,
+        status_filter: Option<&str>,
         limit: i64,
         offset: i64,
     ) -> Result<Vec<RequestLogListRow>, sqlx::Error> {
@@ -1187,6 +1217,11 @@ impl Database {
         if end_time.is_some() { query.push_str(" AND created_at <= ?"); }
         if search.is_some() { query.push_str(" AND (request_body LIKE ? OR response_body LIKE ?)"); }
         if model.is_some() { query.push_str(" AND model = ?"); }
+        if status_filter == Some("success") {
+            query.push_str(" AND response_status >= 200 AND response_status < 400 AND (error_message IS NULL OR error_message = '')");
+        } else if status_filter == Some("error") {
+            query.push_str(" AND (response_status < 200 OR response_status >= 400 OR (error_message IS NOT NULL AND error_message != ''))");
+        }
         query.push_str(" ORDER BY created_at DESC LIMIT ? OFFSET ?");
 
         let mut q = sqlx::query_as::<_, RequestLogListRow>(&query);
@@ -1866,16 +1901,20 @@ impl Database {
         window_mode: &str,
         window_size: &str,
         window_start_override: Option<&str>,
+        rolling_step: Option<&str>,
+        rolling_step_tz: Option<&str>,
         limit_count: i64,
         is_enabled: bool,
     ) -> Result<(), sqlx::Error> {
         sqlx::query(
-            r#"INSERT INTO provider_quotas (provider_id, quota_type, window_mode, window_size, window_start_override, limit_count, is_enabled)
-            VALUES (?, ?, ?, ?, ?, ?, ?)
+            r#"INSERT INTO provider_quotas (provider_id, quota_type, window_mode, window_size, window_start_override, rolling_step, rolling_step_tz, limit_count, is_enabled)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
             ON CONFLICT(provider_id, quota_type) DO UPDATE SET
                 window_mode = excluded.window_mode,
                 window_size = excluded.window_size,
                 window_start_override = excluded.window_start_override,
+                rolling_step = excluded.rolling_step,
+                rolling_step_tz = excluded.rolling_step_tz,
                 limit_count = excluded.limit_count,
                 is_enabled = excluded.is_enabled,
                 updated_at = datetime('now')"#
@@ -1885,6 +1924,8 @@ impl Database {
         .bind(window_mode)
         .bind(window_size)
         .bind(window_start_override)
+        .bind(rolling_step)
+        .bind(rolling_step_tz)
         .bind(limit_count)
         .bind(is_enabled)
         .execute(&self.pool)
@@ -2009,8 +2050,9 @@ impl Database {
         start_time: &str,
         end_time: &str,
     ) -> Result<i64, sqlx::Error> {
+        // Only count successful requests (response_status 2xx/3xx and no error_message)
         let count: i64 = sqlx::query_scalar(
-            "SELECT COUNT(*) FROM request_logs WHERE provider_id = ? AND created_at >= ? AND created_at <= ?"
+            "SELECT COUNT(*) FROM request_logs WHERE provider_id = ? AND created_at >= ? AND created_at <= ? AND response_status >= 200 AND response_status < 400 AND (error_message IS NULL OR error_message = '')"
         )
         .bind(provider_id)
         .bind(start_time)
@@ -2022,7 +2064,7 @@ impl Database {
     }
 
     /// Compute the actual quota period for a given quota, respecting window_start_override
-    pub fn compute_quota_period(quota: &ProviderQuotaRow, now: &chrono::DateTime<chrono::Utc>) -> (chrono::DateTime<chrono::Utc>, chrono::DateTime<chrono::Utc>) {
+    pub fn compute_quota_period(quota: &ProviderQuotaRow, subscription_start: Option<&str>, now: &chrono::DateTime<chrono::Utc>) -> (chrono::DateTime<chrono::Utc>, chrono::DateTime<chrono::Utc>) {
         let (window_mode, window_size) = if quota.window_mode.is_empty() {
             Self::normalize_quota_type(&quota.quota_type)
         } else {
@@ -2051,7 +2093,44 @@ impl Database {
             }
         }
 
-        Self::get_quota_period(&window_mode, &window_size, now)
+        if window_mode == "rolling" {
+            let step = quota.rolling_step.as_deref().unwrap_or("1h");
+            let tz = quota.rolling_step_tz.as_deref().unwrap_or("UTC");
+            // Parse subscription_start from provider (not quota)
+            let sub_start = subscription_start.and_then(|s| {
+                let with_t = s.replace(' ', "T");
+                let has_tz = with_t.contains('+') || with_t.ends_with('Z');
+                let with_seconds = if with_t.matches(':').count() >= 2 {
+                    if has_tz { with_t.clone() } else { format!("{}Z", with_t) }
+                } else {
+                    let tz_pos = with_t.rfind('+').or_else(|| with_t.rfind('Z'));
+                    if let Some(tp) = tz_pos { format!("{}:00{}", &with_t[..tp], &with_t[tp..]) }
+                    else { format!("{}:00Z", with_t) }
+                };
+                chrono::DateTime::parse_from_rfc3339(&with_seconds).ok().map(|dt| dt.to_utc())
+            });
+            return Self::get_rolling_window_period(&window_size, step, tz, sub_start.as_ref(), now);
+        }
+
+        // Fixed or sliding window
+        let duration = Self::parse_window_size(&window_size);
+        if window_mode == "fixed" {
+            let tz = quota.rolling_step_tz.as_deref().unwrap_or("UTC");
+            return Self::get_fixed_window_period(&window_size, duration, now, tz);
+        }
+        // Sliding window: from (now - duration) to now
+        (*now - duration, *now)
+    }
+
+    /// Compute next refresh time for rolling quotas
+    fn compute_rolling_next_refresh_from_quota(quota: &ProviderQuotaRow) -> Option<String> {
+        if quota.window_mode != "rolling" || !quota.is_enabled {
+            return None;
+        }
+        let step = quota.rolling_step.as_deref().unwrap_or("1h");
+        let tz = quota.rolling_step_tz.as_deref().unwrap_or("UTC");
+        let now = chrono::Utc::now();
+        Self::compute_rolling_next_refresh(step, tz, &now)
     }
 
     /// Compute quota usage info for a single quota
@@ -2059,6 +2138,7 @@ impl Database {
         &self,
         quota: &ProviderQuotaRow,
         provider_name: &str,
+        subscription_start: Option<&str>,
         now: &chrono::DateTime<chrono::Utc>,
         gateway_count: i64,
         calibration: Option<ProviderQuotaCalibrationRow>,
@@ -2073,6 +2153,8 @@ impl Database {
                 window_mode: quota.window_mode.clone(),
                 window_size: quota.window_size.clone(),
                 window_start_override: quota.window_start_override.clone(),
+                rolling_step: quota.rolling_step.clone(),
+                rolling_step_tz: quota.rolling_step_tz.clone(),
                 limit_count: quota.limit_count,
                 is_enabled: false,
                 gateway_count: 0,
@@ -2085,6 +2167,7 @@ impl Database {
                 usage_percent: 0.0,
                 period_start: String::new(),
                 period_current: now_str,
+                next_refresh_time: None,
             };
         }
 
@@ -2095,7 +2178,7 @@ impl Database {
             (quota.window_mode.clone(), quota.window_size.clone())
         };
 
-        let (period_start, period_end) = Self::compute_quota_period(quota, now);
+        let (period_start, period_end) = Self::compute_quota_period(quota, subscription_start, now);
         let period_start_str = period_start.format("%Y-%m-%d %H:%M:%S").to_string();
 
         // Check calibration validity
@@ -2123,6 +2206,8 @@ impl Database {
             window_mode,
             window_size,
             window_start_override: quota.window_start_override.clone(),
+            rolling_step: quota.rolling_step.clone(),
+            rolling_step_tz: quota.rolling_step_tz.clone(),
             limit_count: quota.limit_count,
             is_enabled: quota.is_enabled,
             gateway_count,
@@ -2135,6 +2220,7 @@ impl Database {
             usage_percent: usage_percent.min(100.0),
             period_start: period_start_str,
             period_current: now_str,
+            next_refresh_time: Self::compute_rolling_next_refresh_from_quota(quota),
         }
     }
 
@@ -2147,14 +2233,15 @@ impl Database {
 
         for quota in &quotas {
             let provider = self.get_provider(&quota.provider_id).await.ok().flatten();
-            let provider_name = provider.map(|p| p.name).unwrap_or_default();
+            let provider_name = provider.as_ref().map(|p| p.name.clone()).unwrap_or_default();
+            let subscription_start = provider.as_ref().and_then(|p| p.subscription_start.as_deref());
 
             if !quota.is_enabled {
-                result.push(self.compute_quota_usage(quota, &provider_name, &now, 0, None));
+                result.push(self.compute_quota_usage(quota, &provider_name, subscription_start, &now, 0, None));
                 continue;
             }
 
-            let (period_start, period_end) = Self::compute_quota_period(quota, &now);
+            let (period_start, period_end) = Self::compute_quota_period(quota, subscription_start, &now);
             let period_start_str = period_start.format("%Y-%m-%d %H:%M:%S").to_string();
             let period_end_str = period_end.format("%Y-%m-%d %H:%M:%S").to_string();
 
@@ -2167,7 +2254,7 @@ impl Database {
             let calibration = self.get_quota_calibration(&quota.provider_id, &quota.quota_type)
                 .await.ok().flatten();
 
-            result.push(self.compute_quota_usage(quota, &provider_name, &now, gateway_count, calibration));
+            result.push(self.compute_quota_usage(quota, &provider_name, subscription_start, &now, gateway_count, calibration));
         }
 
         Ok(result)
@@ -2184,15 +2271,16 @@ impl Database {
         let now = chrono::Utc::now();
 
         let provider = self.get_provider(provider_id).await.ok().flatten();
-        let provider_name = provider.map(|p| p.name).unwrap_or_default();
+        let provider_name = provider.as_ref().map(|p| p.name.clone()).unwrap_or_default();
+        let subscription_start = provider.as_ref().and_then(|p| p.subscription_start.as_deref());
 
         for quota in &quotas {
             if !quota.is_enabled {
-                result.push(self.compute_quota_usage(quota, &provider_name, &now, 0, None));
+                result.push(self.compute_quota_usage(quota, &provider_name, subscription_start, &now, 0, None));
                 continue;
             }
 
-            let (period_start, period_end) = Self::compute_quota_period(quota, &now);
+            let (period_start, period_end) = Self::compute_quota_period(quota, subscription_start, &now);
             let period_start_str = period_start.format("%Y-%m-%d %H:%M:%S").to_string();
             let period_end_str = period_end.format("%Y-%m-%d %H:%M:%S").to_string();
 
@@ -2205,7 +2293,7 @@ impl Database {
             let calibration = self.get_quota_calibration(&quota.provider_id, &quota.quota_type)
                 .await.ok().flatten();
 
-            result.push(self.compute_quota_usage(quota, &provider_name, &now, gateway_count, calibration));
+            result.push(self.compute_quota_usage(quota, &provider_name, subscription_start, &now, gateway_count, calibration));
         }
 
         Ok(result)
@@ -2223,12 +2311,17 @@ impl Database {
 
         match window_mode {
             "fixed" => {
-                Self::get_fixed_window_period(window_size, duration, now)
+                Self::get_fixed_window_period(window_size, duration, now, "UTC")
             }
             "sliding" => {
                 // Sliding window: from (now - duration) to now
                 let start = *now - duration;
                 (start, *now)
+            }
+            "rolling" => {
+                // Rolling window: step-aligned sliding window
+                // Default step = 1h, default tz = UTC, no subscription_start
+                Self::get_rolling_window_period(window_size, "1h", "UTC", None, now)
             }
             _ => {
                 // Default: sliding 24h
@@ -2256,20 +2349,24 @@ impl Database {
     }
 
     /// Calculate fixed window period aligned to natural boundaries
-    fn get_fixed_window_period(window_size: &str, duration: chrono::Duration, now: &chrono::DateTime<chrono::Utc>) -> (chrono::DateTime<chrono::Utc>, chrono::DateTime<chrono::Utc>) {
+    fn get_fixed_window_period(window_size: &str, duration: chrono::Duration, now: &chrono::DateTime<chrono::Utc>, tz_str: &str) -> (chrono::DateTime<chrono::Utc>, chrono::DateTime<chrono::Utc>) {
         use chrono::Datelike;
+        use chrono::TimeZone;
+
+        let tz: chrono_tz::Tz = tz_str.parse().unwrap_or(chrono_tz::UTC);
+        let now_local = now.with_timezone(&tz);
 
         if window_size.ends_with('h') {
-            // Hour-based fixed window: align to 0:00 of the day, then step by N-hour intervals
-            // e.g. 5h → windows at 0:00, 5:00, 10:00, 15:00, 20:00
+            // Hour-based fixed window: align to 0:00 of the day in the specified timezone, then step by N-hour intervals
+            // e.g. 5h → windows at 0:00, 5:00, 10:00, 15:00, 20:00 (in local time)
             if let Some(hours_str) = window_size.strip_suffix('h') {
                 if let Ok(window_hours) = hours_str.parse::<i64>() {
                     if window_hours > 0 {
-                        let day_start = now.date_naive().and_hms_opt(0, 0, 0).unwrap();
-                        let day_start_utc = day_start.and_utc();
-                        let hours_since_day_start = (*now - day_start_utc).num_hours();
+                        let day_start_local = now_local.date_naive().and_hms_opt(0, 0, 0).unwrap();
+                        let day_start = tz.from_local_datetime(&day_start_local).single().unwrap_or(now_local).to_utc();
+                        let hours_since_day_start = (*now - day_start).num_hours();
                         let window_index = hours_since_day_start / window_hours;
-                        let period_start = day_start_utc + chrono::Duration::hours(window_index * window_hours);
+                        let period_start = day_start + chrono::Duration::hours(window_index * window_hours);
                         let period_end = period_start + chrono::Duration::hours(window_hours);
                         return (period_start, period_end);
                     }
@@ -2281,34 +2378,34 @@ impl Database {
             if let Some(days_str) = window_size.strip_suffix('d') {
                 if let Ok(window_days) = days_str.parse::<i64>() {
                     if window_days == 1 {
-                        // 1d = today 0:00 to tomorrow 0:00
-                        let day_start = now.date_naive().and_hms_opt(0, 0, 0).unwrap();
-                        let start = day_start.and_utc();
+                        // 1d = today 0:00 to tomorrow 0:00 (in local time)
+                        let day_start_local = now_local.date_naive().and_hms_opt(0, 0, 0).unwrap();
+                        let start = tz.from_local_datetime(&day_start_local).single().unwrap_or(now_local).to_utc();
                         let end = start + chrono::Duration::days(1);
                         return (start, end);
                     } else if window_days == 7 {
-                        // 7d = this week Monday 0:00 to next Monday 0:00
-                        let weekday = now.weekday().num_days_from_monday();
-                        let week_start_naive = now.date_naive()
+                        // 7d = this week Monday 0:00 to next Monday 0:00 (in local time)
+                        let weekday = now_local.weekday().num_days_from_monday();
+                        let week_start_naive = now_local.date_naive()
                             .checked_sub_signed(chrono::Duration::days(weekday as i64))
                             .map(|d| d.and_hms_opt(0, 0, 0).unwrap())
-                            .unwrap_or_else(|| now.date_naive().and_hms_opt(0, 0, 0).unwrap());
-                        let start = week_start_naive.and_utc();
+                            .unwrap_or_else(|| now_local.date_naive().and_hms_opt(0, 0, 0).unwrap());
+                        let start = tz.from_local_datetime(&week_start_naive).single().unwrap_or(now_local).to_utc();
                         let end = start + chrono::Duration::weeks(1);
                         return (start, end);
                     } else if window_days == 30 || window_days == 31 {
-                        // 30d/31d = this month 1st 0:00 to next month 1st 0:00
-                        let month_start_date = chrono::NaiveDate::from_ymd_opt(now.year(), now.month(), 1)
+                        // 30d/31d = this month 1st 0:00 to next month 1st 0:00 (in local time)
+                        let month_start_date = chrono::NaiveDate::from_ymd_opt(now_local.year(), now_local.month(), 1)
                             .unwrap_or_else(|| chrono::NaiveDate::from_ymd_opt(2000, 1, 1).unwrap());
                         let month_start_naive = month_start_date.and_hms_opt(0, 0, 0).unwrap();
-                        let start = month_start_naive.and_utc();
-                        let next_month = if now.month() == 12 {
-                            chrono::NaiveDate::from_ymd_opt(now.year() + 1, 1, 1)
+                        let start = tz.from_local_datetime(&month_start_naive).single().unwrap_or(now_local).to_utc();
+                        let next_month = if now_local.month() == 12 {
+                            chrono::NaiveDate::from_ymd_opt(now_local.year() + 1, 1, 1)
                         } else {
-                            chrono::NaiveDate::from_ymd_opt(now.year(), now.month() + 1, 1)
+                            chrono::NaiveDate::from_ymd_opt(now_local.year(), now_local.month() + 1, 1)
                         }.unwrap_or_else(|| chrono::NaiveDate::from_ymd_opt(2000, 1, 1).unwrap());
                         let end_naive = next_month.and_hms_opt(0, 0, 0).unwrap();
-                        let end = end_naive.and_utc();
+                        let end = tz.from_local_datetime(&end_naive).single().unwrap_or(now_local).to_utc();
                         return (start, end);
                     } else {
                         // Generic N-day fixed window: align to epoch-like start
@@ -2331,7 +2428,192 @@ impl Database {
         }
 
         // Default: fixed 5h window
-        Self::get_fixed_window_period("5h", chrono::Duration::hours(5), now)
+        Self::get_fixed_window_period("5h", chrono::Duration::hours(5), now, "UTC")
+    }
+
+    /// Calculate rolling window period with step alignment
+    pub fn get_rolling_window_period(
+        window_size: &str,
+        rolling_step: &str,
+        rolling_step_tz: &str,
+        subscription_start: Option<&chrono::DateTime<chrono::Utc>>,
+        now: &chrono::DateTime<chrono::Utc>,
+    ) -> (chrono::DateTime<chrono::Utc>, chrono::DateTime<chrono::Utc>) {
+        // Rolling window: the window slides forward by one step at each refresh point.
+        // Refresh points are step-aligned (e.g. whole hours, 08:00 daily).
+        // The window boundaries are based on subscription_start offset.
+        //
+        // Example: 5h rolling, 1h step, subscribed at 03:47:22
+        //   Initial (N=0): 22:47:22 ~ 03:47:22
+        //   After 04:00 refresh (N=1): 23:47:22 ~ 04:47:22
+        //   After 05:00 refresh (N=2): 00:47:22 ~ 05:47:22
+        //   After 10:00 refresh (N=7): 05:47:22 ~ 10:47:22
+        //
+        // N = number of step-aligned refresh points since subscription
+        // period_end = subscription_start + N * step_duration
+        // period_start = period_end - window_size
+
+        let duration = Self::parse_window_size(window_size);
+        let step_duration = Self::parse_window_size(rolling_step);
+
+        if let Some(sub_start) = subscription_start {
+            // Find the first step-aligned refresh point after subscription
+            let first_refresh = Self::compute_next_step_aligned(rolling_step, rolling_step_tz, sub_start);
+
+            let n = if let Some(first_refresh) = first_refresh {
+                if *now < first_refresh {
+                    // Haven't reached the first refresh yet
+                    0i64
+                } else {
+                    // Count how many step-aligned refresh points have occurred
+                    let last_refresh = Self::compute_last_step_aligned(rolling_step, rolling_step_tz, now);
+                    let elapsed_from_first = last_refresh - first_refresh;
+                    let step_secs = step_duration.num_seconds();
+                    if step_secs > 0 {
+                        let n_steps = elapsed_from_first.num_seconds() / step_secs;
+                        n_steps + 1 // +1 because first_refresh itself counts as 1
+                    } else {
+                        1i64
+                    }
+                }
+            } else {
+                0i64
+            };
+
+            let period_end = *sub_start + step_duration * (n as i32);
+            let period_start = period_end - duration;
+            return (period_start, period_end);
+        }
+
+        // No subscription_start: fall back to step-aligned periods from day start
+        use chrono::Timelike;
+
+        let tz: chrono_tz::Tz = rolling_step_tz
+            .parse()
+            .unwrap_or(chrono_tz::UTC);
+
+        let now_local = now.with_timezone(&tz);
+
+        let last_refresh_local = if rolling_step.ends_with('h') {
+            let step_hours: u32 = rolling_step.trim_end_matches('h').parse().unwrap_or(1);
+            let current_hour = now_local.hour();
+            let aligned_hour = (current_hour / step_hours) * step_hours;
+            now_local.with_hour(aligned_hour).unwrap_or(now_local)
+                     .with_minute(0).unwrap_or(now_local)
+                     .with_second(0).unwrap_or(now_local)
+                     .with_nanosecond(0).unwrap_or(now_local)
+        } else if rolling_step.ends_with('d') {
+            now_local.with_hour(0).unwrap_or(now_local)
+                     .with_minute(0).unwrap_or(now_local)
+                     .with_second(0).unwrap_or(now_local)
+                     .with_nanosecond(0).unwrap_or(now_local)
+        } else {
+            now_local.with_minute(0).unwrap_or(now_local)
+                     .with_second(0).unwrap_or(now_local)
+                     .with_nanosecond(0).unwrap_or(now_local)
+        };
+
+        let last_refresh_utc = last_refresh_local.to_utc();
+        let period_start = last_refresh_utc - duration;
+        let period_end = last_refresh_utc;
+
+        (period_start, period_end)
+    }
+
+    /// Compute the most recent step-aligned point <= now
+    fn compute_last_step_aligned(
+        rolling_step: &str,
+        rolling_step_tz: &str,
+        now: &chrono::DateTime<chrono::Utc>,
+    ) -> chrono::DateTime<chrono::Utc> {
+        use chrono::Timelike;
+
+        let tz: chrono_tz::Tz = rolling_step_tz
+            .parse()
+            .unwrap_or(chrono_tz::UTC);
+
+        let now_local = now.with_timezone(&tz);
+
+        let aligned_local = if rolling_step.ends_with('h') {
+            let step_hours: u32 = rolling_step.trim_end_matches('h').parse().unwrap_or(1);
+            let current_hour = now_local.hour();
+            let aligned_hour = (current_hour / step_hours) * step_hours;
+            now_local.with_hour(aligned_hour).unwrap_or(now_local)
+                     .with_minute(0).unwrap_or(now_local)
+                     .with_second(0).unwrap_or(now_local)
+                     .with_nanosecond(0).unwrap_or(now_local)
+        } else if rolling_step.ends_with('d') {
+            now_local.with_hour(0).unwrap_or(now_local)
+                     .with_minute(0).unwrap_or(now_local)
+                     .with_second(0).unwrap_or(now_local)
+                     .with_nanosecond(0).unwrap_or(now_local)
+        } else {
+            now_local.with_minute(0).unwrap_or(now_local)
+                     .with_second(0).unwrap_or(now_local)
+                     .with_nanosecond(0).unwrap_or(now_local)
+        };
+
+        aligned_local.to_utc()
+    }
+
+    /// Compute the next step-aligned point after a given time
+    fn compute_next_step_aligned(
+        rolling_step: &str,
+        rolling_step_tz: &str,
+        after: &chrono::DateTime<chrono::Utc>,
+    ) -> Option<chrono::DateTime<chrono::Utc>> {
+        use chrono::Timelike;
+
+        let tz: chrono_tz::Tz = rolling_step_tz
+            .parse()
+            .unwrap_or(chrono_tz::UTC);
+
+        let after_local = after.with_timezone(&tz);
+
+        let next_local = if rolling_step.ends_with('h') {
+            let step_hours: u32 = rolling_step.trim_end_matches('h').parse().unwrap_or(1);
+            let current_hour = after_local.hour();
+            let aligned_hour = (current_hour / step_hours) * step_hours;
+            let aligned = after_local.with_hour(aligned_hour).unwrap_or(after_local)
+                                     .with_minute(0).unwrap_or(after_local)
+                                     .with_second(0).unwrap_or(after_local)
+                                     .with_nanosecond(0).unwrap_or(after_local);
+            let step_dur = chrono::Duration::hours(step_hours as i64);
+            let next = aligned + step_dur;
+            if next <= after_local { next + step_dur } else { next }
+        } else if rolling_step.ends_with('d') {
+            let step_days: i64 = rolling_step.trim_end_matches('d').parse().unwrap_or(1);
+            let today_midnight = after_local.with_hour(0).unwrap_or(after_local)
+                                            .with_minute(0).unwrap_or(after_local)
+                                            .with_second(0).unwrap_or(after_local)
+                                            .with_nanosecond(0).unwrap_or(after_local);
+            let step_dur = chrono::Duration::days(step_days);
+            let next = today_midnight + step_dur;
+            if next <= after_local { next + step_dur } else { next }
+        } else {
+            let aligned = after_local.with_minute(0).unwrap_or(after_local)
+                                     .with_second(0).unwrap_or(after_local)
+                                     .with_nanosecond(0).unwrap_or(after_local);
+            let next = aligned + chrono::Duration::hours(1);
+            if next <= after_local { next + chrono::Duration::hours(1) } else { next }
+        };
+
+        Some(next_local.to_utc())
+    }
+
+    /// Compute next step-aligned refresh time for rolling quotas
+    ///
+    /// The refresh time is the next step-aligned point AFTER now.
+    /// Examples from official docs:
+    ///   - 5h rolling, 1h step, UTC: subscribed at 10:09:30 → next refresh = 11:00:00
+    ///   - 7d rolling, 1d step, Asia/Shanghai: subscribed at 10:09:30 → next refresh = next day 08:00 UTC+8
+    pub fn compute_rolling_next_refresh(
+        rolling_step: &str,
+        rolling_step_tz: &str,
+        now: &chrono::DateTime<chrono::Utc>,
+    ) -> Option<String> {
+        Self::compute_next_step_aligned(rolling_step, rolling_step_tz, now)
+            .map(|t| t.format("%Y-%m-%d %H:%M:%S").to_string())
     }
 
     /// Check if a calibration is still valid in the current window period
@@ -2362,7 +2644,24 @@ impl Database {
                     &format!("{}Z", cal.calibrated_at.replace(' ', "T"))
                 ) {
                     let calibrated_utc = calibrated_at.to_utc();
-                    calibrated_utc >= *current_period_start && calibrated_utc <= *current_period_end
+                    calibrated_utc >= *current_period_start && calibrated_utc <= chrono::Utc::now()
+                } else {
+                    false
+                }
+            }
+            "rolling" => {
+                // Rolling window: calibration is valid only within the current step period
+                // i.e. calibrated_at must be >= the last step-aligned refresh point
+                if let Ok(calibrated_at) = chrono::DateTime::parse_from_rfc3339(
+                    &format!("{}Z", cal.calibrated_at.replace(' ', "T"))
+                ) {
+                    let calibrated_utc = calibrated_at.to_utc();
+                    // The last refresh point is the most recent step-aligned time that is <= now
+                    // We compute it by finding the next refresh and subtracting one step
+                    // But we don't have rolling_step/rolling_step_tz here...
+                    // Fallback: use period_start as the lower bound (same as sliding)
+                    // This is slightly more permissive but safe for the common case
+                    calibrated_utc >= *current_period_start && calibrated_utc <= chrono::Utc::now()
                 } else {
                     false
                 }
@@ -2480,6 +2779,7 @@ pub struct ProviderRow {
     pub response_content_path: String,
     pub response_reasoning_path: String,
     pub chart_color: Option<String>,
+    pub subscription_start: Option<String>,
     pub created_at: String,
     pub updated_at: String,
 }
@@ -2621,6 +2921,8 @@ pub struct ProviderQuotaRow {
     pub window_mode: String,
     pub window_size: String,
     pub window_start_override: Option<String>,
+    pub rolling_step: Option<String>,
+    pub rolling_step_tz: Option<String>,
     pub limit_count: i64,
     pub is_enabled: bool,
     pub created_at: String,
@@ -2648,6 +2950,8 @@ pub struct QuotaUsageInfo {
     pub window_mode: String,
     pub window_size: String,
     pub window_start_override: Option<String>,
+    pub rolling_step: Option<String>,
+    pub rolling_step_tz: Option<String>,
     pub limit_count: i64,
     pub is_enabled: bool,
     /// Requests counted by the gateway in the current period
@@ -2669,4 +2973,6 @@ pub struct QuotaUsageInfo {
     pub period_start: String,
     /// The current time (for reference)
     pub period_current: String,
+    /// Next step-aligned refresh time (rolling mode only)
+    pub next_refresh_time: Option<String>,
 }

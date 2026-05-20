@@ -256,6 +256,7 @@ pub struct CreateProviderRequest {
     pub response_content_path: String,
     #[serde(default = "default_response_reasoning_path")]
     pub response_reasoning_path: String,
+    pub subscription_start: Option<String>,
 }
 
 fn default_api_type() -> String { "openai".to_string() }
@@ -445,6 +446,7 @@ pub struct UpdateProviderRequest {
     pub response_content_path: Option<String>,
     pub response_reasoning_path: Option<String>,
     pub chart_color: Option<String>,
+    pub subscription_start: Option<String>,
     pub new_id: Option<String>,
 }
 
@@ -500,6 +502,7 @@ pub async fn update_provider(
     let response_content_path = req.response_content_path.as_deref().unwrap_or(&existing.response_content_path);
     let response_reasoning_path = req.response_reasoning_path.as_deref().unwrap_or(&existing.response_reasoning_path);
     let chart_color = req.chart_color.as_deref().or(existing.chart_color.as_deref());
+    let subscription_start = req.subscription_start.as_deref().or(existing.subscription_start.as_deref());
     let new_id = req.new_id.as_deref().unwrap_or(&existing.id);
 
     // Check if new_id conflicts with an existing provider (when ID is changing)
@@ -522,6 +525,7 @@ pub async fn update_provider(
         response_content_path,
         response_reasoning_path,
         chart_color,
+        subscription_start,
     ).await {
         Ok(()) => (StatusCode::OK, Json(serde_json::json!({"id": id}))).into_response(),
         Err(e) => {
@@ -843,6 +847,7 @@ pub struct RequestLogParams {
     pub start_time: Option<String>,
     pub end_time: Option<String>,
     pub search: Option<String>,
+    pub status_filter: Option<String>,  // "success", "error", or empty for all
     pub page: Option<u32>,
     pub page_size: Option<u32>,
 }
@@ -863,6 +868,7 @@ pub async fn get_request_logs(
         params.end_time.as_deref(),
         params.search.as_deref(),
         params.model.as_deref(),
+        params.status_filter.as_deref(),
         page_size as i64,
         offset,
     ).await {
@@ -874,6 +880,7 @@ pub async fn get_request_logs(
                 params.end_time.as_deref(),
                 params.search.as_deref(),
                 params.model.as_deref(),
+                params.status_filter.as_deref(),
             ).await.unwrap_or(0);
 
             Json(serde_json::json!({
@@ -1377,6 +1384,8 @@ pub struct SetQuotaRequest {
     pub window_mode: Option<String>,
     pub window_size: Option<String>,
     pub window_start_override: Option<String>,
+    pub rolling_step: Option<String>,
+    pub rolling_step_tz: Option<String>,
     pub limit_count: i64,
     #[serde(default = "default_quota_enabled")]
     pub is_enabled: bool,
@@ -1416,13 +1425,16 @@ pub async fn set_provider_quota(
             "weekly" => ("fixed:7d".to_string(), "fixed".to_string(), "7d".to_string()),
             "monthly" => ("fixed:30d".to_string(), "fixed".to_string(), "30d".to_string()),
             other => {
-                // Could be new format like "fixed:5h"
-                if let Some((mode, size)) = other.split_once(':') {
-                    if !["fixed", "sliding"].contains(&mode) {
+                // Could be new format like "fixed:5h" or "rolling:5h:1h"
+                let parts: Vec<&str> = other.split(':').collect();
+                if parts.len() >= 2 {
+                    let mode = parts[0];
+                    if !["fixed", "sliding", "rolling"].contains(&mode) {
                         return (StatusCode::BAD_REQUEST, Json(serde_json::json!({
-                            "error": "Invalid window_mode. Must be 'fixed' or 'sliding'"
+                            "error": "Invalid window_mode. Must be 'fixed', 'sliding', or 'rolling'"
                         }))).into_response();
                     }
+                    let size = parts[1];
                     if !is_valid_window_size(size) {
                         return (StatusCode::BAD_REQUEST, Json(serde_json::json!({
                             "error": format!("Invalid window_size '{}'. Use format like 5h, 12h, 7d, 30d", size)
@@ -1439,9 +1451,9 @@ pub async fn set_provider_quota(
     } else {
         // New format: window_mode + window_size
         let mode = req.window_mode.as_deref().unwrap_or("fixed");
-        if !["fixed", "sliding"].contains(&mode) {
+        if !["fixed", "sliding", "rolling"].contains(&mode) {
             return (StatusCode::BAD_REQUEST, Json(serde_json::json!({
-                "error": "Invalid window_mode. Must be 'fixed' or 'sliding'"
+                "error": "Invalid window_mode. Must be 'fixed', 'sliding', or 'rolling'"
             }))).into_response();
         }
         let size = req.window_size.as_deref().unwrap_or("5h");
@@ -1450,7 +1462,13 @@ pub async fn set_provider_quota(
                 "error": format!("Invalid window_size '{}'. Use format like 5h, 12h, 7d, 30d", size)
             }))).into_response();
         }
-        let qt = format!("{}:{}", mode, size);
+        // For rolling mode, quota_type includes step: rolling:size:step
+        let qt = if mode == "rolling" {
+            let step = req.rolling_step.as_deref().unwrap_or("1h");
+            format!("{}:{}:{}", mode, size, step)
+        } else {
+            format!("{}:{}", mode, size)
+        };
         (qt, mode.to_string(), size.to_string())
     };
 
@@ -1466,6 +1484,8 @@ pub async fn set_provider_quota(
         &window_mode,
         &window_size,
         req.window_start_override.as_deref(),
+        req.rolling_step.as_deref(),
+        req.rolling_step_tz.as_deref(),
         req.limit_count,
         req.is_enabled,
     ).await {
@@ -1475,6 +1495,8 @@ pub async fn set_provider_quota(
             "window_mode": window_mode,
             "window_size": window_size,
             "window_start_override": req.window_start_override,
+            "rolling_step": req.rolling_step,
+            "rolling_step_tz": req.rolling_step_tz,
             "limit_count": req.limit_count,
             "is_enabled": req.is_enabled,
             "message": "Quota set successfully"
@@ -1565,7 +1587,7 @@ pub async fn set_quota_calibration(
     } else {
         (quota.window_mode.clone(), quota.window_size.clone())
     };
-    let (period_start, period_end) = crate::db::Database::compute_quota_period(&quota, &now);
+    let (period_start, period_end) = crate::db::Database::compute_quota_period(&quota, None, &now);
     let period_start_str = period_start.format("%Y-%m-%d %H:%M:%S").to_string();
     let period_end_str = period_end.format("%Y-%m-%d %H:%M:%S").to_string();
 

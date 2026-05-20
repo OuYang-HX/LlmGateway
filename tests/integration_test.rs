@@ -305,7 +305,7 @@ async fn test_count_request_logs() {
         db.insert_request_log("key", "prov", None, "/v1/chat", "POST", None, None, Some(200), None, None, 5, 10, 15, Some(100), false, false, None).await.unwrap();
     }
 
-    let count = db.count_request_logs(None, None, None, None, None, None).await.unwrap();
+    let count = db.count_request_logs(None, None, None, None, None, None, None).await.unwrap();
     assert_eq!(count, 5);
 }
 
@@ -895,7 +895,7 @@ async fn test_log_pagination() {
     let page3 = db.query_request_logs(None, None, None, None, None, None,  5, 10).await.unwrap();
     assert_eq!(page3.len(), 5);
 
-    let total = db.count_request_logs(None, None, None, None, None, None).await.unwrap();
+    let total = db.count_request_logs(None, None, None, None, None, None, None).await.unwrap();
     assert_eq!(total, 15);
 }
 
@@ -1343,7 +1343,7 @@ async fn test_provider_reasoning_path_field() {
         "prov-reason", "prov-reason", "Updated Provider", "https://r.com", "openai", "api_key",
         Some("key2"), None, None, None, None, None, None, None, None, None, None,
         "token", "refreshToken", "Authorization", "Bearer ", 86400, 1, true, false,
-        "custom.content.path", "custom.reasoning.path", None,
+        "custom.content.path", "custom.reasoning.path", None, None,
     ).await.unwrap();
 
     let updated = db.get_provider("prov-reason").await.unwrap().unwrap();
@@ -1508,7 +1508,7 @@ async fn test_request_logs_search() {
     assert_eq!(all.len(), 3);
 
     // Count with search
-    let count = db.count_request_logs(None, None, None, None, Some("Hello"), None).await.unwrap();
+    let count = db.count_request_logs(None, None, None, None, Some("Hello"), None, None).await.unwrap();
     assert_eq!(count, 1);
 }
 
@@ -1610,7 +1610,7 @@ async fn test_query_logs_by_model() {
     assert_eq!(claude_logs.len(), 1);
 
     // Count by model
-    let gpt_count = db.count_request_logs(None, None, None, None, None, Some("gpt-4o")).await.unwrap();
+    let gpt_count = db.count_request_logs(None, None, None, None, None, Some("gpt-4o"), None).await.unwrap();
     assert_eq!(gpt_count, 2);
 }
 
@@ -2098,7 +2098,7 @@ async fn test_quota_set_with_window_mode_and_size() {
     db.create_provider_simple("testprov", "Test Prov", "https://t.com", "openai", "api_key", Some("key"), None, None, None, "token", "refreshToken", "Authorization", "Bearer ", 86400, 1).await.unwrap();
     
     // Set quota with new format
-    db.set_provider_quota("testprov", "fixed:5h", "fixed", "5h", None, 500, true).await.unwrap();
+    db.set_provider_quota("testprov", "fixed:5h", "fixed", "5h", None, None, None, 500, true).await.unwrap();
     
     let quotas = db.list_provider_quotas("testprov").await.unwrap();
     assert_eq!(quotas.len(), 1);
@@ -2114,7 +2114,7 @@ async fn test_quota_calibration_with_window_binding() {
     
     db.create_provider_simple("testprov", "Test Prov", "https://t.com", "openai", "api_key", Some("key"), None, None, None, "token", "refreshToken", "Authorization", "Bearer ", 86400, 1).await.unwrap();
     
-    db.set_provider_quota("testprov", "fixed:5h", "fixed", "5h", None, 500, true).await.unwrap();
+    db.set_provider_quota("testprov", "fixed:5h", "fixed", "5h", None, None, None, 500, true).await.unwrap();
     
     // Set calibration with window binding
     db.set_quota_calibration("testprov", "fixed:5h", 50, Some("2026-05-19 10:00:00"), Some("2026-05-19 15:00:00"), Some("test calibration")).await.unwrap();
@@ -2183,7 +2183,7 @@ async fn test_quota_usage_with_expired_calibration() {
     
     db.create_provider_simple("testprov", "Test Prov", "https://t.com", "openai", "api_key", Some("key"), None, None, None, "token", "refreshToken", "Authorization", "Bearer ", 86400, 1).await.unwrap();
     
-    db.set_provider_quota("testprov", "fixed:5h", "fixed", "5h", None, 500, true).await.unwrap();
+    db.set_provider_quota("testprov", "fixed:5h", "fixed", "5h", None, None, None, 500, true).await.unwrap();
     
     // Set calibration with a PAST window (already expired)
     db.set_quota_calibration("testprov", "fixed:5h", 50, Some("2020-01-01 00:00:00"), Some("2020-01-01 05:00:00"), Some("old calibration")).await.unwrap();
@@ -2204,7 +2204,7 @@ async fn test_quota_window_start_override_parsing() {
     db.create_provider_simple("testprov", "Test Prov", "https://t.com", "openai", "api_key", Some("key"), None, None, None, "token", "refreshToken", "Authorization", "Bearer ", 86400, 1).await.unwrap();
     
     // Set quota with window_start_override in format "2026-05-20 00:00+00:00"
-    db.set_provider_quota("testprov", "fixed:5h", "fixed", "5h", Some("2026-05-20 00:00+00:00"), 500, true).await.unwrap();
+    db.set_provider_quota("testprov", "fixed:5h", "fixed", "5h", Some("2026-05-20 00:00+00:00"), None, None, 500, true).await.unwrap();
     
     let usage = db.get_provider_quota_usage("testprov").await.unwrap();
     assert_eq!(usage.len(), 1);

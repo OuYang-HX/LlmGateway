@@ -237,9 +237,11 @@
             <h2>配额配置</h2>
             <div class="controls">
                 <label>服务商:</label><select id="quota-provider-select"><option value="">选择服务商...</option></select>
-                <label>窗口模式:</label><select id="quota-window-mode" onchange="toggleWindowStartInput()"><option value="fixed">固定窗口</option><option value="sliding">滑动窗口</option></select>
+                <label>窗口模式:</label><select id="quota-window-mode" onchange="toggleWindowStartInput()"><option value="fixed">固定窗口</option><option value="sliding">滑动窗口</option><option value="rolling">步进滑动窗口</option></select>
                 <label>窗口大小:</label><input id="quota-window-size" placeholder="如 5h, 7d, 30d" value="5h" style="width:80px">
-                <label id="quota-window-start-label">窗口起始:</label><input id="quota-window-start" type="datetime-local" style="width:180px" title="留空则自动对齐，手动设置可覆盖起始时间">
+                <label id="quota-window-start-label">窗口起始:</label><input id="quota-window-start" type="datetime-local" style="width:180px" title="固定窗口: 窗口起始时间; 步进滑动: 订阅开始时间">
+                <label id="quota-rolling-step-label" style="display:none">步进时长:</label><input id="quota-rolling-step" placeholder="如 1h, 1d" value="1h" style="width:80px;display:none">
+                <label id="quota-rolling-tz-label" style="display:none">时区:</label><select id="quota-rolling-tz" style="display:none"><option value="UTC">UTC</option><option value="Asia/Shanghai">Asia/Shanghai</option><option value="America/New_York">America/New_York</option><option value="Europe/London">Europe/London</option><option value="Asia/Tokyo">Asia/Tokyo</option></select>
                 <label>限制次数:</label><input id="quota-limit-input" type="number" placeholder="如 500" style="width:100px">
                 <button class="btn btn-success" onclick="setQuota()">+ 设置配额</button>
             </div>
@@ -251,6 +253,7 @@
         <div class="controls">
             <label>服务商:</label><select id="log-provider"><option value="">全部</option></select>
             <label>模型:</label><input id="log-model" placeholder="模型名称" style="width:100px">
+            <label>状态:</label><select id="log-status-filter"><option value="">全部</option><option value="success">成功</option><option value="error">异常</option></select>
             <label>关键词:</label><input id="log-search" placeholder="搜索请求/响应..." style="width:140px">
             <div style="display:inline-flex;gap:2px;margin-left:8px">
                 <button class="btn btn-sm" onclick="setLogTimePreset('1h')" style="font-size:11px;padding:2px 6px">1小时</button>
@@ -368,6 +371,11 @@
         <div class="form-group"><label>响应内容路径</label><input id="prov-response-content-path" value="choices.0.message.content"><small style="color:#64748b">从响应 JSON 提取模型回复的路径，支持点号和数组索引。如 choices.0.message.content、output.text、result.0.content.0.text</small></div>
         <div class="form-group"><label>推理内容路径</label><input id="prov-response-reasoning-path" value="choices.0.delta.reasoning_content"><small style="color:#64748b">从流式响应中提取推理/思考内容的路径。如 choices.0.delta.reasoning_content</small></div>
     </div>
+
+    <div class="auth-section">
+        <h4>📅 订阅信息</h4>
+        <div class="form-group"><label>订阅开始时间</label><input id="prov-subscription-start" type="datetime-local" step="1" style="width:100%"><small style="color:#64748b">套餐订阅生效时间（精确到秒），用于步进滑动窗口配额的窗口期计算。留空则从整点/自然日对齐</small></div>
+    </div>
     </div>
 
     <div class="form-actions">
@@ -414,9 +422,11 @@
     <input type="hidden" id="edit-quota-provider-id">
     <input type="hidden" id="edit-quota-type-old">
     <div class="form-group"><label>服务商</label><input id="edit-quota-provider-name" readonly></div>
-    <div class="form-group"><label>窗口模式</label><select id="edit-quota-mode" onchange="toggleEditWindowStart()"><option value="fixed">固定窗口</option><option value="sliding">滑动窗口</option></select></div>
+    <div class="form-group"><label>窗口模式</label><select id="edit-quota-mode" onchange="toggleEditWindowStart()"><option value="fixed">固定窗口</option><option value="sliding">滑动窗口</option><option value="rolling">步进滑动窗口</option></select></div>
     <div class="form-group"><label>窗口大小</label><input id="edit-quota-size" placeholder="如 5h, 7d, 30d" style="width:120px" onchange="updateEditWindowPeriod()" oninput="updateEditWindowPeriod()"></div>
     <div class="form-group" id="edit-quota-start-row"><label>窗口起始时间</label><input id="edit-quota-start" type="datetime-local" style="width:100%" onchange="updateEditWindowPeriod()"><small style="color:#64748b">留空则自动对齐到自然边界，手动设置可覆盖起始时间</small></div>
+    <div class="form-group" id="edit-quota-rolling-step-row" style="display:none"><label>步进时长</label><input id="edit-quota-rolling-step" placeholder="如 1h, 1d" value="1h" style="width:120px"></div>
+    <div class="form-group" id="edit-quota-rolling-tz-row" style="display:none"><label>步进时区</label><select id="edit-quota-rolling-tz"><option value="UTC">UTC</option><option value="Asia/Shanghai">Asia/Shanghai</option><option value="America/New_York">America/New_York</option><option value="Europe/London">Europe/London</option><option value="Asia/Tokyo">Asia/Tokyo</option></select></div>
     <div class="form-group"><label>限制次数</label><input id="edit-quota-limit" type="number" placeholder="如 500"></div>
     <div class="form-group"><label>状态</label><select id="edit-quota-enabled"><option value="true">启用</option><option value="false">停用</option></select></div>
     <hr style="border-color:#334155;margin:16px 0">
@@ -1094,6 +1104,7 @@ function openProviderModal(isEdit){
     document.getElementById('prov-bypass-proxy').value='false';
     document.getElementById('prov-response-content-path').value='choices.0.message.content';
     document.getElementById('prov-response-reasoning-path').value='choices.0.delta.reasoning_content';
+    document.getElementById('prov-subscription-start').value='';
     toggleAuthFields();
     document.getElementById('provider-modal').classList.remove('hidden');
 }
@@ -1134,6 +1145,14 @@ function editProvider(id){
     }
     document.getElementById('prov-response-content-path').value=p.response_content_path || 'choices.0.message.content';
     document.getElementById('prov-response-reasoning-path').value=p.response_reasoning_path || 'choices.0.delta.reasoning_content';
+    // Subscription start - convert UTC to local time for datetime-local
+    if(p.subscription_start){
+        const d=new Date(p.subscription_start.replace(' ','T'));
+        const pad=n=>String(n).padStart(2,'0');
+        document.getElementById('prov-subscription-start').value=d.getFullYear()+'-'+pad(d.getMonth()+1)+'-'+pad(d.getDate())+'T'+pad(d.getHours())+':'+pad(d.getMinutes())+':'+pad(d.getSeconds());
+    }else{
+        document.getElementById('prov-subscription-start').value='';
+    }
     toggleAuthFields();
 }
 
@@ -1171,6 +1190,12 @@ async function saveProvider(){
     }
     body.response_content_path=document.getElementById('prov-response-content-path').value || 'choices.0.message.content';
     body.response_reasoning_path=document.getElementById('prov-response-reasoning-path').value || 'choices.0.delta.reasoning_content';
+    // Subscription start - datetime-local is local time, convert to UTC
+    const subStart=document.getElementById('prov-subscription-start').value;
+    if(subStart){
+        const d=new Date(subStart);
+        body.subscription_start=d.toISOString().replace('T',' ').replace(/\.\d{3}Z$/,'+00:00');
+    }
 
     try{
         let resp;
@@ -1533,6 +1558,8 @@ async function loadLogs(){
         if(end)params.set('end_time',new Date(end).toISOString().replace('T',' ').replace(/\.\d{3}Z$/,''));
         const model=document.getElementById('log-model').value.trim();
         if(model)params.set('model',model);
+        const statusFilter=document.getElementById('log-status-filter').value;
+        if(statusFilter)params.set('status_filter',statusFilter);
         params.set('page',currentLogPage);
         params.set('page_size',currentLogPageSize);
         const data=await(await fetch(API+'/logs?'+params)).json();
@@ -2223,6 +2250,7 @@ function prettyJson(str) {
 loadSummary();loadOverviewProviders();loadOverviewApiKeys();loadProviderHealth();startTokenRateAutoRefresh();
 setInterval(loadSummary,15000);
 setInterval(loadProviderHealth,30000);
+setInterval(loadAllQuotaUsage,60000);
 
 // ========== 用量配额 ==========
 function loadAllQuotaUsage(){
@@ -2235,7 +2263,7 @@ function loadAllQuotaUsage(){
             const pct=q.usage_percent;
             const pctColor=pct>=90?'#f87171':pct>=70?'#fbbf24':'#34d399';
             const barW=Math.min(pct,100);
-            const modeLabel=q.window_mode==='fixed'?'固定窗口':'滑动窗口';
+            const modeLabel=q.window_mode==='fixed'?'固定窗口':q.window_mode==='rolling'?'步进滑动':'滑动窗口';
             const sizeLabel={'5h':'5小时','7d':'7天','30d':'30天'}[q.window_size]||q.window_size;
             const calValid=q.calibration_valid;
             const calColor=q.calibration_offset>0?(calValid?'#34d399':'#f87171'):'#94a3b8';
@@ -2262,7 +2290,7 @@ function loadAllQuotaUsage(){
                 <td class="hide-mobile" style="font-size:11px;color:#64748b">${periodStartDisplay||'-'}</td>
                 <td>${statusBadge}</td>
                 <td>
-                    <button class="btn btn-sm" onclick="openEditQuotaModal('${q.provider_id}','${q.quota_type}','${q.window_mode}','${q.window_size}','${q.window_start_override||''}',${q.limit_count},${q.is_enabled},${q.gateway_count},${q.calibration_offset},'${q.provider_name}','${q.period_start}','${q.calibration_window_start||''}','${q.calibration_window_end||''}')">✏️</button>
+                    <button class="btn btn-sm" onclick="openEditQuotaModal('${q.provider_id}','${q.quota_type}','${q.window_mode}','${q.window_size}','${q.window_start_override||''}',${q.limit_count},${q.is_enabled},${q.gateway_count},${q.calibration_offset},'${q.provider_name}','${q.period_start}','${q.calibration_window_start||''}','${q.calibration_window_end||''}','${q.rolling_step||''}','${q.rolling_step_tz||''}')">✏️</button>
                     <button class="btn btn-sm btn-danger" onclick="deleteQuota('${q.provider_id}','${q.quota_type}')">🗑</button>
                 </td>
             </tr>`;
@@ -2287,6 +2315,8 @@ function setQuota(){
     if(!windowSize){alert('请输入窗口大小');return;}
     if(!limitCount||limitCount<=0){alert('请输入有效的限制次数');return;}
     const body={window_mode:windowMode,window_size:windowSize,limit_count:limitCount,is_enabled:true};
+    const tz=document.getElementById('quota-rolling-tz').value;
+    if(tz)body.rolling_step_tz=tz;
     if(windowMode==='fixed'&&windowStart){
         // datetime-local is local time, convert to UTC before sending
         const d=new Date(windowStart);
@@ -2312,7 +2342,7 @@ function deleteQuota(providerId,quotaType){
     }).catch(e=>alert('请求失败: '+e));
 }
 
-function openEditQuotaModal(providerId,quotaType,windowMode,windowSize,windowStartOverride,limitCount,isEnabled,gatewayCount,calibrationOffset,providerName,periodStart,calWindowStart,calWindowEnd){
+function openEditQuotaModal(providerId,quotaType,windowMode,windowSize,windowStartOverride,limitCount,isEnabled,gatewayCount,calibrationOffset,providerName,periodStart,calWindowStart,calWindowEnd,rollingStep,rollingStepTz){
     document.getElementById('edit-quota-provider-id').value=providerId;
     document.getElementById('edit-quota-type-old').value=quotaType;
     document.getElementById('edit-quota-provider-name').value=providerName;
@@ -2322,7 +2352,12 @@ function openEditQuotaModal(providerId,quotaType,windowMode,windowSize,windowSta
     document.getElementById('edit-quota-enabled').value=isEnabled?'true':'false';
     // Window start override
     if(windowMode==='fixed'){
-        document.getElementById('edit-quota-start-row').style.display='';
+        const startRow=document.getElementById('edit-quota-start-row');
+        startRow.style.display='';
+        startRow.querySelector('label').textContent='窗口起始时间';
+        document.getElementById('edit-quota-rolling-step-row').style.display='none';
+        document.getElementById('edit-quota-rolling-tz-row').style.display='';
+        if(rollingStepTz){document.getElementById('edit-quota-rolling-tz').value=rollingStepTz;}
         if(windowStartOverride){
             // Server returns UTC, convert to local time for datetime-local
             const d=new Date(windowStartOverride.replace(' ','T'));
@@ -2331,9 +2366,18 @@ function openEditQuotaModal(providerId,quotaType,windowMode,windowSize,windowSta
         }else{
             document.getElementById('edit-quota-start').value='';
         }
+    }else if(windowMode==='rolling'){
+        document.getElementById('edit-quota-start-row').style.display='none';
+        document.getElementById('edit-quota-start').value='';
+        document.getElementById('edit-quota-rolling-step-row').style.display='';
+        document.getElementById('edit-quota-rolling-tz-row').style.display='';
+        document.getElementById('edit-quota-rolling-step').value=rollingStep||'1h';
+        if(rollingStepTz){document.getElementById('edit-quota-rolling-tz').value=rollingStepTz;}
     }else{
         document.getElementById('edit-quota-start-row').style.display='none';
         document.getElementById('edit-quota-start').value='';
+        document.getElementById('edit-quota-rolling-step-row').style.display='none';
+        document.getElementById('edit-quota-rolling-tz-row').style.display='none';
     }
     // Calibration section - window period range
     // Always compute period_end from period_start + window_size
@@ -2363,8 +2407,11 @@ function closeEditQuotaModal(){
 
 function toggleEditWindowStart(){
     const mode=document.getElementById('edit-quota-mode').value;
-    if(mode==='fixed'){document.getElementById('edit-quota-start-row').style.display='';}
-    else{document.getElementById('edit-quota-start-row').style.display='none';document.getElementById('edit-quota-start').value='';}
+    const startRow=document.getElementById('edit-quota-start-row');
+    const startLabel=startRow.querySelector('label');
+    if(mode==='fixed'){startLabel.textContent='窗口起始时间';startRow.style.display='';document.getElementById('edit-quota-rolling-step-row').style.display='none';document.getElementById('edit-quota-rolling-tz-row').style.display='';}
+    else if(mode==='rolling'){startRow.style.display='none';document.getElementById('edit-quota-rolling-step-row').style.display='';document.getElementById('edit-quota-rolling-tz-row').style.display='';}
+    else{startRow.style.display='none';document.getElementById('edit-quota-start').value='';document.getElementById('edit-quota-rolling-step-row').style.display='none';document.getElementById('edit-quota-rolling-tz-row').style.display='none';}
     updateEditWindowPeriod();
 }
 
@@ -2408,14 +2455,21 @@ function saveEditQuota(){
     const calNote=document.getElementById('edit-quota-note').value;
     if(!windowSize){alert('请输入窗口大小');return;}
     if(!limitCount||limitCount<=0){alert('请输入有效的限制次数');return;}
-    const newQuotaType=windowMode+':'+windowSize;
+    const rollingStep=windowMode==='rolling'?(document.getElementById('edit-quota-rolling-step').value.trim()||'1h'):null;
+    const newQuotaType=windowMode==='rolling'?windowMode+':'+windowSize+':'+(rollingStep||'1h'):windowMode+':'+windowSize;
     const body={window_mode:windowMode,window_size:windowSize,limit_count:limitCount,is_enabled:isEnabled};
-    if(windowMode==='fixed'&&windowStart){
+    if((windowMode==='fixed')&&windowStart){
         // datetime-local is local time, convert to UTC before sending
         const d=new Date(windowStart);
         body.window_start_override=d.toISOString().replace('T',' ').replace(/\.\d{3}Z$/,'+00:00');
     }
     else{body.window_start_override=null;}
+    if(windowMode==='rolling'){
+        body.rolling_step=rollingStep;
+        body.rolling_step_tz=document.getElementById('edit-quota-rolling-tz').value||'UTC';
+    }else if(windowMode==='fixed'){
+        body.rolling_step_tz=document.getElementById('edit-quota-rolling-tz').value||'UTC';
+    }
     const saveQuota=()=>{
         fetch(API+'/quotas/'+providerId,{
             method:'POST',
@@ -2453,8 +2507,13 @@ function toggleWindowStartInput(){
     const mode=document.getElementById('quota-window-mode').value;
     const label=document.getElementById('quota-window-start-label');
     const input=document.getElementById('quota-window-start');
-    if(mode==='fixed'){label.style.display='';input.style.display='';}
-    else{label.style.display='none';input.style.display='none';}
+    const stepLabel=document.getElementById('quota-rolling-step-label');
+    const stepInput=document.getElementById('quota-rolling-step');
+    const tzLabel=document.getElementById('quota-rolling-tz-label');
+    const tzSelect=document.getElementById('quota-rolling-tz');
+    if(mode==='fixed'){label.textContent='窗口起始:';label.style.display='';input.style.display='';stepLabel.style.display='none';stepInput.style.display='none';tzLabel.style.display='';tzSelect.style.display='';}
+    else if(mode==='rolling'){label.style.display='none';input.style.display='none';stepLabel.style.display='';stepInput.style.display='';tzLabel.style.display='';tzSelect.style.display='';}
+    else{label.style.display='none';input.style.display='none';stepLabel.style.display='none';stepInput.style.display='none';tzLabel.style.display='none';tzSelect.style.display='none';}
 }
 
 </script>
