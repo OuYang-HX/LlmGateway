@@ -260,6 +260,7 @@
     <div id="tab-logs" class="hidden">
         <div class="controls">
             <label>服务商:</label><select id="log-provider"><option value="">全部</option></select>
+            <label>API Key:</label><select id="log-apikey"><option value="">全部</option></select>
             <label>模型:</label><input id="log-model" placeholder="模型名称" style="width:100px">
             <label>状态:</label><select id="log-status-filter"><option value="">全部</option><option value="success">成功</option><option value="error">异常</option></select>
             <label>关键词:</label><input id="log-search" placeholder="搜索请求/响应..." style="width:140px">
@@ -1397,6 +1398,11 @@ async function loadLogProviderOptions(){
         const ps=await(await fetch(API+'/providers')).json();
         const sel=document.getElementById('log-provider');
         sel.innerHTML='<option value="">全部</option>'+ps.map(p=>`<option value="${p.id}">${p.name}</option>`).join('');
+        // Also load API Key options
+        const ks=await(await fetch(API+'/api-keys')).json();
+        allApiKeys=ks;
+        const akSel=document.getElementById('log-apikey');
+        akSel.innerHTML='<option value="">全部</option>'+ks.map(k=>`<option value="${k.id}">${k.name}</option>`).join('');
     }catch(e){console.error(e)}
 }
 function updateLogPagination(){
@@ -1423,10 +1429,12 @@ async function exportLogsCsv(){
     try{
         const params=new URLSearchParams();
         const prov=document.getElementById('log-provider').value;
+        const akId=document.getElementById('log-apikey').value;
         const search=document.getElementById('log-search').value.trim();
         const start=document.getElementById('log-start').value;
         const end=document.getElementById('log-end').value;
         if(prov)params.set('provider_id',prov);
+        if(akId)params.set('api_key_id',akId);
         if(search)params.set('search',search);
         if(start)params.set('start_time',new Date(start).toISOString().replace('T',' ').replace(/\.\d{3}Z$/,''));
         if(end)params.set('end_time',new Date(end).toISOString().replace('T',' ').replace(/\.\d{3}Z$/,''));
@@ -1485,6 +1493,7 @@ function updateSortIndicators(){
 
 function clearLogFilters(){
     document.getElementById('log-provider').value='';
+    document.getElementById('log-apikey').value='';
     document.getElementById('log-model').value='';
     document.getElementById('log-search').value='';
     document.getElementById('log-start').value='';
@@ -1541,12 +1550,14 @@ function deleteAllLogs(){
     // Build the same filter params as loadLogs
     const params=new URLSearchParams();
     const prov=document.getElementById('log-provider').value;
+    const akId=document.getElementById('log-apikey').value;
     const search=document.getElementById('log-search').value.trim();
     const start=document.getElementById('log-start').value;
     const end=document.getElementById('log-end').value;
     const model=document.getElementById('log-model').value.trim();
     const statusFilter=document.getElementById('log-status-filter').value;
     if(prov)params.set('provider_id',prov);
+    if(akId)params.set('api_key_id',akId);
     if(search)params.set('search',search);
     if(start)params.set('start_time',new Date(start).toISOString().replace('T',' ').replace(/\.\d{3}Z$/,''));
     if(end)params.set('end_time',new Date(end).toISOString().replace('T',' ').replace(/\.\d{3}Z$/,''));
@@ -1598,10 +1609,12 @@ async function loadLogs(){
     try{
         const params=new URLSearchParams();
         const prov=document.getElementById('log-provider').value;
+        const akId=document.getElementById('log-apikey').value;
         const search=document.getElementById('log-search').value.trim();
         const start=document.getElementById('log-start').value;
         const end=document.getElementById('log-end').value;
         if(prov)params.set('provider_id',prov);
+        if(akId)params.set('api_key_id',akId);
         if(search)params.set('search',search); // searches request_body AND response_body (via OR)
         if(start)params.set('start_time',new Date(start).toISOString().replace('T',' ').replace(/\.\d{3}Z$/,''));
         if(end)params.set('end_time',new Date(end).toISOString().replace('T',' ').replace(/\.\d{3}Z$/,''));
