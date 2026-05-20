@@ -31,3 +31,4 @@ Thumbs.db
 # Autoresearch artifacts (tracked for research progress)
 # autoresearch.jsonl
 # autoresearch.ideas.md
+llm_gateway_dev.db
