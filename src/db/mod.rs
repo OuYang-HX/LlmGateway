@@ -1548,7 +1548,47 @@ impl Database {
         Ok(rows)
     }
 
-    /// Clean up old token rate snapshots (older than 1 hour)
+    /// Get token rate snapshots with time-bucket aggregation for large ranges
+    /// bucket_seconds: group snapshots into buckets of this size and average them
+    pub async fn get_token_rate_snapshots_aggregated(
+        &self,
+        provider_id: Option<&str>,
+        start_time: &str,
+        bucket_seconds: i64,
+    ) -> Result<Vec<TokenRateRow>, sqlx::Error> {
+        // Use SQLite strftime/%s to compute bucket-aligned time, then group
+        let bucket_expr = if bucket_seconds >= 3600 {
+            format!("datetime((strftime('%s', snapshot_time) / {}) * {}, 'unixepoch')", bucket_seconds, bucket_seconds)
+        } else {
+            format!("datetime((strftime('%s', snapshot_time) / {}) * {}, 'unixepoch')", bucket_seconds, bucket_seconds)
+        };
+
+        let mut query = format!(
+            r#"SELECT
+                MIN(id) as id,
+                provider_id,
+                AVG(tokens_per_second) as tokens_per_second,
+                SUM(prompt_tokens) as prompt_tokens,
+                SUM(completion_tokens) as completion_tokens,
+                SUM(request_count) as request_count,
+                AVG(elapsed_seconds) as elapsed_seconds,
+                {} as snapshot_time
+            FROM token_rate_snapshots
+            WHERE snapshot_time >= ? AND provider_id IS NOT NULL"#,
+            bucket_expr
+        );
+        if provider_id.is_some() { query.push_str(" AND provider_id = ?"); }
+        query.push_str(&format!(" GROUP BY provider_id, {} ORDER BY snapshot_time ASC", bucket_expr));
+
+        let mut q = sqlx::query_as::<_, TokenRateRow>(&query);
+        q = q.bind(start_time);
+        if let Some(v) = provider_id { q = q.bind(v); }
+
+        let rows = q.fetch_all(&self.pool).await?;
+        Ok(rows)
+    }
+
+    /// Clean up old token rate snapshots (older than 30 days)
     pub async fn cleanup_old_snapshots(&self, before_time: &str) -> Result<u64, sqlx::Error> {
         let result = sqlx::query(
             "DELETE FROM token_rate_snapshots WHERE snapshot_time < ?"

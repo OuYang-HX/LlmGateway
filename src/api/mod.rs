@@ -1092,37 +1092,48 @@ pub async fn get_token_rate(
     Query(params): Query<TokenRateParams>,
 ) -> impl IntoResponse {
     let range = params.range.as_deref().unwrap_or("1h");
-    let (start_time, limit) = match range {
+    let (start_time, bucket_seconds) = match range {
         "5h" => {
             let t = chrono::Utc::now() - chrono::Duration::hours(5);
-            (t.format("%Y-%m-%dT%H:%M:%SZ").to_string(), 18000)
+            (t.format("%Y-%m-%dT%H:%M:%SZ").to_string(), 30) // 30s buckets
         }
         "1d" => {
             let t = chrono::Utc::now() - chrono::Duration::days(1);
-            (t.format("%Y-%m-%dT%H:%M:%SZ").to_string(), 86400)
+            (t.format("%Y-%m-%dT%H:%M:%SZ").to_string(), 120) // 2min buckets
         }
         "1w" => {
             let t = chrono::Utc::now() - chrono::Duration::weeks(1);
-            (t.format("%Y-%m-%dT%H:%M:%SZ").to_string(), 604800)
+            (t.format("%Y-%m-%dT%H:%M:%SZ").to_string(), 600) // 10min buckets
         }
         "1m" => {
             let t = chrono::Utc::now() - chrono::Duration::days(30);
-            (t.format("%Y-%m-%dT%H:%M:%SZ").to_string(), 2592000)
+            (t.format("%Y-%m-%dT%H:%M:%SZ").to_string(), 3600) // 1h buckets
         }
         "all" => {
-            ("2000-01-01T00:00:00Z".to_string(), 99999999)
+            ("2000-01-01T00:00:00Z".to_string(), 3600) // 1h buckets
         }
-        _ => {  // "1h" default
+        _ => {  // "1h" default — use raw snapshots (no aggregation)
             let t = chrono::Utc::now() - chrono::Duration::hours(1);
-            (t.format("%Y-%m-%dT%H:%M:%SZ").to_string(), 3600)
+            (t.format("%Y-%m-%dT%H:%M:%SZ").to_string(), 0) // 0 = no aggregation
         }
     };
 
-    match state.db.get_token_rate_snapshots(
-        params.provider_id.as_deref(),
-        &start_time,
-        limit,
-    ).await {
+    let result = if bucket_seconds > 0 {
+        state.db.get_token_rate_snapshots_aggregated(
+            params.provider_id.as_deref(),
+            &start_time,
+            bucket_seconds,
+        ).await
+    } else {
+        // 1h: return raw snapshots, limit to reasonable count
+        state.db.get_token_rate_snapshots(
+            params.provider_id.as_deref(),
+            &start_time,
+            3600,
+        ).await
+    };
+
+    match result {
         Ok(snapshots) => Json(snapshots).into_response(),
         Err(e) => {
             tracing::error!("Failed to get token rate: {}", e);

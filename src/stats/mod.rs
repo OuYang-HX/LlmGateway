@@ -103,7 +103,7 @@ impl StatsCollector {
             let mut interval = tokio::time::interval(std::time::Duration::from_secs(interval_secs));
             loop {
                 interval.tick().await;
-                let before = (chrono::Utc::now() - chrono::Duration::hours(1)).format("%Y-%m-%dT%H:%M:%SZ").to_string();
+                let before = (chrono::Utc::now() - chrono::Duration::days(30)).format("%Y-%m-%dT%H:%M:%SZ").to_string();
                 if let Err(e) = db.cleanup_old_snapshots(&before).await {
                     tracing::error!("Cleanup error: {}", e);
                 }
