@@ -177,9 +177,23 @@ impl LlmProxy {
         let duration_ms = start.elapsed().as_millis() as i64;
 
         // Extract usage from response body
-        let (prompt_tokens, completion_tokens, total_tokens) = serde_json::from_slice::<serde_json::Value>(&response_body)
+        let (mut prompt_tokens, mut completion_tokens, mut total_tokens) = serde_json::from_slice::<serde_json::Value>(&response_body)
             .map(|v| usage::extract_openai_usage(&v))
             .unwrap_or((0, 0, 0));
+
+        // If API returned 0 for both, estimate from content
+        if prompt_tokens == 0 && completion_tokens == 0 {
+            let estimated_completion = if let Ok(v) = serde_json::from_slice::<serde_json::Value>(&response_body) {
+                usage::estimate_from_response(&v)
+            } else {
+                0
+            };
+            let request_body_str = String::from_utf8_lossy(&body).to_string();
+            let estimated_prompt = usage::estimate_prompt_tokens(&request_body_str);
+            prompt_tokens = estimated_prompt;
+            completion_tokens = estimated_completion;
+            total_tokens = estimated_prompt + estimated_completion;
+        }
 
         // Record usage for token rate tracking
         let _ = self.stats_collector.record_usage(&provider.id, prompt_tokens, completion_tokens).await;
