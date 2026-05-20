@@ -2229,3 +2229,73 @@ async fn test_quota_window_start_override_parsing() {
     println!("period_start: {}", usage[0].period_start);
     assert!(usage[0].period_start.starts_with("2026-05-20 00:00"), "Expected period_start to start with 2026-05-20 00:00, got {}", usage[0].period_start);
 }
+
+// ========== Mock Mode Proxy Tests ==========
+
+
+// ========== Mock Mode Tests ==========
+
+#[tokio::test]
+async fn test_mock_mode_provider_stores_correctly() {
+    let db = test_db().await;
+    
+    // Create provider with mock_mode=true
+    db.create_provider(
+        "mock-prov", "Mock Provider", "http://mock", "openai", "api_key",
+        Some("key"), None, None, None, None, None, None, None, None, None, None,
+        "token", "refreshToken", "Authorization", "Bearer ", 86400, 1, false, true,
+        "choices.0.message.content", "choices.0.delta.reasoning_content",
+    ).await.unwrap();
+    
+    let p = db.get_provider("mock-prov").await.unwrap().unwrap();
+    assert!(p.mock_mode, "Provider should have mock_mode=true");
+    
+    // Create provider with mock_mode=false
+    db.create_provider(
+        "real-prov", "Real Provider", "http://real", "openai", "api_key",
+        Some("key"), None, None, None, None, None, None, None, None, None, None,
+        "token", "refreshToken", "Authorization", "Bearer ", 86400, 1, false, false,
+        "choices.0.message.content", "choices.0.delta.reasoning_content",
+    ).await.unwrap();
+    
+    let p2 = db.get_provider("real-prov").await.unwrap().unwrap();
+    assert!(!p2.mock_mode, "Provider should have mock_mode=false");
+}
+
+#[tokio::test]
+async fn test_update_provider_mock_mode() {
+    let db = test_db().await;
+    
+    db.create_provider(
+        "upd-mock", "Update Mock", "http://x.com", "openai", "api_key",
+        Some("key"), None, None, None, None, None, None, None, None, None, None,
+        "token", "refreshToken", "Authorization", "Bearer ", 86400, 1, false, false,
+        "choices.0.message.content", "choices.0.delta.reasoning_content",
+    ).await.unwrap();
+    
+    db.update_provider(
+        "upd-mock", "upd-mock", "Updated Mock", "http://x.com", "openai", "api_key",
+        Some("key"), None, None, None, None, None, None, None, None, None, None,
+        "token", "refreshToken", "Authorization", "Bearer ", 86400, 1, false, true,
+        true, "choices.0.message.content", "choices.0.delta.reasoning_content", None, None,
+    ).await.unwrap();
+    
+    let p = db.get_provider("upd-mock").await.unwrap().unwrap();
+    assert!(p.mock_mode, "After update, provider should have mock_mode=true");
+}
+
+#[tokio::test]
+async fn test_provider_list_includes_mock_mode() {
+    let db = test_db().await;
+    
+    db.create_provider(
+        "ml-prov", "ML Provider", "http://ml.com", "openai", "api_key",
+        Some("key"), None, None, None, None, None, None, None, None, None, None,
+        "token", "refreshToken", "Authorization", "Bearer ", 86400, 1, false, true,
+        "choices.0.message.content", "choices.0.delta.reasoning_content",
+    ).await.unwrap();
+    
+    let providers = db.list_providers().await.unwrap();
+    let ml = providers.iter().find(|p| p.id == "ml-prov").unwrap();
+    assert!(ml.mock_mode, "Listed provider should include mock_mode field");
+}
