@@ -187,7 +187,7 @@
         <div class="panel">
             <h2>大模型服务商</h2>
             <table id="provider-manage-table">
-                <thead><tr><th><input type="checkbox" id="provider-select-all" onchange="toggleSelectAllProviders(this)"></th><th>ID</th><th>名称</th><th class="hide-mobile">Base URL</th><th>认证方式</th><th class="hide-mobile">权重</th><th>状态</th><th class="hide-mobile">Token</th><th>操作</th></tr></thead>
+                <thead><tr><th><input type="checkbox" id="provider-select-all" onchange="toggleSelectAllProviders(this)"></th><th>ID</th><th>名称</th><th class="hide-mobile">Base URL</th><th>认证方式</th><th class="hide-mobile">权重</th><th>状态</th><th class="hide-mobile">Token</th><th class="hide-mobile">Mock</th><th>操作</th></tr></thead>
                 <tbody></tbody>
             </table>
         </div>
@@ -333,6 +333,7 @@
     <div class="form-row">
         <div class="form-group"><label>认证方式</label><select id="prov-auth-type" onchange="toggleAuthFields()"><option value="api_key">静态 API Key</option><option value="dynamic_token">动态 Token（账号密码）</option></select></div>
         <div class="form-group"><label>权重（负载均衡）</label><input id="prov-weight" type="number" value="1" min="1"></div>
+        <div class="form-group"><label>模拟模式</label><select id="prov-mock-mode"><option value="false">否（真实请求）</option><option value="true">是（模拟响应，不消耗 Token）</option></select><small style="color:#64748b">开启后不发送真实请求，返回随机生成的模拟响应，适用于开发测试</small></div>
     </div>
 
     <!-- 静态 API Key 区域 -->
@@ -1063,7 +1064,7 @@ async function loadProvidersManage(){
 
 function renderProvidersTable(){
     const tb=document.querySelector('#provider-manage-table tbody');
-    if(!allProviders.length){tb.innerHTML='<tr><td colspan="9" class="empty-state"><p>暂无服务商，点击上方按钮添加</p></td></tr>';return;}
+    if(!allProviders.length){tb.innerHTML='<tr><td colspan="10" class="empty-state"><p>暂无服务商，点击上方按钮添加</p></td></tr>';return;}
     tb.innerHTML=allProviders.map(p=>{
         const authBadge=p.auth_type==='api_key'?'<span class="badge badge-blue">API Key</span>':'<span class="badge badge-yellow">动态Token</span>';
         const statusBadge=p.is_active?'<span class="badge badge-green">活跃</span>':'<span class="badge badge-red">停用</span>';
@@ -1075,7 +1076,7 @@ function renderProvidersTable(){
         }
         return`<tr>
             <td><input type="checkbox" class="provider-row-checkbox" value="${p.id}"></td><td>${p.id}</td><td>${p.name}</td><td class="hide-mobile" style="font-size:11px;word-break:break-all">${p.base_url}</td>
-            <td>${authBadge}</td><td class="hide-mobile">${p.weight}</td><td>${statusBadge}</td><td class="hide-mobile">${tokenStatus}</td>
+            <td>${authBadge}</td><td class="hide-mobile">${p.weight}</td><td>${statusBadge}</td><td class="hide-mobile">${tokenStatus}</td><td>${p.mock_mode?'<span class="badge badge-yellow">Mock</span>':'<span style="color:#64748b;font-size:11px">-</span>'}</td>
             <td><button class="btn btn-sm" onclick='editProvider("${p.id}")'>编辑</button> <button class="btn btn-sm" onclick='showModels("${p.id}")'>🤖 模型</button> ${p.auth_type==='dynamic_token'?'<button class="btn btn-sm btn-success" onclick=\'refreshToken("'+p.id+'\")\'>🔄 刷新Token</button>':''} <button class="btn btn-sm btn-danger" onclick='deleteProvider("${p.id}")'>删除</button></td>
         </tr>`;
     }).join('');
@@ -1132,6 +1133,7 @@ function openProviderModal(isEdit){
     document.getElementById('prov-dyn-header-prefix').value='Bearer ';
     document.getElementById('prov-token-expiry').value='86400';
     document.getElementById('prov-bypass-proxy').value='false';
+    document.getElementById('prov-mock-mode').value='false';
     document.getElementById('prov-response-content-path').value='choices.0.message.content';
     document.getElementById('prov-response-reasoning-path').value='choices.0.delta.reasoning_content';
     document.getElementById('prov-subscription-start').value='';
@@ -1183,6 +1185,7 @@ function editProvider(id){
     }else{
         document.getElementById('prov-subscription-start').value='';
     }
+    document.getElementById('prov-mock-mode').value=p.mock_mode ? 'true' : 'false';
     toggleAuthFields();
 }
 
@@ -1226,6 +1229,7 @@ async function saveProvider(){
         const d=new Date(subStart);
         body.subscription_start=d.toISOString().replace('T',' ').replace(/\.\d{3}Z$/,'+00:00');
     }
+    body.mock_mode=document.getElementById('prov-mock-mode').value==='true';
 
     try{
         let resp;

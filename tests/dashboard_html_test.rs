@@ -509,3 +509,78 @@ fn test_dashboard_html_provider_edit_populates_all_fields() {
     assert!(content.contains("prov-auth-type').value=p.auth_type"), "editProvider sets auth_type");
     assert!(content.contains("prov-weight').value=p.weight"), "editProvider sets weight");
 }
+
+// ========== Mock Mode UI Tests ==========
+
+#[test]
+fn test_dashboard_html_provider_form_has_mock_mode_toggle() {
+    let content = include_str!("../src/dashboard.html");
+    // Provider modal should have mock_mode select
+    assert!(
+        content.contains("id=\"prov-mock-mode\""),
+        "Provider form should have prov-mock-mode select element"
+    );
+    assert!(
+        content.contains("模拟模式"),
+        "Mock mode should have Chinese label '模拟模式'"
+    );
+    assert!(
+        content.contains("是（模拟响应，不消耗 Token）"),
+        "Mock mode should have descriptive option text"
+    );
+}
+
+#[test]
+fn test_dashboard_html_provider_table_has_mock_column() {
+    let content = include_str!("../src/dashboard.html");
+    // Provider table header should have Mock column
+    assert!(
+        content.contains(">Mock</th>") || content.contains("Mock</th>"),
+        "Provider table should have Mock column header"
+    );
+    // Empty state should have colspan=10 (was 9, now 10 with Mock column)
+    assert!(
+        content.contains("colspan=\"10\""),
+        "Empty state should have colspan=10 to account for Mock column"
+    );
+}
+
+#[test]
+fn test_dashboard_html_provider_edit_loads_mock_mode() {
+    let content = include_str!("../src/dashboard.html");
+    // editProvider should load mock_mode from provider object
+    assert!(
+        content.contains("prov-mock-mode').value=p.mock_mode"),
+        "editProvider should populate mock_mode select"
+    );
+}
+
+#[test]
+fn test_dashboard_html_provider_save_sends_mock_mode() {
+    let content = include_str!("../src/dashboard.html");
+    // saveProvider should include mock_mode in the request body
+    assert!(
+        content.contains("body.mock_mode=document.getElementById('prov-mock-mode')"),
+        "saveProvider should send mock_mode in request body"
+    );
+}
+
+#[test]
+fn test_dashboard_html_provider_new_form_defaults_mock_to_false() {
+    let content = include_str!("../src/dashboard.html");
+    // openProviderModal (new provider) should set mock_mode to 'false'
+    assert!(
+        content.contains("prov-mock-mode').value='false'"),
+        "New provider form should default mock_mode to 'false'"
+    );
+}
+
+#[test]
+fn test_dashboard_html_provider_table_renders_mock_badge() {
+    let content = include_str!("../src/dashboard.html");
+    // renderProvidersTable should show Mock badge when p.mock_mode is true
+    assert!(
+        content.contains("p.mock_mode?'<span class=\"badge badge-yellow\">Mock</span>'"),
+        "Provider table should render Mock badge for mock_mode providers"
+    );
+}

@@ -1557,3 +1557,52 @@ async fn test_http_provider_update_dynamic_token_fields() {
     assert_eq!(provider["token_username"], "user2");
     assert_eq!(provider["token_expiry_seconds"], 7200);
 }
+
+// ========== Mock Mode API Tests ==========
+
+#[tokio::test]
+async fn test_http_create_provider_with_mock_mode() {
+    let server = build_test_app().await;
+    
+    let resp = server.post("/api/v1/providers")
+        .json(&serde_json::json!({
+            "id":"mock-prov","name":"Mock Provider","base_url":"https://mock.com",
+            "api_type":"openai","auth_type":"api_key",
+            "api_key":"mock-key","weight":1,
+            "mock_mode":true
+        }))
+        .await;
+    assert_eq!(resp.status_code(), StatusCode::CREATED);
+    
+    // Verify mock_mode is stored
+    let resp = server.get("/api/v1/providers/mock-prov").await;
+    assert_eq!(resp.status_code(), StatusCode::OK);
+    let provider: serde_json::Value = resp.json();
+    assert_eq!(provider["mock_mode"], true);
+}
+
+#[tokio::test]
+async fn test_http_update_provider_mock_mode() {
+    let server = build_test_app().await;
+    
+    // Create provider without mock_mode
+    let resp = server.post("/api/v1/providers")
+        .json(&serde_json::json!({
+            "id":"upd-mock","name":"Update Mock","base_url":"https://x.com",
+            "api_type":"openai","auth_type":"api_key",
+            "api_key":"key","weight":1,"mock_mode":false
+        }))
+        .await;
+    assert!(resp.status_code() == StatusCode::CREATED || resp.status_code() == StatusCode::OK);
+    
+    // Update mock_mode to true
+    let resp = server.put("/api/v1/providers/upd-mock")
+        .json(&serde_json::json!({"mock_mode":true}))
+        .await;
+    assert_eq!(resp.status_code(), StatusCode::OK);
+    
+    // Verify
+    let resp = server.get("/api/v1/providers/upd-mock").await;
+    let provider: serde_json::Value = resp.json();
+    assert_eq!(provider["mock_mode"], true);
+}
