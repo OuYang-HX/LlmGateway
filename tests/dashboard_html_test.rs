@@ -659,6 +659,202 @@ fn test_dashboard_html_provider_health_table_renders() {
     );
 }
 
+// === Quota Management UI Tests ===
+
+#[test]
+fn test_dashboard_html_quota_window_mode_select() {
+    let html = fs::read_to_string("src/dashboard.html").unwrap();
+    assert!(html.contains("windowMode") || html.contains("window_mode") || html.contains("窗口模式"),
+        "quota window mode select should exist");
+}
+
+#[test]
+fn test_dashboard_html_quota_window_size_input() {
+    let html = fs::read_to_string("src/dashboard.html").unwrap();
+    assert!(html.contains("windowSize") || html.contains("window_size") || html.contains("窗口大小"),
+        "quota window size input should exist");
+}
+
+#[test]
+fn test_dashboard_html_quota_rolling_step_input() {
+    let html = fs::read_to_string("src/dashboard.html").unwrap();
+    assert!(html.contains("rollingStep") || html.contains("rolling_step") || html.contains("步长"),
+        "quota rolling step input should exist");
+}
+
+#[test]
+fn test_dashboard_html_quota_timezone_select() {
+    let html = fs::read_to_string("src/dashboard.html").unwrap();
+    assert!(html.contains("stepTz") || html.contains("rolling_step_tz") || html.contains("timezone") || html.contains("时区"),
+        "quota timezone select should exist");
+}
+
+#[test]
+fn test_dashboard_html_quota_calibration_modal() {
+    let html = fs::read_to_string("src/dashboard.html").unwrap();
+    assert!(html.contains("calibrat") || html.contains("校准"),
+        "quota calibration modal should exist");
+}
+
+#[test]
+fn test_dashboard_html_quota_period_display() {
+    let html = fs::read_to_string("src/dashboard.html").unwrap();
+    assert!(html.contains("periodStart") || html.contains("periodEnd") || html.contains("period_start") || html.contains("周期起始"),
+        "quota period display should exist");
+}
+
+#[test]
+fn test_dashboard_html_quota_limit_input() {
+    let html = fs::read_to_string("src/dashboard.html").unwrap();
+    assert!(html.contains("limitCount") || html.contains("limit_count") || html.contains("限制次数"),
+        "quota limit count input should exist");
+}
+
+#[test]
+fn test_dashboard_html_quota_provider_select() {
+    let html = fs::read_to_string("src/dashboard.html").unwrap();
+    assert!(html.contains("quotaProvider") || html.contains("quota_provider") || html.contains("服务商") && html.contains("配额"),
+        "quota provider select should exist");
+}
+
+// === Stats Tab UI Tests ===
+
+#[test]
+fn test_dashboard_html_stats_granularity_select() {
+    let html = fs::read_to_string("src/dashboard.html").unwrap();
+    assert!(html.contains("granularity") || html.contains("粒度") || html.contains("bucket_size"),
+        "stats granularity select should exist");
+}
+
+#[test]
+fn test_dashboard_html_stats_provider_filter_dropdown() {
+    let html = fs::read_to_string("src/dashboard.html").unwrap();
+    // Stats tab should have a provider filter
+    assert!(html.contains("statsProvider") || html.contains("stats_provider") || (html.contains("统计分析") && html.contains("服务商")),
+        "stats provider filter should exist");
+}
+
+#[test]
+fn test_dashboard_html_stats_load_button() {
+    let html = fs::read_to_string("src/dashboard.html").unwrap();
+    assert!(html.contains("loadStats") || html.contains("加载") && html.contains("统计"),
+        "stats load button should exist");
+}
+
+// === Request Trend Chart Tests ===
+
+#[test]
+fn test_dashboard_html_request_trend_chart() {
+    let html = fs::read_to_string("src/dashboard.html").unwrap();
+    assert!(html.contains("usage-trend-chart") || html.contains("usageTrendChart") || html.contains("请求趋势") || html.contains("usage_trend"),
+        "request trend chart should exist");
+}
+
+#[test]
+fn test_dashboard_html_request_trend_time_range() {
+    let html = fs::read_to_string("src/dashboard.html").unwrap();
+    assert!(html.contains("trendTimeRange") || html.contains("近24小时") || html.contains("近7天") || html.contains("近30天"),
+        "request trend time range selector should exist");
+}
+
+// === Log Detail Filter-by-Model Tests ===
+
+#[test]
+fn test_dashboard_html_log_detail_filter_by_model_button() {
+    let html = fs::read_to_string("src/dashboard.html").unwrap();
+    assert!(html.contains("filterByModel") || html.contains("按此模型筛选") || html.contains("filter.*model"),
+        "log detail should have filter-by-model button");
+}
+
+// === Dark Theme Tests ===
+
+#[test]
+fn test_dashboard_html_dark_theme_background() {
+    let html = fs::read_to_string("src/dashboard.html").unwrap();
+    assert!(html.contains("#0f172a") || html.contains("background-color: #0f172a") || html.contains("dark"),
+        "dashboard should use dark theme background");
+}
+
+#[test]
+fn test_dashboard_html_dark_theme_card_background() {
+    let html = fs::read_to_string("src/dashboard.html").unwrap();
+    assert!(html.contains("#1e293b") || html.contains("background: #1e293b"),
+        "dashboard cards should use dark theme card background");
+}
+
+#[test]
+fn test_dashboard_html_dark_theme_border() {
+    let html = fs::read_to_string("src/dashboard.html").unwrap();
+    assert!(html.contains("#334155") || html.contains("border-color: #334155"),
+        "dashboard should use dark theme border color");
+}
+
+// === Responsive Design Tests ===
+
+#[test]
+fn test_dashboard_html_responsive_hide_mobile_class() {
+    let html = fs::read_to_string("src/dashboard.html").unwrap();
+    assert!(html.contains("hide-mobile") || html.contains("hideMobile"),
+        "dashboard should have responsive hide-mobile class");
+}
+
+#[test]
+fn test_dashboard_html_responsive_grid_layout() {
+    let html = fs::read_to_string("src/dashboard.html").unwrap();
+    assert!(html.contains("grid-template-columns") || html.contains("auto-fit") || html.contains("minmax"),
+        "dashboard should use responsive grid layout");
+}
+
+#[test]
+fn test_dashboard_html_responsive_tab_wrap() {
+    let html = fs::read_to_string("src/dashboard.html").unwrap();
+    assert!(html.contains("flex-wrap") || html.contains("tab-nav"),
+        "dashboard tabs should support flex-wrap for responsive layout");
+}
+
+// === API Key Usage Stacked Chart Tests ===
+
+#[test]
+fn test_dashboard_html_api_key_stacked_token_chart() {
+    let html = fs::read_to_string("src/dashboard.html").unwrap();
+    // The chart should show prompt/completion breakdown
+    assert!(html.contains("stacked") || html.contains("prompt_tokens") && html.contains("completion_tokens"),
+        "API key usage chart should show stacked prompt/completion tokens");
+}
+
+// === Health Table Clickable Provider Tests ===
+
+#[test]
+fn test_dashboard_html_health_table_clickable_provider() {
+    let html = fs::read_to_string("src/dashboard.html").unwrap();
+    // Provider names in health table should be clickable links
+    assert!(html.contains("filterByProvider") || html.contains("clickProvider") || html.contains("onclick") && html.contains("provider"),
+        "health table provider names should be clickable");
+}
+
+// === Quota Usage Percent Bar Tests ===
+
+#[test]
+fn test_dashboard_html_quota_usage_percent_bar() {
+    let html = fs::read_to_string("src/dashboard.html").unwrap();
+    assert!(html.contains("usage_percent") || html.contains("usagePercent") || html.contains("用量占比"),
+        "quota table should show usage percent");
+}
+
+#[test]
+fn test_dashboard_html_quota_remaining_display() {
+    let html = fs::read_to_string("src/dashboard.html").unwrap();
+    assert!(html.contains("remaining") || html.contains("剩余"),
+        "quota table should show remaining count");
+}
+
+#[test]
+fn test_dashboard_html_quota_status_toggle() {
+    let html = fs::read_to_string("src/dashboard.html").unwrap();
+    assert!(html.contains("is_enabled") || html.contains("isEnabled") || html.contains("启用") && html.contains("停用"),
+        "quota should have enable/disable toggle");
+}
+
 #[test]
 fn test_dashboard_html_stats_by_api_key_has_time_filter() {
     let content = include_str!("../src/dashboard.html");
