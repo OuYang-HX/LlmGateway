@@ -1088,3 +1088,241 @@ fn test_dashboard_html_provider_model_table() {
     assert!(html.contains("model-table") || html.contains("modelTable") || html.contains("模型管理"),
         "provider model management should have model table");
 }
+
+// === API Key Form Tests ===
+
+#[test]
+fn test_dashboard_html_apikey_name_input() {
+    let html = fs::read_to_string("src/dashboard.html").unwrap();
+    assert!(html.contains("keyName") || html.contains("key_name") || html.contains("名称"),
+        "API key form should have name input");
+}
+
+#[test]
+fn test_dashboard_html_apikey_allowed_providers() {
+    let html = fs::read_to_string("src/dashboard.html").unwrap();
+    assert!(html.contains("allowedProviders") || html.contains("allowed_providers") || html.contains("允许服务商"),
+        "API key form should have allowed providers selector");
+}
+
+#[test]
+fn test_dashboard_html_apikey_copy_button() {
+    let html = fs::read_to_string("src/dashboard.html").unwrap();
+    assert!(html.contains("copyKey") || html.contains("复制") || html.contains("clipboard"),
+        "API key should have copy button");
+}
+
+#[test]
+fn test_dashboard_html_apikey_prefix_display() {
+    let html = fs::read_to_string("src/dashboard.html").unwrap();
+    assert!(html.contains("keyPrefix") || html.contains("lgk-") || html.contains("前缀"),
+        "API key list should show key prefix");
+}
+
+// === Provider Operations Tests ===
+
+#[test]
+fn test_dashboard_html_provider_delete_button() {
+    let html = fs::read_to_string("src/dashboard.html").unwrap();
+    assert!(html.contains("deleteProvider") || html.contains("删除服务商"),
+        "provider list should have delete button");
+}
+
+#[test]
+fn test_dashboard_html_provider_test_connection_button() {
+    let html = fs::read_to_string("src/dashboard.html").unwrap();
+    assert!(html.contains("testConnection") || html.contains("测试连接") || html.contains("test-all"),
+        "provider model management should have test connection button");
+}
+
+#[test]
+fn test_dashboard_html_provider_status_badge() {
+    let html = fs::read_to_string("src/dashboard.html").unwrap();
+    assert!(html.contains("活跃") || html.contains("停用") || html.contains("badge"),
+        "provider list should show status badge");
+}
+
+#[test]
+fn test_dashboard_html_token_status_display() {
+    let html = fs::read_to_string("src/dashboard.html").unwrap();
+    assert!(html.contains("tokenStatus") || html.contains("Token状态") || html.contains("current_token"),
+        "provider list should show token status");
+}
+
+// === Quota Operations Tests ===
+
+#[test]
+fn test_dashboard_html_quota_delete_button() {
+    let html = fs::read_to_string("src/dashboard.html").unwrap();
+    assert!(html.contains("deleteQuota") || html.contains("删除配额"),
+        "quota table should have delete button");
+}
+
+#[test]
+fn test_dashboard_html_quota_set_button() {
+    let html = fs::read_to_string("src/dashboard.html").unwrap();
+    assert!(html.contains("setQuota") || html.contains("设置配额"),
+        "quota form should have set button");
+}
+
+// === Log Search and Filter Tests ===
+
+#[test]
+fn test_dashboard_html_log_search_input() {
+    let html = fs::read_to_string("src/dashboard.html").unwrap();
+    assert!(html.contains("searchInput") || html.contains("关键词") || html.contains("搜索"),
+        "logs tab should have search input");
+}
+
+#[test]
+fn test_dashboard_html_log_status_filter() {
+    let html = fs::read_to_string("src/dashboard.html").unwrap();
+    assert!(html.contains("statusFilter") || html.contains("状态码") || html.contains("status_filter"),
+        "logs tab should have status filter");
+}
+
+// === Stats Table Tests ===
+
+#[test]
+fn test_dashboard_html_stats_table_exists() {
+    let html = fs::read_to_string("src/dashboard.html").unwrap();
+    assert!(html.contains("stats-table") || html.contains("statsTable"),
+        "stats tab should have stats table");
+}
+
+// === Chart Color Management Tests ===
+
+#[test]
+fn test_dashboard_html_chart_color_picker() {
+    let html = fs::read_to_string("src/dashboard.html").unwrap();
+    assert!(html.contains("chartColor") || html.contains("chart_color") || html.contains("颜色"),
+        "dashboard should have chart color picker");
+}
+
+// === Model External ID Tests ===
+
+#[test]
+fn test_dashboard_html_external_id_input() {
+    let html = fs::read_to_string("src/dashboard.html").unwrap();
+    assert!(html.contains("externalId") || html.contains("external_id") || html.contains("对外ID"),
+        "model management should have external ID input");
+}
+
+// === Log Detail Mode Toggle Tests ===
+
+#[test]
+fn test_dashboard_html_qa_mode_toggle() {
+    let html = fs::read_to_string("src/dashboard.html").unwrap();
+    assert!(html.contains("qaMode") || html.contains("QA") || html.contains("qa-mode"),
+        "log detail should have QA mode toggle");
+}
+
+#[test]
+fn test_dashboard_html_raw_mode_toggle() {
+    let html = fs::read_to_string("src/dashboard.html").unwrap();
+    assert!(html.contains("rawMode") || html.contains("原始") || html.contains("raw-mode"),
+        "log detail should have raw mode toggle");
+}
+
+// === Visual Design Tests ===
+
+#[test]
+fn test_dashboard_html_gradient_title() {
+    let html = fs::read_to_string("src/dashboard.html").unwrap();
+    assert!(html.contains("gradient") || html.contains("渐变"),
+        "dashboard title should use gradient");
+}
+
+#[test]
+fn test_dashboard_html_modal_close_button() {
+    let html = fs::read_to_string("src/dashboard.html").unwrap();
+    assert!(html.contains("closeModal") || html.contains("关闭"),
+        "modals should have close button");
+}
+
+// === Log Indicators Tests ===
+
+#[test]
+fn test_dashboard_html_streaming_indicator() {
+    let html = fs::read_to_string("src/dashboard.html").unwrap();
+    assert!(html.contains("isStreaming") || html.contains("流式") || html.contains("streaming"),
+        "log list should show streaming indicator");
+}
+
+#[test]
+fn test_dashboard_html_throttled_indicator() {
+    let html = fs::read_to_string("src/dashboard.html").unwrap();
+    assert!(html.contains("isThrottled") || html.contains("限流") || html.contains("throttled"),
+        "log list should show throttled indicator");
+}
+
+// === Provider List Table Tests ===
+
+#[test]
+fn test_dashboard_html_provider_table_has_all_columns() {
+    let html = fs::read_to_string("src/dashboard.html").unwrap();
+    assert!(html.contains("ID") && html.contains("名称") && html.contains("Base URL"),
+        "provider table should have ID, name, and Base URL columns");
+}
+
+#[test]
+fn test_dashboard_html_provider_checkbox_for_batch() {
+    let html = fs::read_to_string("src/dashboard.html").unwrap();
+    assert!(html.contains("selectAll") || html.contains("checkbox") || html.contains("全选"),
+        "provider table should have checkbox for batch operations");
+}
+
+// === API Key Table Tests ===
+
+#[test]
+fn test_dashboard_html_apikey_table_has_columns() {
+    let html = fs::read_to_string("src/dashboard.html").unwrap();
+    assert!(html.contains("名称") && html.contains("Key") && html.contains("状态"),
+        "API key table should have name, key, and status columns");
+}
+
+// === Log Table Column Tests ===
+
+#[test]
+fn test_dashboard_html_log_table_has_time_column() {
+    let html = fs::read_to_string("src/dashboard.html").unwrap();
+    assert!(html.contains("时间") || html.contains("created_at") || html.contains("time"),
+        "log table should have time column");
+}
+
+#[test]
+fn test_dashboard_html_log_table_has_status_column() {
+    let html = fs::read_to_string("src/dashboard.html").unwrap();
+    assert!(html.contains("状态码") || html.contains("status") || html.contains("response_status"),
+        "log table should have status column");
+}
+
+#[test]
+fn test_dashboard_html_log_table_has_tokens_column() {
+    let html = fs::read_to_string("src/dashboard.html").unwrap();
+    assert!(html.contains("Tokens") || html.contains("tokens") || html.contains("total_tokens"),
+        "log table should have tokens column");
+}
+
+#[test]
+fn test_dashboard_html_log_table_has_duration_column() {
+    let html = fs::read_to_string("src/dashboard.html").unwrap();
+    assert!(html.contains("耗时") || html.contains("duration") || html.contains("ms"),
+        "log table should have duration column");
+}
+
+// === Quota Table Column Tests ===
+
+#[test]
+fn test_dashboard_html_quota_table_has_provider_column() {
+    let html = fs::read_to_string("src/dashboard.html").unwrap();
+    assert!(html.contains("服务商") && (html.contains("配额") || html.contains("quota")),
+        "quota table should have provider column");
+}
+
+#[test]
+fn test_dashboard_html_quota_table_has_usage_bar() {
+    let html = fs::read_to_string("src/dashboard.html").unwrap();
+    assert!(html.contains("usage_percent") || html.contains("usagePercent") || html.contains("用量占比") || html.contains("progress"),
+        "quota table should have usage progress bar");
+}
