@@ -864,3 +864,227 @@ fn test_dashboard_html_stats_by_api_key_has_time_filter() {
         "Stats should have time range filter options"
     );
 }
+
+// === Tab Navigation Tests ===
+
+#[test]
+fn test_dashboard_html_tab_overview_exists() {
+    let html = fs::read_to_string("src/dashboard.html").unwrap();
+    assert!(html.contains("tab-overview") || html.contains("概览"),
+        "overview tab should exist");
+}
+
+#[test]
+fn test_dashboard_html_tab_providers_exists() {
+    let html = fs::read_to_string("src/dashboard.html").unwrap();
+    assert!(html.contains("tab-providers") || html.contains("服务商管理"),
+        "providers tab should exist");
+}
+
+#[test]
+fn test_dashboard_html_tab_apikeys_exists() {
+    let html = fs::read_to_string("src/dashboard.html").unwrap();
+    assert!(html.contains("tab-apikeys") || html.contains("API Key"),
+        "api keys tab should exist");
+}
+
+#[test]
+fn test_dashboard_html_tab_quotas_exists() {
+    let html = fs::read_to_string("src/dashboard.html").unwrap();
+    assert!(html.contains("tab-quotas") || html.contains("用量配额"),
+        "quotas tab should exist");
+}
+
+#[test]
+fn test_dashboard_html_tab_logs_exists() {
+    let html = fs::read_to_string("src/dashboard.html").unwrap();
+    assert!(html.contains("tab-logs") || html.contains("请求日志"),
+        "logs tab should exist");
+}
+
+#[test]
+fn test_dashboard_html_tab_stats_exists() {
+    let html = fs::read_to_string("src/dashboard.html").unwrap();
+    assert!(html.contains("tab-stats") || html.contains("统计分析"),
+        "stats tab should exist");
+}
+
+// === Overview Stats Cards Tests ===
+
+#[test]
+fn test_dashboard_html_active_apikeys_card() {
+    let html = fs::read_to_string("src/dashboard.html").unwrap();
+    assert!(html.contains("activeKeys") || html.contains("活跃 API") || html.contains("active_api_keys"),
+        "overview should show active API keys count");
+}
+
+#[test]
+fn test_dashboard_html_active_providers_card() {
+    let html = fs::read_to_string("src/dashboard.html").unwrap();
+    assert!(html.contains("activeProviders") || html.contains("活跃服务商") || html.contains("active_providers"),
+        "overview should show active providers count");
+}
+
+#[test]
+fn test_dashboard_html_requests_24h_card() {
+    let html = fs::read_to_string("src/dashboard.html").unwrap();
+    assert!(html.contains("totalRequests") || html.contains("24h请求") || html.contains("请求数"),
+        "overview should show 24h requests count");
+}
+
+#[test]
+fn test_dashboard_html_tokens_24h_card() {
+    let html = fs::read_to_string("src/dashboard.html").unwrap();
+    assert!(html.contains("totalTokens") || html.contains("24h Tokens") || html.contains("Token数"),
+        "overview should show 24h tokens count");
+}
+
+#[test]
+fn test_dashboard_html_avg_tokens_per_sec_card() {
+    let html = fs::read_to_string("src/dashboard.html").unwrap();
+    assert!(html.contains("Tokens/s") || html.contains("tokens_per_second") || html.contains("平均速率") || html.contains("avgTokensPerSec") || html.contains("Output Tokens/s"),
+        "overview should show avg tokens/s");
+}
+
+#[test]
+fn test_dashboard_html_throttle_24h_card() {
+    let html = fs::read_to_string("src/dashboard.html").unwrap();
+    assert!(html.contains("throttleCount") || html.contains("24h限流") || html.contains("限流"),
+        "overview should show 24h throttle count");
+}
+
+// === Provider Form Field Tests ===
+
+#[test]
+fn test_dashboard_html_provider_base_url_input() {
+    let html = fs::read_to_string("src/dashboard.html").unwrap();
+    assert!(html.contains("baseUrl") || html.contains("base_url") || html.contains("Base URL"),
+        "provider form should have base URL input");
+}
+
+#[test]
+fn test_dashboard_html_provider_auth_type_select() {
+    let html = fs::read_to_string("src/dashboard.html").unwrap();
+    assert!(html.contains("authType") || html.contains("auth_type") || html.contains("认证方式"),
+        "provider form should have auth type select");
+}
+
+#[test]
+fn test_dashboard_html_provider_weight_input() {
+    let html = fs::read_to_string("src/dashboard.html").unwrap();
+    assert!(html.contains("weight") || html.contains("权重"),
+        "provider form should have weight input");
+}
+
+#[test]
+fn test_dashboard_html_provider_bypass_proxy_checkbox() {
+    let html = fs::read_to_string("src/dashboard.html").unwrap();
+    assert!(html.contains("bypassProxy") || html.contains("bypass_proxy") || html.contains("绕过代理"),
+        "provider form should have bypass proxy checkbox");
+}
+
+#[test]
+fn test_dashboard_html_provider_token_url_input() {
+    let html = fs::read_to_string("src/dashboard.html").unwrap();
+    assert!(html.contains("tokenUrl") || html.contains("token_url") || html.contains("Token URL"),
+        "provider form should have token URL input");
+}
+
+#[test]
+fn test_dashboard_html_provider_token_expiry_input() {
+    let html = fs::read_to_string("src/dashboard.html").unwrap();
+    assert!(html.contains("tokenExpiry") || html.contains("token_expiry") || html.contains("有效期"),
+        "provider form should have token expiry input");
+}
+
+#[test]
+fn test_dashboard_html_provider_subscription_start_input() {
+    let html = fs::read_to_string("src/dashboard.html").unwrap();
+    assert!(html.contains("subscriptionStart") || html.contains("subscription_start") || html.contains("订阅开始"),
+        "provider form should have subscription start input");
+}
+
+// === Log Management Tests ===
+
+#[test]
+fn test_dashboard_html_log_delete_single_button() {
+    let html = fs::read_to_string("src/dashboard.html").unwrap();
+    assert!(html.contains("deleteLog") || html.contains("删除日志") || html.contains("delete.*log"),
+        "logs should have delete single log button");
+}
+
+#[test]
+fn test_dashboard_html_log_batch_delete_button() {
+    let html = fs::read_to_string("src/dashboard.html").unwrap();
+    assert!(html.contains("batchDelete") || html.contains("batch-delete") || html.contains("批量删除"),
+        "logs should have batch delete button");
+}
+
+#[test]
+fn test_dashboard_html_log_delete_all_button() {
+    let html = fs::read_to_string("src/dashboard.html").unwrap();
+    assert!(html.contains("deleteAll") || html.contains("delete-all") || html.contains("清空全部"),
+        "logs should have delete all button");
+}
+
+// === Chart.js Configuration Tests ===
+
+#[test]
+fn test_dashboard_html_chartjs_initialization() {
+    let html = fs::read_to_string("src/dashboard.html").unwrap();
+    assert!(html.contains("new Chart") || html.contains("Chart("),
+        "dashboard should initialize Chart.js charts");
+}
+
+#[test]
+fn test_dashboard_html_auto_refresh_interval() {
+    let html = fs::read_to_string("src/dashboard.html").unwrap();
+    assert!(html.contains("setInterval") || html.contains("autoRefresh"),
+        "dashboard should have auto-refresh interval");
+}
+
+// === Dashboard API Call Tests ===
+
+#[test]
+fn test_dashboard_html_summary_api_call() {
+    let html = fs::read_to_string("src/dashboard.html").unwrap();
+    assert!(html.contains("dashboard/summary") || html.contains("loadSummary"),
+        "dashboard should call summary API");
+}
+
+#[test]
+fn test_dashboard_html_health_api_call() {
+    let html = fs::read_to_string("src/dashboard.html").unwrap();
+    assert!(html.contains("dashboard/health") || html.contains("loadProviderHealth"),
+        "dashboard should call health API");
+}
+
+#[test]
+fn test_dashboard_html_token_rate_api_call() {
+    let html = fs::read_to_string("src/dashboard.html").unwrap();
+    assert!(html.contains("dashboard/token-rate") || html.contains("loadTokenRate"),
+        "dashboard should call token rate API");
+}
+
+// === Provider Model Management Tests ===
+
+#[test]
+fn test_dashboard_html_provider_model_add_input() {
+    let html = fs::read_to_string("src/dashboard.html").unwrap();
+    assert!(html.contains("addModel") || html.contains("添加模型") || html.contains("modelId"),
+        "provider model management should have add input");
+}
+
+#[test]
+fn test_dashboard_html_provider_model_test_all_button() {
+    let html = fs::read_to_string("src/dashboard.html").unwrap();
+    assert!(html.contains("testAll") || html.contains("全部测试") || html.contains("test-all"),
+        "provider model management should have test all button");
+}
+
+#[test]
+fn test_dashboard_html_provider_model_table() {
+    let html = fs::read_to_string("src/dashboard.html").unwrap();
+    assert!(html.contains("model-table") || html.contains("modelTable") || html.contains("模型管理"),
+        "provider model management should have model table");
+}
