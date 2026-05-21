@@ -3,7 +3,7 @@
 
 [server]
 host = "0.0.0.0"
-port = 49127
+port = 5001
 
 [database]
 url = "sqlite:llm_gateway.db"
