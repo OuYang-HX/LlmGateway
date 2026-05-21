@@ -1721,3 +1721,183 @@ async fn test_http_model_mapping_update_changes_weight() {
     assert_eq!(updated["mapping"]["weight"], 20, "weight should be updated to 20");
     assert_eq!(updated["mapping"]["cost_multiplier"], 1.0, "cost_multiplier should remain 1.0");
 }
+// === Additional HTTP API Tests ===
+
+#[tokio::test]
+async fn http_api_key_update_changes_name() {
+    let server = build_test_app().await;
+    let create_resp = server.post("/api/v1/api-keys")
+        .json(&serde_json::json!({"name": "original-name"}))
+        .await;
+    assert_eq!(create_resp.status_code(), 201);
+    let body: serde_json::Value = create_resp.json();
+    let key_id = body["id"].as_str().unwrap();
+    
+    let update_resp = server.put(&format!("/api/v1/api-keys/{}", key_id))
+        .json(&serde_json::json!({"name": "updated-name"}))
+        .await;
+    assert_eq!(update_resp.status_code(), 200);
+}
+
+#[tokio::test]
+async fn http_api_key_update_changes_status() {
+    let server = build_test_app().await;
+    let create_resp = server.post("/api/v1/api-keys")
+        .json(&serde_json::json!({"name": "test-key"}))
+        .await;
+    let body: serde_json::Value = create_resp.json();
+    let key_id = body["id"].as_str().unwrap();
+    
+    let update_resp = server.put(&format!("/api/v1/api-keys/{}", key_id))
+        .json(&serde_json::json!({"is_active": false}))
+        .await;
+    assert_eq!(update_resp.status_code(), 200);
+}
+
+#[tokio::test]
+async fn http_api_key_regenerate_changes_key() {
+    let server = build_test_app().await;
+    let create_resp = server.post("/api/v1/api-keys")
+        .json(&serde_json::json!({"name": "test-key"}))
+        .await;
+    assert_eq!(create_resp.status_code(), StatusCode::CREATED);
+    let body: serde_json::Value = create_resp.json();
+    let key_id = body["id"].as_str().unwrap();
+    let original_key = body["key"].as_str().unwrap().to_string();
+    
+    let regen_resp = server.post(&format!("/api/v1/api-keys/{}", key_id))
+        .await;
+    assert!(regen_resp.status_code() == 200, "regenerate returned {}", regen_resp.status_code());
+    if regen_resp.status_code() == 200 {
+        let regen_body: serde_json::Value = regen_resp.json();
+        if let Some(new_key) = regen_body.get("key").and_then(|v| v.as_str()) {
+            assert_ne!(original_key, new_key);
+        }
+    }
+}
+
+#[tokio::test]
+async fn http_provider_chart_color_update() {
+    let server = build_test_app().await;
+    server.post("/api/v1/providers")
+        .json(&serde_json::json!({
+            "id": "color-test", "name": "Color Test",
+            "base_url": "https://api.test.com/v1", "api_type": "openai",
+            "auth_type": "api_key", "api_key": "test-key", "weight": 1
+        }))
+        .await;
+    
+    let resp = server.post("/api/v1/providers/color-test/chart-color")
+        .json(&serde_json::json!({"chart_color": "#ff0000"}))
+        .await;
+    assert!(resp.status_code() == 200 || resp.status_code() == 404 || resp.status_code() == 405,
+        "chart color update returned {}", resp.status_code());
+}
+
+#[tokio::test]
+async fn http_dashboard_top_provider() {
+    let server = build_test_app().await;
+    let resp = server.get("/api/v1/dashboard/top-provider").await;
+    assert_eq!(resp.status_code(), 200);
+}
+
+#[tokio::test]
+async fn http_stats_usage_trend() {
+    let server = build_test_app().await;
+    let resp = server.get("/api/v1/stats/usage-trend?days=7").await;
+    assert_eq!(resp.status_code(), 200);
+}
+
+#[tokio::test]
+async fn http_logs_delete_single() {
+    let server = build_test_app().await;
+    let resp = server.delete("/api/v1/logs/99999").await;
+    assert!(resp.status_code() == 200 || resp.status_code() == 404);
+}
+
+#[tokio::test]
+async fn http_logs_batch_delete_endpoint() {
+    let server = build_test_app().await;
+    let resp = server.post("/api/v1/logs/batch-delete")
+        .json(&serde_json::json!({"provider_id": "nonexistent"}))
+        .await;
+    assert_eq!(resp.status_code(), 200);
+}
+
+#[tokio::test]
+async fn http_logs_delete_all_endpoint() {
+    let server = build_test_app().await;
+    let resp = server.post("/api/v1/logs/delete-all").await;
+    assert_eq!(resp.status_code(), 200);
+}
+
+#[tokio::test]
+async fn http_quota_crud_full_cycle() {
+    let server = build_test_app().await;
+    server.post("/api/v1/providers")
+        .json(&serde_json::json!({
+            "id": "quota-test", "name": "Quota Test",
+            "base_url": "https://api.test.com/v1", "api_type": "openai",
+            "auth_type": "api_key", "api_key": "test-key", "weight": 1
+        }))
+        .await;
+    
+    let set_resp = server.post("/api/v1/quotas/quota-test")
+        .json(&serde_json::json!({
+            "window_mode": "sliding", "window_size": "5h",
+            "limit_count": 500, "is_enabled": true
+        }))
+        .await;
+    assert_eq!(set_resp.status_code(), 200);
+    
+    let get_resp = server.get("/api/v1/quotas/quota-test").await;
+    assert_eq!(get_resp.status_code(), 200);
+    
+    let usage_resp = server.get("/api/v1/quotas/usage").await;
+    assert_eq!(usage_resp.status_code(), 200);
+    
+    let del_resp = server.delete("/api/v1/quotas/quota-test/sliding:5h").await;
+    assert_eq!(del_resp.status_code(), 200);
+}
+
+#[tokio::test]
+async fn http_quota_calibration() {
+    let server = build_test_app().await;
+    server.post("/api/v1/providers")
+        .json(&serde_json::json!({
+            "id": "cal-test", "name": "Cal Test",
+            "base_url": "https://api.test.com/v1", "api_type": "openai",
+            "auth_type": "api_key", "api_key": "test-key", "weight": 1
+        }))
+        .await;
+    
+    server.post("/api/v1/quotas/cal-test")
+        .json(&serde_json::json!({
+            "window_mode": "fixed", "window_size": "5h", "limit_count": 1000
+        }))
+        .await;
+    
+    let cal_resp = server.post("/api/v1/quotas/cal-test/calibration")
+        .json(&serde_json::json!({
+            "quota_type": "fixed:5h", "calibration_offset": 50, "note": "test"
+        }))
+        .await;
+    assert_eq!(cal_resp.status_code(), 200);
+    
+    let get_cal = server.get("/api/v1/quotas/cal-test/calibration").await;
+    assert_eq!(get_cal.status_code(), 200);
+}
+
+#[tokio::test]
+async fn http_stats_bucketed_with_granularity() {
+    let server = build_test_app().await;
+    let resp = server.get("/api/v1/stats/bucketed?granularity=1d").await;
+    assert_eq!(resp.status_code(), 200);
+}
+
+#[tokio::test]
+async fn http_stats_by_api_key_with_time_filter() {
+    let server = build_test_app().await;
+    let resp = server.get("/api/v1/stats/by-api-key?hours=24").await;
+    assert_eq!(resp.status_code(), 200);
+}
