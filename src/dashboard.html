@@ -107,7 +107,23 @@
 </head>
 <body>
 <div class="container">
-    <h1>🚀 LLM Gateway Dashboard</h1>
+    <h1>🚀 LLM Gateway Dashboard<span id="instance-label" style="font-size:16px;font-weight:400;color:#60a5fa;margin-left:8px"></span></h1>
+    <script>
+    // 根据端口自动标注环境
+    (function(){
+      const port = location.port || '49127';
+      const labels = {
+        '49128': '【开发环境】',
+        '49129': '【虚拟网关 A】',
+        '49130': '【虚拟网关 B】',
+        '49131': '【虚拟网关 C】',
+      };
+      const el = document.getElementById('instance-label');
+      if(el && labels[port]) el.textContent = labels[port];
+      // 也更新页面 title
+      if(labels[port]) document.title = 'LLM Gateway ' + labels[port];
+    })();
+    </script>
 
     <div class="tabs">
         <button class="tab active" onclick="showTab('overview', this)">概览</button>
