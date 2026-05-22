@@ -432,6 +432,23 @@ impl Database {
         Ok(result.rows_affected() > 0)
     }
 
+    /// Batch update API key active status (enable or disable)
+    pub async fn batch_set_api_key_active_status(&self, ids: &[String], is_active: bool) -> Result<u64, sqlx::Error> {
+        if ids.is_empty() {
+            return Ok(0);
+        }
+        let ids_json = serde_json::to_string(ids).unwrap_or("[]".to_string());
+        let result = sqlx::query(
+            "UPDATE api_keys SET is_active = ?, updated_at = datetime('now') WHERE id IN (SELECT value FROM json_each(?))"
+        )
+        .bind(if is_active { 1 } else { 0 })
+        .bind(&ids_json)
+        .execute(&self.pool)
+        .await?;
+
+        Ok(result.rows_affected())
+    }
+
     /// Delete an API key
     pub async fn delete_api_key(&self, id: &str) -> Result<bool, sqlx::Error> {
         let result = sqlx::query("DELETE FROM api_keys WHERE id = ?")

@@ -362,6 +362,29 @@ pub async fn delete_provider(
 }
 
 #[derive(Deserialize)]
+pub struct BatchUpdateApiKeyStatusRequest {
+    pub ids: Vec<String>,
+    pub enable: bool,
+}
+
+/// Batch enable or disable API keys
+pub async fn batch_update_api_key_status(
+    State(state): State<AppState>,
+    Json(req): Json<BatchUpdateApiKeyStatusRequest>,
+) -> impl IntoResponse {
+    if req.ids.is_empty() {
+        return (StatusCode::BAD_REQUEST, Json(serde_json::json!({"error": "ids cannot be empty"}))).into_response();
+    }
+    match state.db.batch_set_api_key_active_status(&req.ids, req.enable).await {
+        Ok(count) => (StatusCode::OK, Json(serde_json::json!({"updated": count}))).into_response(),
+        Err(e) => {
+            tracing::error!("Failed to batch update API key status: {}", e);
+            (StatusCode::INTERNAL_SERVER_ERROR, Json(serde_json::json!({"error": e.to_string()}))).into_response()
+        }
+    }
+}
+
+#[derive(Deserialize)]
 pub struct BatchUpdateProviderStatusRequest {
     pub ids: Vec<String>,
     pub enable: bool,

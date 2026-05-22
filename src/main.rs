@@ -61,7 +61,9 @@ async fn main() -> anyhow::Result<()> {
 
         // API Key management
         .route("/api/v1/api-keys", post(api::create_api_key).get(api::list_api_keys))
-        .route("/api/v1/api-keys/:id", get(api::get_api_key).delete(api::delete_api_key).post(api::regenerate_api_key).put(api::update_api_key))
+        .route("/api/v1/api-keys/batch-update-status", post(api::batch_update_api_key_status))
+        .route("/api/v1/api-keys/:id", get(api::get_api_key).delete(api::delete_api_key).put(api::update_api_key))
+        .route("/api/v1/api-keys/:id/regenerate", post(api::regenerate_api_key))
 
         // Provider management
         .route("/api/v1/providers", post(api::create_provider).get(api::list_providers))

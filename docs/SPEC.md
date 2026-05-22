@@ -240,6 +240,7 @@ src/
 | `PUT` | `/api-keys/:id` | 更新 API Key（名称、允许服务商、状态） |
 | `DELETE` | `/api-keys/:id` | 删除 API Key |
 | `POST` | `/api-keys/:id/regenerate` | 重新生成 API Key（保留 ID） |
+| `POST` | `/api-keys/batch-update-status` | 批量启用/停用 API Key |
 
 ### 3.2 服务商管理
 
@@ -488,10 +489,14 @@ src/
 - 模型管理子面板：添加/删除服务商模型，设置对外 ID
 
 ### 5.3 API Key 管理（tab-apikeys）
-- API Key 列表（名称、Key 前缀、允许服务商、状态、创建时间）
+- API Key 列表（名称、Key、允许服务商、状态、创建时间）
+- **全选复选框**：表头全选，支持批量操作
+- **批量启用/停用按钮**：一键启用或停用选中的 API Key
+- **状态快捷切换**：点击状态徽标即可切换启用/停用
 - 创建/编辑 Modal：名称、允许服务商复选框、状态
 - 重新生成按钮（保留 ID 和名称）
 - 复制 Key 到剪贴板
+- **概览页 API Key 表格**：显示启用/停用按钮，点击状态徽标可切换
 
 ### 5.4 用量配额（tab-quotas）
 - 配额列表（服务商、窗口模式、窗口大小、配额上限、已用、剩余百分比）

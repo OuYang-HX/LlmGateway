@@ -75,6 +75,41 @@ async fn test_deactivate_api_key() {
 }
 
 #[tokio::test]
+async fn test_batch_set_api_key_active_status() {
+    let db = test_db().await;
+    db.create_api_key("batch-k1", "Batch Key 1", "lgk-b1", "lgk-b1", None).await.unwrap();
+    db.create_api_key("batch-k2", "Batch Key 2", "lgk-b2", "lgk-b2", None).await.unwrap();
+    db.create_api_key("batch-k3", "Batch Key 3", "lgk-b3", "lgk-b3", None).await.unwrap();
+
+    // Batch disable 2 keys
+    let count = db.batch_set_api_key_active_status(
+        &["batch-k1".to_string(), "batch-k2".to_string()], false
+    ).await.unwrap();
+    assert_eq!(count, 2);
+
+    // Verify k1 and k2 are disabled
+    let k1 = db.get_api_key_by_id("batch-k1").await.unwrap().unwrap();
+    assert!(!k1.is_active);
+    let k2 = db.get_api_key_by_id("batch-k2").await.unwrap().unwrap();
+    assert!(!k2.is_active);
+    // k3 should still be active
+    let k3 = db.get_api_key_by_id("batch-k3").await.unwrap().unwrap();
+    assert!(k3.is_active);
+
+    // Batch re-enable
+    let count = db.batch_set_api_key_active_status(
+        &["batch-k1".to_string(), "batch-k2".to_string()], true
+    ).await.unwrap();
+    assert_eq!(count, 2);
+    let k1 = db.get_api_key_by_id("batch-k1").await.unwrap().unwrap();
+    assert!(k1.is_active);
+
+    // Empty ids should return 0
+    let count = db.batch_set_api_key_active_status(&[], true).await.unwrap();
+    assert_eq!(count, 0);
+}
+
+#[tokio::test]
 async fn test_delete_api_key() {
     let db = test_db().await;
     db.create_api_key("key-d", "Key D", "hash-d", "lgk-d", None).await.unwrap();

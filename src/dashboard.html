@@ -174,7 +174,7 @@
             <div class="table-wrap"><table id="provider-health-table"><thead><tr><th>服务商</th><th>24h请求</th><th class="hide-mobile">错误</th><th class="hide-mobile">限流</th><th class="hide-mobile">Avg ms</th><th class="hide-mobile">最近请求</th><th style="font-size:11px;color:#64748b">更新</th></tr></thead><tbody></tbody></table></div>
         </div>
         <div class="panel"><h2>服务商状态</h2><div class="table-wrap"><table id="overview-provider-table"><thead><tr><th><input type="checkbox" id="overview-select-all" onchange="toggleSelectAllOverviewProviders(this)"></th><th>ID</th><th>名称</th><th>认证方式</th><th>状态</th><th>操作</th></tr></thead><tbody></tbody></table></div></div>
-        <div class="panel"><h2>API Keys</h2><div class="table-wrap"><table id="overview-apikey-table"><thead><tr><th>名称</th><th>前缀</th><th>允许服务商</th><th>状态</th></tr></thead><tbody></tbody></table></div></div>
+        <div class="panel"><h2>API Keys</h2><div class="table-wrap"><table id="overview-apikey-table"><thead><tr><th>名称</th><th>前缀</th><th>允许服务商</th><th>状态</th><th>操作</th></tr></thead><tbody></tbody></table></div></div>
     </div>
 
     <!-- ====== 服务商管理 ====== -->
@@ -219,11 +219,13 @@
     <div id="tab-apikeys" class="hidden">
         <div class="controls">
             <button class="btn btn-success" onclick="openApiKeyModal()">+ 创建 API Key</button>
+            <button class="btn" onclick="batchEnableApiKeys()" style="margin-left:16px">✅ 启用选中</button>
+            <button class="btn btn-danger" onclick="batchDisableApiKeys()" style="margin-left:8px">⏸ 停用选中</button>
         </div>
         <div class="panel">
             <h2>API Keys</h2>
             <table id="apikey-manage-table">
-                <thead><tr><th>名称</th><th>Key</th><th class="hide-mobile">允许服务商</th><th>状态</th><th class="hide-mobile">创建时间</th><th>操作</th></tr></thead>
+                <thead><tr><th><input type="checkbox" id="apikey-select-all" onchange="toggleSelectAllApiKeys(this)"></th><th>名称</th><th>Key</th><th class="hide-mobile">允许服务商</th><th>状态</th><th class="hide-mobile">创建时间</th><th>操作</th></tr></thead>
                 <tbody></tbody>
             </table>
         </div>
@@ -518,8 +520,9 @@ async function loadOverviewApiKeys(){
         document.querySelector('#overview-apikey-table tbody').innerHTML=ks.map(k=>`<tr>
             <td>${k.name}</td><td>${k.key_prefix}...</td>
             <td class="hide-mobile">${k.allowed_providers?k.allowed_providers.join(', '):'全部'}</td>
-            <td><span class="badge ${k.is_active?'badge-green':'badge-red'}">${k.is_active?'活跃':'停用'}</span></td>
-        </tr>`).join('')||'<tr><td colspan="4" class="empty-state">暂无 API Key</td></tr>';
+            <td><span class="badge ${k.is_active?'badge-green':'badge-red'}" style="cursor:pointer" onclick='toggleApiKeyStatus("${k.id}",${k.is_active})' title='点击${k.is_active?'停用':'启用'}'>${k.is_active?'活跃':'停用'}</span></td>
+            <td><button class="btn btn-sm" onclick='toggleApiKeyStatus("${k.id}",${k.is_active})'>${k.is_active?'停用':'启用'}</button></td>
+        </tr>`).join('')||'<tr><td colspan="5" class="empty-state">暂无 API Key</td></tr>';
     }catch(e){console.error(e)}
 }
 
@@ -1280,9 +1283,10 @@ async function loadApiKeysManage(){
         const tb=document.querySelector('#apikey-manage-table tbody');
         if(!ks.length){tb.innerHTML='<tr><td colspan="7" class="empty-state"><p>暂无 API Key，点击上方按钮创建</p></td></tr>';return;}
         tb.innerHTML=ks.map(k=>`<tr>
+            <td><input type="checkbox" class="apikey-row-checkbox" value="${k.id}" ${k.is_active?'':'disabled title=\'已停用的Key无法批量操作\''}></td>
             <td>${k.name}</td><td style="font-family:monospace;font-size:12px">${k.key}</td>
             <td class="hide-mobile">${k.allowed_providers?k.allowed_providers.join(', '):'全部'}</td>
-            <td><span class="badge ${k.is_active?'badge-green':'badge-red'}">${k.is_active?'活跃':'停用'}</span></td>
+            <td><span class="badge ${k.is_active?'badge-green':'badge-red'}" style="cursor:pointer" onclick='toggleApiKeyStatus("${k.id}",${k.is_active})' title='点击${k.is_active?'停用':'启用'}'>${k.is_active?'活跃':'停用'}</span></td>
             <td class="hide-mobile">${fmtTime(k.created_at)}</td>
             <td><button class="btn btn-sm" onclick='copyKey("${k.key}")' title='复制 Key'>📋</button> <button class="btn btn-sm" onclick='openApiKeyModal("${k.id}")'>编辑</button> <button class="btn btn-sm btn-danger" onclick='deleteApiKey("${k.id}")'>删除</button></td>
         </tr>`).join('');
@@ -1394,6 +1398,41 @@ async function deleteApiKey(id){
         if(resp.ok) loadApiKeysManage();
         else{const err=await resp.json();alert('删除失败: '+(err.error||resp.statusText));}
     }catch(e){alert('网络错误: '+e.message)}
+}
+
+async function toggleApiKeyStatus(id,currentActive){
+    const action=currentActive?'停用':'启用';
+    if(!confirm(`确定要${action}此 API Key 吗？`))return;
+    try{
+        const resp=await fetch(API+'/api-keys/'+id,{method:'PUT',headers:{'Content-Type':'application/json'},body:JSON.stringify({is_active:!currentActive})});
+        if(resp.ok){
+            loadApiKeysManage();
+            refreshOverview&&refreshOverview();
+        }else{const err=await resp.json();alert(`${action}失败: `+(err.error||resp.statusText));}
+    }catch(e){alert('网络错误: '+e.message)}
+}
+
+function getSelectedApiKeyIds(){
+    return Array.from(document.querySelectorAll('.apikey-row-checkbox:checked')).map(cb=>cb.value);
+}
+
+function toggleSelectAllApiKeys(el){
+    document.querySelectorAll('.apikey-row-checkbox').forEach(cb=>cb.checked=el.checked);
+}
+
+async function batchEnableApiKeys(){await batchUpdateApiKeys(true);}
+async function batchDisableApiKeys(){await batchUpdateApiKeys(false);}
+
+async function batchUpdateApiKeys(enable){
+    const ids=getSelectedApiKeyIds();
+    if(!ids.length){alert('请先选择 API Key');return;}
+    if(!confirm((enable?'启用':'停用')+'选中的 '+ids.length+' 个 API Key？'))return;
+    try{
+        const r=await fetch(API+'/api-keys/batch-update-status',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({ids,enable})});
+        if(!r.ok)throw new Error((await r.json()).error||'失败');
+        await loadApiKeysManage();
+        refreshOverview&&refreshOverview();
+    }catch(e){alert('操作失败: '+e.message);}
 }
 
 // ========== 请求日志 ==========

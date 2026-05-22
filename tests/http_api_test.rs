@@ -31,7 +31,9 @@ async fn build_test_app() -> TestServer {
         .route("/", get(llm_gateway::dashboard::dashboard_page))
         .route("/dashboard", get(llm_gateway::dashboard::dashboard_page))
         .route("/api/v1/api-keys", post(llm_gateway::api::create_api_key).get(llm_gateway::api::list_api_keys))
-        .route("/api/v1/api-keys/:id", get(llm_gateway::api::get_api_key).delete(llm_gateway::api::delete_api_key).post(llm_gateway::api::regenerate_api_key).put(llm_gateway::api::update_api_key))
+        .route("/api/v1/api-keys/batch-update-status", post(llm_gateway::api::batch_update_api_key_status))
+        .route("/api/v1/api-keys/:id", get(llm_gateway::api::get_api_key).delete(llm_gateway::api::delete_api_key).put(llm_gateway::api::update_api_key))
+        .route("/api/v1/api-keys/:id/regenerate", post(llm_gateway::api::regenerate_api_key))
         .route("/api/v1/providers", post(llm_gateway::api::create_provider).get(llm_gateway::api::list_providers))
         .route("/api/v1/providers/batch-update-status", post(llm_gateway::api::batch_update_provider_status))
         .route("/api/v1/providers/:id", get(llm_gateway::api::get_provider).delete(llm_gateway::api::delete_provider).put(llm_gateway::api::update_provider))
@@ -1219,8 +1221,8 @@ async fn test_api_key_regenerate() {
     let key_id = body["id"].as_str().unwrap();
     let old_key = body["key"].as_str().unwrap();
 
-    // Regenerate the API key (POST to the key's URL calls regenerate)
-    let resp2 = server.post(&format!("/api/v1/api-keys/{}", key_id))
+    // Regenerate the API key (POST to /api-keys/:id/regenerate)
+    let resp2 = server.post(&format!("/api/v1/api-keys/{}/regenerate", key_id))
         .await;
     assert_eq!(resp2.status_code(), StatusCode::OK);
     let body2: serde_json::Value = resp2.json();
@@ -1765,7 +1767,7 @@ async fn http_api_key_regenerate_changes_key() {
     let key_id = body["id"].as_str().unwrap();
     let original_key = body["key"].as_str().unwrap().to_string();
     
-    let regen_resp = server.post(&format!("/api/v1/api-keys/{}", key_id))
+    let regen_resp = server.post(&format!("/api/v1/api-keys/{}/regenerate", key_id))
         .await;
     assert!(regen_resp.status_code() == 200, "regenerate returned {}", regen_resp.status_code());
     if regen_resp.status_code() == 200 {
@@ -1900,4 +1902,140 @@ async fn http_stats_by_api_key_with_time_filter() {
     let server = build_test_app().await;
     let resp = server.get("/api/v1/stats/by-api-key?hours=24").await;
     assert_eq!(resp.status_code(), 200);
+}
+
+// ==================== API Key Batch Status Tests ====================
+
+#[tokio::test]
+async fn test_http_batch_enable_api_keys() {
+    let server = build_test_app().await;
+
+    // Create 3 API keys
+    let mut key_ids = Vec::new();
+    for i in 0..3 {
+        let resp = server.post("/api/v1/api-keys")
+            .json(&serde_json::json!({"name": format!("batch-key-{}", i)}))
+            .await;
+        assert_eq!(resp.status_code(), StatusCode::CREATED);
+        let body: serde_json::Value = resp.json();
+        key_ids.push(body["id"].as_str().unwrap().to_string());
+    }
+
+    // Disable all 3 keys first
+    let resp = server.post("/api/v1/api-keys/batch-update-status")
+        .json(&serde_json::json!({"ids": key_ids, "enable": false}))
+        .await;
+    assert_eq!(resp.status_code(), StatusCode::OK);
+    let body: serde_json::Value = resp.json();
+    assert_eq!(body["updated"].as_u64().unwrap(), 3);
+
+    // Verify all are disabled
+    let list_resp = server.get("/api/v1/api-keys").await;
+    let keys: serde_json::Value = list_resp.json();
+    for key in keys.as_array().unwrap() {
+        if key_ids.contains(&key["id"].as_str().unwrap().to_string()) {
+            assert!(!key["is_active"].as_bool().unwrap());
+        }
+    }
+
+    // Re-enable all 3 keys
+    let resp = server.post("/api/v1/api-keys/batch-update-status")
+        .json(&serde_json::json!({"ids": key_ids, "enable": true}))
+        .await;
+    assert_eq!(resp.status_code(), StatusCode::OK);
+    let body: serde_json::Value = resp.json();
+    assert_eq!(body["updated"].as_u64().unwrap(), 3);
+
+    // Verify all are enabled
+    let list_resp = server.get("/api/v1/api-keys").await;
+    let keys: serde_json::Value = list_resp.json();
+    for key in keys.as_array().unwrap() {
+        if key_ids.contains(&key["id"].as_str().unwrap().to_string()) {
+            assert!(key["is_active"].as_bool().unwrap());
+        }
+    }
+}
+
+#[tokio::test]
+async fn test_http_batch_update_api_keys_empty_ids() {
+    let server = build_test_app().await;
+    let resp = server.post("/api/v1/api-keys/batch-update-status")
+        .json(&serde_json::json!({"ids": [], "enable": true}))
+        .await;
+    assert_eq!(resp.status_code(), StatusCode::BAD_REQUEST);
+}
+
+#[tokio::test]
+async fn test_http_batch_update_api_keys_partial() {
+    let server = build_test_app().await;
+
+    // Create 3 API keys
+    let mut key_ids = Vec::new();
+    for i in 0..3 {
+        let resp = server.post("/api/v1/api-keys")
+            .json(&serde_json::json!({"name": format!("partial-key-{}", i)}))
+            .await;
+        let body: serde_json::Value = resp.json();
+        key_ids.push(body["id"].as_str().unwrap().to_string());
+    }
+
+    // Disable only the first 2 keys
+    let resp = server.post("/api/v1/api-keys/batch-update-status")
+        .json(&serde_json::json!({"ids": [&key_ids[0], &key_ids[1]], "enable": false}))
+        .await;
+    assert_eq!(resp.status_code(), StatusCode::OK);
+    let body: serde_json::Value = resp.json();
+    assert_eq!(body["updated"].as_u64().unwrap(), 2);
+
+    // Verify: first 2 disabled, last one still active
+    let list_resp = server.get("/api/v1/api-keys").await;
+    let keys: serde_json::Value = list_resp.json();
+    for key in keys.as_array().unwrap() {
+        let id = key["id"].as_str().unwrap().to_string();
+        if id == key_ids[0] || id == key_ids[1] {
+            assert!(!key["is_active"].as_bool().unwrap(), "Key {} should be disabled", id);
+        } else if id == key_ids[2] {
+            assert!(key["is_active"].as_bool().unwrap(), "Key {} should be active", id);
+        }
+    }
+}
+
+#[tokio::test]
+async fn test_http_deactivated_api_key_cannot_authenticate() {
+    let server = build_test_app().await;
+
+    // Create an API key
+    let resp = server.post("/api/v1/api-keys")
+        .json(&serde_json::json!({"name": "auth-test-key"}))
+        .await;
+    let body: serde_json::Value = resp.json();
+    let key_id = body["id"].as_str().unwrap().to_string();
+    let api_key = body["key"].as_str().unwrap().to_string();
+
+    // Key should be active by default
+    let get_resp = server.get(&format!("/api/v1/api-keys/{}", key_id)).await;
+    let key_detail: serde_json::Value = get_resp.json();
+    assert!(key_detail["is_active"].as_bool().unwrap());
+
+    // Disable the key
+    let update_resp = server.put(&format!("/api/v1/api-keys/{}", key_id))
+        .json(&serde_json::json!({"is_active": false}))
+        .await;
+    assert_eq!(update_resp.status_code(), StatusCode::OK);
+
+    // Verify key is now disabled
+    let get_resp = server.get(&format!("/api/v1/api-keys/{}", key_id)).await;
+    let key_detail: serde_json::Value = get_resp.json();
+    assert!(!key_detail["is_active"].as_bool().unwrap());
+
+    // Re-enable the key
+    let update_resp = server.put(&format!("/api/v1/api-keys/{}", key_id))
+        .json(&serde_json::json!({"is_active": true}))
+        .await;
+    assert_eq!(update_resp.status_code(), StatusCode::OK);
+
+    // Verify key is active again
+    let get_resp = server.get(&format!("/api/v1/api-keys/{}", key_id)).await;
+    let key_detail: serde_json::Value = get_resp.json();
+    assert!(key_detail["is_active"].as_bool().unwrap());
 }
