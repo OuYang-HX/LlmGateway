@@ -1,11 +1,11 @@
 #!/bin/bash
 # ============================================================
-# LLM Gateway - 部署管理脚本
+# LLM Gateway - 生产部署管理脚本
 # 用法: bash deploy.sh [命令]
 #
 # 命令:
 #   setup      首次部署（安装 Rust + 编译 + 创建服务 + 启动）
-#   update     编译 + 重启（日常更新，最常用）
+#   update     拉取代码 + 编译 + 部署二进制 + 重启（日常更新，最常用）
 #   build      仅编译
 #   start      启动服务
 #   stop       停止服务
@@ -23,11 +23,17 @@ SERVICE_DESC="LLM Gateway - 大模型网关"
 DEFAULT_PORT=49127
 DEFAULT_HOST="0.0.0.0"
 
+# ---- 运行时目录（与代码仓库解耦）----
+# 所有运行时文件（二进制/配置/数据库）放在这里，
+# 移动代码仓库后只需修改 PROJECT_DIR，重启服务即可。
+RUNTIME_DIR="${HOME}/.local/llm-gateway"
+RUNTIME_BINARY="${RUNTIME_DIR}/bin/llm-gateway"
+RUNTIME_CONFIG="${RUNTIME_DIR}/config.toml"
+RUNTIME_DB="${RUNTIME_DIR}/llm_gateway.db"
+
 # ---- 自动检测 ----
 PROJECT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-BINARY_PATH="$PROJECT_DIR/target/release/llm-gateway"
-CONFIG_FILE="$PROJECT_DIR/config.toml"
-DB_FILE="$PROJECT_DIR/llm_gateway.db"
+SRC_BINARY="${PROJECT_DIR}/target/release/llm-gateway"
 SERVICE_FILE="/etc/systemd/system/${SERVICE_NAME}.service"
 
 # ---- 颜色 ----
@@ -74,25 +80,49 @@ EOF
     ok "crates.io 镜像已配置"
 }
 
+# ---- 确保运行时目录存在 ----
+ensure_runtime_dir() {
+    mkdir -p "${RUNTIME_DIR}/bin"
+}
+
+# ---- 迁移旧的配置文件和数据库（如存在）----
+migrate_old_files() {
+    local old_config="${PROJECT_DIR}/config.toml"
+    local old_db="${PROJECT_DIR}/llm_gateway.db"
+
+    if [ -f "$old_config" ] && [ ! -f "$RUNTIME_CONFIG" ]; then
+        warn "检测到旧配置文件，正在迁移到 ${RUNTIME_CONFIG} ..."
+        cp "$old_config" "$RUNTIME_CONFIG"
+        sed -i "s|${PROJECT_DIR}|${RUNTIME_DIR}|g" "$RUNTIME_CONFIG"
+        ok "配置文件已迁移并更新数据库路径"
+    fi
+
+    if [ -f "$old_db" ] && [ ! -f "$RUNTIME_DB" ]; then
+        warn "检测到旧数据库，正在迁移到 ${RUNTIME_DB} ..."
+        cp "$old_db" "$RUNTIME_DB"
+        ok "数据库已迁移"
+    fi
+}
+
 # ---- 确保配置文件存在 ----
 ensure_config() {
-    if [ -f "$CONFIG_FILE" ]; then
+    if [ -f "$RUNTIME_CONFIG" ]; then
         return
     fi
-    warn "未找到 config.toml"
+    warn "未找到 config.toml，正在创建..."
     if [ -f "$PROJECT_DIR/config.example.toml" ]; then
-        cp "$PROJECT_DIR/config.example.toml" "$CONFIG_FILE"
+        cp "$PROJECT_DIR/config.example.toml" "$RUNTIME_CONFIG"
     else
-        cat > "$CONFIG_FILE" << EOF
+        cat > "$RUNTIME_CONFIG" << EOF
 [server]
 host = "${DEFAULT_HOST}"
 port = ${DEFAULT_PORT}
 
 [database]
-url = "sqlite:${DB_FILE}?mode=rwc"
+url = "sqlite:${RUNTIME_DB}?mode=rwc"
 EOF
     fi
-    ok "配置文件已创建: config.toml"
+    ok "配置文件已创建: ${RUNTIME_CONFIG}"
     warn "请根据需要修改配置后再次运行"
 }
 
@@ -100,42 +130,45 @@ EOF
 do_build() {
     cd "$PROJECT_DIR"
     info "编译 release 版本（编译期间服务不受影响）..."
-    if cargo build --release 2>&1; then
-        ok "编译完成: $(du -h "$BINARY_PATH" | cut -f1)"
-    else
+    if ! cargo build --release 2>&1; then
         err "编译失败"
         exit 1
     fi
+    ok "编译完成: $(du -h "$SRC_BINARY" | cut -f1)"
 }
 
-# ---- 创建 systemd 服务 ----
-create_service() {
-    if [ -f "$SERVICE_FILE" ]; then
-        info "服务文件已存在"
-        # 检查是否需要更新（路径变化等）
-        return
+# ---- 部署二进制到运行时目录 ----
+do_deploy_binary() {
+    ensure_runtime_dir
+    # 如果服务正在运行，先停止（否则 cp 会报"文本文件忙"）
+    if sudo systemctl is-active --quiet "$SERVICE_NAME" 2>/dev/null; then
+        info "暂停服务以更新二进制..."
+        sudo systemctl stop "$SERVICE_NAME"
     fi
+    cp "$SRC_BINARY" "$RUNTIME_BINARY"
+    ok "二进制已部署到 ${RUNTIME_BINARY}"
+}
 
-    info "创建 systemd 服务..."
+# ---- 创建 systemd 服务（仅在配置变化时更新）----
+create_service() {
     CURRENT_USER="$(whoami)"
 
-    sudo tee "$SERVICE_FILE" > /dev/null << EOF
-[Unit]
+    local desired_content="[Unit]
 Description=${SERVICE_DESC}
 After=network.target
 
 [Service]
 Type=simple
 User=${CURRENT_USER}
-WorkingDirectory=${PROJECT_DIR}
-ExecStart=${BINARY_PATH}
+WorkingDirectory=${RUNTIME_DIR}
+ExecStart=${RUNTIME_BINARY}
 Restart=on-failure
 RestartSec=5
 
 # 安全：限制写入路径
 NoNewPrivileges=true
-ProtectSystem=strict
-ReadWritePaths=${PROJECT_DIR}
+ProtectSystem=boot
+ReadWritePaths=${RUNTIME_DIR}
 
 # 日志
 StandardOutput=journal
@@ -144,11 +177,22 @@ SyslogIdentifier=${SERVICE_NAME}
 
 [Install]
 WantedBy=multi-user.target
-EOF
+"
 
+    if [ -f "$SERVICE_FILE" ]; then
+        local current_content
+        current_content="$(sudo cat "$SERVICE_FILE" 2>/dev/null || true)"
+        if [ "$current_content" = "$desired_content" ]; then
+            info "systemd 服务配置无变化，跳过"
+            return 0
+        fi
+    fi
+
+    info "创建/更新 systemd 服务..."
+    echo "$desired_content" | sudo tee "$SERVICE_FILE" > /dev/null
     sudo systemctl daemon-reload
     sudo systemctl enable "$SERVICE_NAME"
-    ok "服务已创建并设为开机自启"
+    ok "服务已创建/更新并设为开机自启"
 }
 
 # ---- 服务操作 ----
@@ -202,8 +246,7 @@ do_status() {
     echo ""
     sudo systemctl status "$SERVICE_NAME" --no-pager 2>/dev/null || true
     echo ""
-    # 端口检测
-    PORT=$(grep -oP 'port\s*=\s*\K\d+' "$CONFIG_FILE" 2>/dev/null || echo "$DEFAULT_PORT")
+    PORT=$(grep -oP 'port\s*=\s*\K\d+' "$RUNTIME_CONFIG" 2>/dev/null || echo "$DEFAULT_PORT")
     if ss -tlnp 2>/dev/null | grep -q ":${PORT} "; then
         ok "端口 ${PORT} 正在监听"
     else
@@ -230,78 +273,88 @@ do_setup() {
 
     install_rust
     configure_cargo_mirror
+    ensure_runtime_dir
+    migrate_old_files
     ensure_config
     do_build
+    do_deploy_binary
     create_service
     do_start
 
-    # 显示结果
-    PORT=$(grep -oP 'port\s*=\s*\K\d+' "$CONFIG_FILE" 2>/dev/null || echo "$DEFAULT_PORT")
+    PORT=$(grep -oP 'port\s*=\s*\K\d+' "$RUNTIME_CONFIG" 2>/dev/null || echo "$DEFAULT_PORT")
     LAN_IP="$(hostname -I 2>/dev/null | awk '{print $1}')"
     echo ""
     echo "========================================="
     ok "部署完成！"
     echo ""
+    info "运行时目录: ${RUNTIME_DIR}"
     info "访问地址:"
     echo "  本机:   http://127.0.0.1:${PORT}"
     [ -n "$LAN_IP" ] && echo "  局域网: http://${LAN_IP}:${PORT}"
     echo ""
     info "日常命令:"
-    echo "  bash deploy.sh update   # 编译+重启（最常用）"
+    echo "  bash deploy.sh update   # 拉取+编译+部署+重启（最常用）"
     echo "  bash deploy.sh status   # 查看状态"
     echo "  bash deploy.sh logs     # 查看日志"
     echo "========================================="
 }
 
-# ---- 日常更新（最常用） ----
+# ---- 日常更新（最常用）：pull → build → deploy → restart ----
 do_update() {
     echo ""
-    echo "=== LLM Gateway 更新 ==="
+    echo "=== LLM Gateway 生产更新 ==="
     echo ""
 
-    # 如果有远程仓库，先拉代码
+    # [1/4] 拉取最新代码
     cd "$PROJECT_DIR"
     if git remote | grep -q origin 2>/dev/null; then
         BRANCH=$(git rev-parse --abbrev-ref HEAD 2>/dev/null || echo "main")
-        info "[1/3] 拉取最新代码 (origin/$BRANCH)..."
+        info "[1/4] 拉取代码 (origin/$BRANCH)..."
         git fetch origin "$BRANCH"
         LOCAL=$(git rev-parse HEAD)
         REMOTE=$(git rev-parse "origin/$BRANCH" 2>/dev/null || echo "$LOCAL")
         if [ "$LOCAL" != "$REMOTE" ]; then
-            # 检查是否有未提交的本地修改
             if ! git diff --quiet HEAD 2>/dev/null; then
-                warn "检测到本地未提交的修改，暂存后拉取..."
-                git stash
-                git reset --hard "origin/$BRANCH"
-                git stash pop 2>/dev/null || true
-            else
-                git reset --hard "origin/$BRANCH"
+                warn "检测到本地未提交修改，暂存后拉取..."
+                git stash push -m "auto-stash before deploy update"
             fi
-            ok "代码已更新"
+            git merge --ff-only "origin/$BRANCH" 2>/dev/null || git reset --hard "origin/$BRANCH"
+            if git stash list | grep -q "auto-stash"; then
+                info "恢复暂存的修改..."
+                git stash pop 2>/dev/null || true
+            fi
+            ok "代码已更新 ($(git rev-parse --short HEAD))"
         else
             info "远程代码无变化"
         fi
     else
-        info "[1/3] 无远程仓库，跳过拉取"
+        info "[1/4] 无远程仓库，跳过"
     fi
 
-    # 编译（期间服务不受影响）
-    info "[2/3] 编译..."
+    # [2/4] 编译
+    info "[2/4] 编译..."
     do_build
 
-    # 重启（此时才切换到新版本）
-    info "[3/3] 重启服务..."
+    # [3/4] 部署二进制到运行时目录
+    info "[3/4] 部署二进制..."
+    do_deploy_binary
+    create_service
+
+    # [4/4] 重启服务
+    info "[4/4] 重启服务..."
     do_restart
 
     echo ""
     ok "更新完成！"
+    info "运行时目录: ${RUNTIME_DIR}"
+    info "当前版本: $(git -C "$PROJECT_DIR" rev-parse --short HEAD)"
 }
 
 # ---- 卸载 ----
 do_uninstall() {
     echo ""
     warn "即将卸载 ${SERVICE_DESC}"
-    warn "数据库将保留: ${DB_FILE}"
+    warn "运行时目录将保留: ${RUNTIME_DIR}"
     echo ""
     read -rp "确认卸载？(y/N): " confirm
     [ "$confirm" = "y" ] || [ "$confirm" = "Y" ] || { info "已取消"; exit 0; }
@@ -313,42 +366,39 @@ do_uninstall() {
         sudo systemctl daemon-reload
         ok "服务文件已删除"
     fi
-    ok "卸载完成（数据库保留）"
+    ok "卸载完成（运行时目录保留）"
 }
 
 # ---- 帮助 ----
 show_help() {
-    cat << EOF
+    cat << 'HELP'
+LLM Gateway 部署管理脚本
 
-$(echo -e "${G}")LLM Gateway 部署管理脚本$(echo -e "${NC}")
+用法:  bash deploy.sh <命令> [参数]
 
-$(echo -e "${B}")用法:$(echo -e "${NC}")  bash deploy.sh <命令> [参数]
+命令:
+  setup      首次部署（安装 Rust + 编译 + 创建服务 + 启动）
+  update     拉取代码 + 编译 + 部署 + 重启（日常更新最常用）
+  build      仅编译
+  start      启动服务
+  stop       停止服务
+  restart    重启服务
+  status     查看服务状态 + 端口监听
+  logs [N]   查看最近 N 条日志（默认 50，持续跟踪）
+  uninstall  卸载服务（保留运行时目录）
 
-$(echo -e "${B}")命令:$(echo -e "${NC}")
-  $(echo -e "${G}")setup$(echo -e "${NC}")      首次部署（安装 Rust + 编译 + 创建 systemd 服务 + 启动）
-  $(echo -e "${G}")update$(echo -e "${NC}")     拉取代码 + 编译 + 重启（日常更新最常用）
-  $(echo -e "${G}")build$(echo -e "${NC}")      仅编译（编译期间服务不受影响）
-  $(echo -e "${G}")start$(echo -e "${NC}")      启动服务
-  $(echo -e "${G}")stop$(echo -e "${NC}")       停止服务
-  $(echo -e "${G}")restart$(echo -e "${NC}")    重启服务
-  $(echo -e "${G}")status$(echo -e "${NC}")     查看服务状态 + 端口监听
-  $(echo -e "${G}")logs$(echo -e "${NC}") [N]   查看最近 N 条日志（默认 50，持续跟踪）
-  $(echo -e "${G}")uninstall$(echo -e "${NC}")  卸载服务（保留数据库）
+说明:
+  • 编译期间服务不受影响，部署时才停服务替换二进制
+  • 运行时目录与代码仓库解耦，服务始终从 ~/.local/llm-gateway 运行
+  • 服务名: llm-gateway，开机自启
 
-$(echo -e "${B}")说明:$(echo -e "${NC}")
-  • 编译期间服务不受影响，只有 restart 才切换到新版本
-  • 服务名: ${SERVICE_NAME}，开机自启
-  • 配置文件: config.toml（首次 setup 自动从 config.example.toml 创建）
-  • 数据库: llm_gateway.db（uninstall 不会删除）
-
-$(echo -e "${B}")快速开始:$(echo -e "${NC}")
+快速开始:
   git clone <repo-url> && cd LlmGateway
   bash deploy.sh setup
 
-$(echo -e "${B}")日常更新:$(echo -e "${NC}")
+日常更新:
   bash deploy.sh update
-
-EOF
+HELP
 }
 
 # ============================================================
@@ -363,7 +413,7 @@ case "$COMMAND" in
     build)     do_build ;;
     start)     do_start ;;
     stop)      do_stop ;;
-    restart)do_restart ;;
+    restart)   do_restart ;;
     status)    do_status ;;
     logs)      do_logs "${2:-50}" ;;
     uninstall) do_uninstall ;;
