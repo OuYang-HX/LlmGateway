@@ -349,7 +349,11 @@ impl Database {
         .await
         .unwrap_or_default();
         let needs_migration = constraint_check.first()
-            .map(|(sql,)| sql.contains("UNIQUE(model_id, provider_id)") && !sql.contains("provider_model_id"))
+            .map(|(sql,)| {
+                // Check if UNIQUE constraint is the old (model_id, provider_id) only
+                // Must check specifically for the UNIQUE clause, not the column definitions
+                sql.contains("UNIQUE(model_id, provider_id)") && !sql.contains("UNIQUE(model_id, provider_id, provider_model_id)")
+            })
             .unwrap_or(false);
         
         if needs_migration {
