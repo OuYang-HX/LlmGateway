@@ -111,3 +111,19 @@
 - **场景**：`remove_model_mapping` 增加参数后，`main.rs` 路由和 `dashboard.html` API 路径也需要同步更新
 - **编译器无法检查**：API 路由路径和前端 JS 不受编译器保护
 - **正确做法**：修改函数签名后，`grep -rn` 搜索所有调用点，包括路由定义和前端代码
+
+### 3. Provider struct 变更后必须检查测试中的 ProviderRow 初始化
+- **场景**：`ProviderRow` 新增 `group_id` 字段后，`auth_stats_test.rs` 中的 `ProviderRow { ... }` 初始化缺少字段导致编译失败
+- **Rust 会报错**：但只在 `cargo test` 或 `cargo check --tests` 时，`cargo check` 默认不检查测试
+- **正确做法**：修改 struct 后运行 `cargo check --tests`，搜索所有 `ProviderRow {` 初始化
+
+### 4. Anthropic SSE 格式与 OpenAI 不同
+- **event: 前缀**：Anthropic SSE 每个数据块前面有 `event: content_block_delta\n` 行
+- **用量字段**：`input_tokens/output_tokens` 而非 `prompt_tokens/completion_tokens`
+- **内容路径**：`delta.text` 而非 `choices[0].delta.content`
+- **认证方式**：`x-api-key: <key>` 而非 `Authorization: Bearer <key>`
+
+### 5. 同一服务商多格式对接 = 两个 Provider + group_id
+- **两个 Provider**：因为 base_url 和认证方式不同，本质上是不同的上游端点
+- **group_id 聚合**：统计和配额按 group_id 维度，而非单个 provider_id
+- **实现策略**：request_logs 写入 effective_provider_id（group_id 或自身 id），现有统计/配额查询无需修改
