@@ -26,7 +26,7 @@ pub fn is_rate_limit_error(message: &str) -> bool {
 
 /// Build a standard OpenAI-compatible error response JSON for rate limit errors.
 /// The message includes "rate_limit" keyword so that pi-coding-agent's _isRetryableError regex matches.
-fn build_rate_limit_error_json(original_message: &str) -> serde_json::Value {
+pub fn build_rate_limit_error_json(original_message: &str) -> serde_json::Value {
     serde_json::json!({
         "error": {
             "message": format!("rate_limit error from upstream provider: {}", original_message),
@@ -37,7 +37,7 @@ fn build_rate_limit_error_json(original_message: &str) -> serde_json::Value {
 }
 
 /// Build a standard OpenAI-compatible error response JSON for server errors.
-fn build_server_error_json(original_message: &str) -> serde_json::Value {
+pub fn build_server_error_json(original_message: &str) -> serde_json::Value {
     serde_json::json!({
         "error": {
             "message": format!("server_error from upstream provider: {}", original_message),
@@ -810,7 +810,7 @@ async fn handle_mock_request(
 }
 
 /// Generate random mock content for LLM responses
-fn generate_mock_content(target_len: usize) -> String {
+pub fn generate_mock_content(target_len: usize) -> String {
     use rand::Rng;
     let mut rng = rand::thread_rng();
 
@@ -847,7 +847,7 @@ fn generate_mock_content(target_len: usize) -> String {
 }
 
 /// Extract API key from Authorization header
-fn extract_api_key(headers: &HeaderMap) -> Option<String> {
+pub fn extract_api_key(headers: &HeaderMap) -> Option<String> {
     let auth_header = headers.get("authorization")?.to_str().ok()?;
     if auth_header.starts_with("Bearer ") {
         Some(auth_header[7..].to_string())
