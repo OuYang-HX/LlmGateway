@@ -538,10 +538,10 @@ fn test_dashboard_html_provider_table_has_mock_column() {
         content.contains(">Mock</th>") || content.contains("Mock</th>"),
         "Provider table should have Mock column header"
     );
-    // Empty state should have colspan=10 (was 9, now 10 with Mock column)
+    // Empty state should have colspan=12 (was 9, now 12 with Mock+API类型+分组 columns)
     assert!(
-        content.contains("colspan=\"10\""),
-        "Empty state should have colspan=10 to account for Mock column"
+        content.contains("colspan=\"12\""),
+        "Empty state should have colspan=12 to account for Mock, API类型, and 分组 columns"
     );
 }
 
