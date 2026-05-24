@@ -1428,12 +1428,13 @@ pub struct UpdateModelMappingRequest {
 
 pub async fn update_model_mapping(
     State(state): State<AppState>,
-    Path((model_id, provider_id)): Path<(String, String)>,
+    Path((model_id, provider_id, provider_model_id)): Path<(String, String, String)>,
     Json(req): Json<UpdateModelMappingRequest>,
 ) -> impl IntoResponse {
     match state.db.update_model_mapping(
         &model_id,
         &provider_id,
+        &provider_model_id,
         &req.provider_model_id,
         req.is_active,
         req.weight,
@@ -1454,9 +1455,9 @@ pub async fn update_model_mapping(
 /// Remove a provider mapping from a model
 pub async fn remove_model_mapping(
     State(state): State<AppState>,
-    Path((model_id, provider_id)): Path<(String, String)>,
+    Path((model_id, provider_id, provider_model_id)): Path<(String, String, String)>,
 ) -> impl IntoResponse {
-    match state.db.remove_model_mapping(&model_id, &provider_id).await {
+    match state.db.remove_model_mapping(&model_id, &provider_id, &provider_model_id).await {
         Ok(true) => (StatusCode::OK, Json(serde_json::json!({"message": "Mapping removed"}))).into_response(),
         Ok(false) => (StatusCode::NOT_FOUND, Json(serde_json::json!({"error": "Mapping not found"}))).into_response(),
         Err(e) => {

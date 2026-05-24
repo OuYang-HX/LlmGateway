@@ -140,7 +140,7 @@ src/
 | `cost_multiplier` | REAL | 成本倍率，默认 1.0 |
 | `created_at` | TEXT | 时间戳 |
 
-> **唯一约束**: `(model_id, provider_id)` 唯一
+> **唯一约束**: `(model_id, provider_id, provider_model_id)` 唯一
 
 ### 2.5 `provider_models`（服务商模型注册）
 
@@ -581,4 +581,55 @@ src/
 
 ---
 
-*文档版本: 2026-05-21 | 代码版本对应: dev 分支 latest commit*
+
+---
+
+## 10. 需求：服务商模型支持多个对外模型 ID
+
+### 背景
+
+当前 `model_mappings` 表的唯一约束为 `(model_id, provider_id)`，即同一统一模型下同一服务商只能有一条映射。
+这导致同一服务商模型（如 `gpt-4o`）只能映射到一个对外 ID，无法同时暴露为多个对外 ID（如 `my-gpt4o` 和 `company-gpt4o`）。
+
+### 数据库变更
+
+1. **`model_mappings` 表唯一约束变更**：
+   - 旧约束：`UNIQUE(model_id, provider_id)`
+   - 新约束：`UNIQUE(model_id, provider_id, provider_model_id)`
+   - 意义：允许同一服务商的同一统一模型下有多条映射（不同 `provider_model_id`），也允许同一服务商模型映射到多个不同的统一模型
+
+2. **迁移 SQL**：
+   ```sql
+   -- 先删除旧唯一索引
+   DROP INDEX IF EXISTS idx_model_mappings_unique;
+   -- SQLite 不支持 ALTER CONSTRAINT，需重建表
+   ```
+   由于 SQLite 不支持直接修改约束，采用重建表策略。
+
+### API 变更
+
+1. **`DELETE /api/v1/models/:id/mappings/:provider_id`** → 改为 `DELETE /api/v1/models/:id/mappings/:provider_id/:provider_model_id`
+   - 需要同时指定 `provider_model_id` 才能唯一确定一条映射
+
+2. **`POST /api/v1/providers/:id/models`** 保持不变
+
+### 核心逻辑变更
+
+1. `db::remove_model_mapping()` 签名增加 `provider_model_id` 参数
+2. `db::cleanup_mappings_for_provider_model()` 无需改动（已按 `provider_model_id` 匹配）
+3. `db::add_model_mapping()` 无需改动（INSERT 已包含 `provider_model_id`）
+
+### 前端变更
+
+1. 模型管理页面的"对外ID"列改为支持显示多个对外 ID
+2. "设置对外ID"按钮改为可追加多个对外 ID
+3. 删除对外 ID 时需指定具体的映射
+
+### 测试用例
+
+1. 同一服务商模型映射到多个不同统一模型 ✅
+2. 同一统一模型下同一服务商可有多条不同 `provider_model_id` 的映射 ✅
+3. 删除映射需指定 `provider_model_id` ✅
+4. 原有功能不受影响 ✅
+
+*文档版本: 2026-05-24 | 代码版本对应: dev 分支 latest commit*

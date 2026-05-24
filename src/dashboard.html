@@ -1757,13 +1757,14 @@ async function loadModels() {
             fetch(API + '/models').then(r => r.json())
         ]);
         
-        // 构建服务商模型ID到对外ID的映射
-        const modelMappings = {};
+        // 构建服务商模型ID到对外ID的映射（一个服务商模型可映射到多个对外ID）
+        const modelMappings = {}; // provider_model_id → [unified_model_id]
         unifiedModels.forEach(um => {
             um.mappings.forEach(m => {
                 if (m.mapping.provider_id === currentModelProviderId) {
-                    const key = um.model.id + '|' + m.mapping.provider_model_id;
-                    modelMappings[key] = um.model.id;
+                    const pmid = m.mapping.provider_model_id;
+                    if (!modelMappings[pmid]) modelMappings[pmid] = [];
+                    modelMappings[pmid].push(um.model.id);
                 }
             });
         });
@@ -1791,10 +1792,9 @@ async function loadModels() {
             const testTime = m.last_tested_at ? fmtTime(m.last_tested_at) : '-';
             
             // 检查是否有对外ID
-            const mappingKey = Object.keys(modelMappings).find(k => k.endsWith('|' + m.model_id));
-            const externalId = mappingKey ? mappingKey.split('|')[0] : null;
-            const externalIdCell = externalId 
-                ? `<span style="color:#22c55e;font-weight:bold">${externalId}</span>`
+            const externalIds = modelMappings[m.model_id] || [];
+            const externalIdCell = externalIds.length > 0
+                ? externalIds.map(eid => `<span style="color:#22c55e;font-weight:bold;margin-right:4px">${eid}<button class="btn btn-sm btn-danger" style="margin-left:2px;padding:0 4px;font-size:10px" onclick="removeExternalId('${m.model_id}', '${eid}')">✕</button></span>`).join('')
                 : '<span style="color:#94a3b8">未设置</span>';
             
             return `<tr>
@@ -1804,7 +1804,7 @@ async function loadModels() {
                 <td class="hide-mobile">${testBadge}</td>
                 <td class="hide-mobile" style="font-size:12px">${testTime}</td>
                 <td>
-                    <button class="btn btn-sm" onclick="setExternalId('${m.model_id}', '${externalId || ''}')">🔗</button>
+                    <button class="btn btn-sm" onclick="setExternalId('${m.model_id}')">🔗</button>
                     <button class="btn btn-sm" onclick="testModel('${m.model_id}')" id="test-btn-${m.model_id}">🧪</button>
                     <button class="btn btn-sm btn-danger" onclick="removeModel('${m.model_id}')">🗑</button>
                 </td>
@@ -1843,16 +1843,14 @@ async function removeModel(modelId) {
     } catch (e) { alert('网络错误: ' + e.message); }
 }
 
-// 设置对外ID
+// 设置对外ID（添加模式）
 let currentSettingExternalIdModel = null;
-let currentSettingExternalIdOldValue = null;
 
-function openExternalIdModal(providerModelId, currentExternalId) {
+function openExternalIdModal(providerModelId) {
     currentSettingExternalIdModel = providerModelId;
-    currentSettingExternalIdOldValue = currentExternalId || null;
     document.getElementById('external-id-modal').classList.remove('hidden');
     document.getElementById('ext-provider-model-id').textContent = providerModelId;
-    document.getElementById('ext-id').value = currentExternalId || '';
+    document.getElementById('ext-id').value = '';
 }
 
 function closeExternalIdModal() {
@@ -1869,29 +1867,19 @@ async function saveExternalId() {
     if (!currentSettingExternalIdModel) return;
     
     try {
-        // 0. 记录旧的对外ID（如果有），用于清理旧映射
-        const oldExternalId = currentSettingExternalIdOldValue;
-        const isChanging = oldExternalId && oldExternalId !== externalId;
-        
         // 1. 检查对外ID对应的统一模型是否存在
         let modelExists = false;
         const existingModels = await fetch(API + '/models/' + externalId).then(r => r.json()).catch(() => null);
         
         if (existingModels && existingModels.model && existingModels.model.id === externalId) {
             modelExists = true;
-            // 检查该服务商是否已有映射
+            // 检查该服务商模型是否已映射到此统一模型
             const existingMapping = existingModels.mappings.find(
                 m => m.mapping.provider_id === currentModelProviderId && m.mapping.provider_model_id === currentSettingExternalIdModel
             );
-            if (existingMapping && !isChanging) {
-                // 同一对外ID、同一服务商模型 → 无变化，直接关闭
-                alert('该对外ID已映射到同一服务商模型，无需重复设置');
+            if (existingMapping) {
+                alert('该对外ID已映射到此服务商模型，无需重复设置');
                 closeExternalIdModal();
-                return;
-            }
-            // 如果是修改对外ID，且新ID下已有同一服务商映射 → 提示冲突
-            if (existingMapping && isChanging) {
-                alert('该对外ID已存在同一服务商的映射，请使用其他对外ID');
                 return;
             }
         }
@@ -1915,19 +1903,7 @@ async function saveExternalId() {
             }
         }
         
-        // 3. 删除旧对外ID的映射（如果是在修改对外ID）
-        if (isChanging) {
-            await fetch(API + '/models/' + oldExternalId + '/mappings/' + currentModelProviderId, {
-                method: 'DELETE'
-            });
-            // 检查旧模型是否还有其他映射，如果没有则删除空模型
-            const oldModelData = await fetch(API + '/models/' + oldExternalId).then(r => r.json()).catch(() => null);
-            if (oldModelData && oldModelData.mappings && oldModelData.mappings.length === 0) {
-                await fetch(API + '/models/' + oldExternalId, { method: 'DELETE' });
-            }
-        }
-        
-        // 4. 添加映射
+        // 3. 添加映射
         const mappingResp = await fetch(API + '/models/' + externalId + '/mappings', {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
@@ -1940,7 +1916,7 @@ async function saveExternalId() {
         });
         
         if (mappingResp.ok || mappingResp.status === 201) {
-            alert('对外ID设置成功！');
+            alert('对外ID添加成功！');
             closeExternalIdModal();
             await loadModels();
         } else {
@@ -1952,8 +1928,29 @@ async function saveExternalId() {
     }
 }
 
-function setExternalId(providerModelId, currentExternalId) {
-    openExternalIdModal(providerModelId, currentExternalId);
+function setExternalId(providerModelId) {
+    openExternalIdModal(providerModelId);
+}
+
+async function removeExternalId(providerModelId, externalId) {
+    if (!confirm('确定要删除对外ID "' + externalId + '" 的映射吗？')) return;
+    if (!currentModelProviderId) return;
+    try {
+        const resp = await fetch(API + '/models/' + externalId + '/mappings/' + currentModelProviderId + '/' + encodeURIComponent(providerModelId), {
+            method: 'DELETE'
+        });
+        if (resp.ok) {
+            // 检查该统一模型是否还有其他映射，如果没有则删除空模型
+            const modelData = await fetch(API + '/models/' + externalId).then(r => r.json()).catch(() => null);
+            if (modelData && modelData.mappings && modelData.mappings.length === 0) {
+                await fetch(API + '/models/' + externalId, { method: 'DELETE' });
+            }
+            await loadModels();
+        } else {
+            const err = await resp.json();
+            alert('删除失败: ' + (err.error || resp.statusText));
+        }
+    } catch (e) { alert('网络错误: ' + e.message); }
 }
 
 async function testModel(modelId) {
@@ -2647,7 +2644,7 @@ function toggleWindowStartInput(){
 <!-- ====== 设置对外ID Modal ====== -->
 <div id="external-id-modal" class="modal-overlay hidden">
 <div class="modal" style="max-width:500px">
-    <h3>设置对外ID</h3>
+    <h3>添加对外ID</h3>
     <div class="form-group">
         <label>服务商模型ID</label>
         <div id="ext-provider-model-id" style="font-family:monospace;font-weight:bold;padding:8px 0"></div>

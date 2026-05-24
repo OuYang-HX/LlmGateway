@@ -32,7 +32,7 @@ async fn build_test_app() -> TestServer {
         .route("/api/v1/models", post(llm_gateway::api::create_model).get(llm_gateway::api::list_models))
         .route("/api/v1/models/:id", get(llm_gateway::api::get_model).delete(llm_gateway::api::delete_model).put(llm_gateway::api::update_model))
         .route("/api/v1/models/:id/mappings", get(llm_gateway::api::list_model_mappings).post(llm_gateway::api::add_model_mapping))
-        .route("/api/v1/models/:id/mappings/:provider_id", put(llm_gateway::api::update_model_mapping).delete(llm_gateway::api::remove_model_mapping))
+        .route("/api/v1/models/:id/mappings/:provider_id/:provider_model_id", put(llm_gateway::api::update_model_mapping).delete(llm_gateway::api::remove_model_mapping))
         .route("/api/v1/quotas/usage", get(llm_gateway::api::get_all_quota_usage))
         .route("/api/v1/quotas/:provider_id", post(llm_gateway::api::set_provider_quota).get(llm_gateway::api::get_provider_quota_usage))
         .route("/api/v1/quotas/:provider_id/:quota_type", delete(llm_gateway::api::delete_provider_quota))
@@ -184,7 +184,7 @@ async fn http_model_mapping_update() {
     let mapping = serde_json::json!({"provider_id": "um-prov", "provider_model_id": "gpt-4", "weight": 1, "cost_multiplier": 1.0});
     server.post("/api/v1/models/um-model/mappings").json(&mapping).await;
     let update = serde_json::json!({"provider_model_id": "gpt-4o", "is_active": true, "weight": 2, "cost_multiplier": 0.5});
-    let resp = server.put("/api/v1/models/um-model/mappings/um-prov").json(&update).await;
+    let resp = server.put("/api/v1/models/um-model/mappings/um-prov/gpt-4").json(&update).await;
     assert_eq!(resp.status_code(), StatusCode::OK);
 }
 
@@ -196,7 +196,7 @@ async fn http_model_mapping_delete() {
     server.post("/api/v1/models").json(&model).await;
     let mapping = serde_json::json!({"provider_id": "dm-prov", "provider_model_id": "gpt-4", "weight": 1, "cost_multiplier": 1.0});
     server.post("/api/v1/models/dm-model/mappings").json(&mapping).await;
-    let resp = server.delete("/api/v1/models/dm-model/mappings/dm-prov").await;
+    let resp = server.delete("/api/v1/models/dm-model/mappings/dm-prov/gpt-4").await;
     assert_eq!(resp.status_code(), StatusCode::OK);
 }
 

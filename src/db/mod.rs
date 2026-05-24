@@ -168,7 +168,7 @@ impl Database {
                 created_at TEXT NOT NULL DEFAULT (datetime('now')),
                 FOREIGN KEY (model_id) REFERENCES models(id) ON DELETE CASCADE,
                 FOREIGN KEY (provider_id) REFERENCES providers(id) ON DELETE CASCADE,
-                UNIQUE(model_id, provider_id)
+                UNIQUE(model_id, provider_id, provider_model_id)
             );
 
             CREATE INDEX IF NOT EXISTS idx_models_active ON models(is_active);
@@ -335,6 +335,74 @@ impl Database {
         )
         .execute(&self.pool)
         .await;
+
+        // Migration: Change model_mappings unique constraint from (model_id, provider_id)
+        // to (model_id, provider_id, provider_model_id) to allow same provider
+        // with same provider_model_id to be mapped to multiple unified models.
+        // SQLite doesn't support ALTER CONSTRAINT, so we recreate the table.
+        // Must disable foreign keys during table rebuild to avoid constraint violations.
+        // Only run if the old constraint (model_id, provider_id) still exists.
+        let constraint_check: Vec<(String,)> = sqlx::query_as(
+            "SELECT sql FROM sqlite_master WHERE type='table' AND name='model_mappings'"
+        )
+        .fetch_all(&self.pool)
+        .await
+        .unwrap_or_default();
+        let needs_migration = constraint_check.first()
+            .map(|(sql,)| sql.contains("UNIQUE(model_id, provider_id)") && !sql.contains("provider_model_id"))
+            .unwrap_or(false);
+        
+        if needs_migration {
+            let _ = sqlx::query("PRAGMA foreign_keys=OFF")
+            .execute(&self.pool)
+            .await;
+            let _ = sqlx::query(
+                r#"CREATE TABLE IF NOT EXISTS model_mappings_new (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    model_id TEXT NOT NULL,
+                    provider_id TEXT NOT NULL,
+                    provider_model_id TEXT NOT NULL,
+                    is_active BOOLEAN NOT NULL DEFAULT 1,
+                    weight INTEGER NOT NULL DEFAULT 1,
+                    cost_multiplier REAL NOT NULL DEFAULT 1.0,
+                    created_at TEXT NOT NULL DEFAULT (datetime('now')),
+                    FOREIGN KEY (model_id) REFERENCES models(id) ON DELETE CASCADE,
+                    FOREIGN KEY (provider_id) REFERENCES providers(id) ON DELETE CASCADE,
+                    UNIQUE(model_id, provider_id, provider_model_id)
+                )"#
+            )
+            .execute(&self.pool)
+            .await;
+            let _ = sqlx::query(
+                "INSERT OR IGNORE INTO model_mappings_new SELECT * FROM model_mappings"
+            )
+            .execute(&self.pool)
+            .await;
+            let _ = sqlx::query("DROP TABLE IF EXISTS model_mappings")
+            .execute(&self.pool)
+            .await;
+            let _ = sqlx::query("ALTER TABLE model_mappings_new RENAME TO model_mappings")
+            .execute(&self.pool)
+            .await;
+            let _ = sqlx::query(
+                "CREATE INDEX IF NOT EXISTS idx_model_mappings_model ON model_mappings(model_id)"
+            )
+            .execute(&self.pool)
+            .await;
+            let _ = sqlx::query(
+                "CREATE INDEX IF NOT EXISTS idx_model_mappings_provider ON model_mappings(provider_id)"
+            )
+            .execute(&self.pool)
+            .await;
+            let _ = sqlx::query(
+                "CREATE INDEX IF NOT EXISTS idx_model_mappings_active ON model_mappings(model_id, is_active)"
+            )
+            .execute(&self.pool)
+            .await;
+            let _ = sqlx::query("PRAGMA foreign_keys=ON")
+            .execute(&self.pool)
+            .await;
+        }
 
         Ok(())
     }
@@ -1823,16 +1891,20 @@ impl Database {
     }
 
     /// Remove a provider mapping from a model
+    /// Now requires provider_model_id to uniquely identify the mapping
+    /// (since same model_id + provider_id can have multiple provider_model_id entries)
     pub async fn remove_model_mapping(
         &self,
         model_id: &str,
         provider_id: &str,
+        provider_model_id: &str,
     ) -> Result<bool, sqlx::Error> {
         let result = sqlx::query(
-            "DELETE FROM model_mappings WHERE model_id = ? AND provider_id = ?"
+            "DELETE FROM model_mappings WHERE model_id = ? AND provider_id = ? AND provider_model_id = ?"
         )
         .bind(model_id)
         .bind(provider_id)
+        .bind(provider_model_id)
         .execute(&self.pool)
         .await?;
         Ok(result.rows_affected() > 0)
@@ -1871,7 +1943,8 @@ impl Database {
         &self,
         model_id: &str,
         provider_id: &str,
-        provider_model_id: &str,
+        old_provider_model_id: &str,
+        new_provider_model_id: &str,
         is_active: bool,
         weight: i64,
         cost_multiplier: f64,
@@ -1879,14 +1952,15 @@ impl Database {
         sqlx::query(
             r#"UPDATE model_mappings SET 
                 provider_model_id = ?, is_active = ?, weight = ?, cost_multiplier = ?
-                WHERE model_id = ? AND provider_id = ?"#
+                WHERE model_id = ? AND provider_id = ? AND provider_model_id = ?"#
         )
-        .bind(provider_model_id)
+        .bind(new_provider_model_id)
         .bind(is_active)
         .bind(weight)
         .bind(cost_multiplier)
         .bind(model_id)
         .bind(provider_id)
+        .bind(old_provider_model_id)
         .execute(&self.pool)
         .await?;
         Ok(())

@@ -462,14 +462,14 @@ async fn test_remove_model_mapping() {
     create_test_provider(&db, "rm-prov").await;
     db.create_model("rm-model", "Model", None, "chat", 1, None).await.unwrap();
     db.add_model_mapping("rm-model", "rm-prov", "gpt-4", 1, 1.0).await.unwrap();
-    assert!(db.remove_model_mapping("rm-model", "rm-prov").await.unwrap());
+    assert!(db.remove_model_mapping("rm-model", "rm-prov", "gpt-4").await.unwrap());
     assert!(db.list_model_mappings("rm-model").await.unwrap().is_empty());
 }
 
 #[tokio::test]
 async fn test_remove_model_mapping_not_found() {
     let db = test_db().await;
-    assert!(!db.remove_model_mapping("nonexistent", "nonexistent").await.unwrap());
+    assert!(!db.remove_model_mapping("nonexistent", "nonexistent", "nonexistent").await.unwrap());
 }
 
 #[tokio::test]
@@ -488,7 +488,7 @@ async fn test_update_model_mapping() {
     create_test_provider(&db, "um-prov").await;
     db.create_model("um-model", "Model", None, "chat", 1, None).await.unwrap();
     db.add_model_mapping("um-model", "um-prov", "gpt-4", 1, 1.0).await.unwrap();
-    db.update_model_mapping("um-model", "um-prov", "gpt-4o", true, 2, 0.5).await.unwrap();
+    db.update_model_mapping("um-model", "um-prov", "gpt-4", "gpt-4o", true, 2, 0.5).await.unwrap();
     let mappings = db.list_model_mappings("um-model").await.unwrap();
     assert_eq!(mappings.len(), 1);
     assert_eq!(mappings[0].provider_model_id, "gpt-4o");
@@ -633,4 +633,53 @@ async fn test_get_provider_quota_usage_empty() {
     create_test_provider(&db, "gpqu-empty").await;
     let usage = db.get_provider_quota_usage("gpqu-empty").await.unwrap();
     assert!(usage.is_empty());
+}
+
+#[tokio::test]
+async fn test_same_provider_model_multiple_unified_models() {
+    // Test: same provider's provider_model_id can be mapped to multiple unified models
+    // e.g., provider "openai" with model "gpt-4o" can map to both "my-gpt4o" and "company-gpt4o"
+    let db = test_db().await;
+    create_test_provider(&db, "multi-prov").await;
+    db.create_model("unified-a", "Unified A", None, "chat", 1, None).await.unwrap();
+    db.create_model("unified-b", "Unified B", None, "chat", 2, None).await.unwrap();
+
+    // Add mapping: unified-a -> multi-prov/gpt-4o
+    db.add_model_mapping("unified-a", "multi-prov", "gpt-4o", 1, 1.0).await.unwrap();
+    // Add mapping: unified-b -> multi-prov/gpt-4o (same provider_model_id, different unified model)
+    db.add_model_mapping("unified-b", "multi-prov", "gpt-4o", 2, 0.5).await.unwrap();
+
+    let mappings_a = db.list_model_mappings("unified-a").await.unwrap();
+    assert_eq!(mappings_a.len(), 1);
+    assert_eq!(mappings_a[0].provider_model_id, "gpt-4o");
+
+    let mappings_b = db.list_model_mappings("unified-b").await.unwrap();
+    assert_eq!(mappings_b.len(), 1);
+    assert_eq!(mappings_b[0].provider_model_id, "gpt-4o");
+
+    // Remove mapping from unified-a should not affect unified-b
+    db.remove_model_mapping("unified-a", "multi-prov", "gpt-4o").await.unwrap();
+    let mappings_b_after = db.list_model_mappings("unified-b").await.unwrap();
+    assert_eq!(mappings_b_after.len(), 1);
+}
+
+#[tokio::test]
+async fn test_same_unified_model_multiple_provider_models() {
+    // Test: same unified model can have multiple provider_model_ids from the same provider
+    // e.g., unified model "my-gpt4" can map to both "gpt-4" and "gpt-4o" from provider "openai"
+    let db = test_db().await;
+    create_test_provider(&db, "mpm-prov").await;
+    db.create_model("mpm-model", "Multi PM Model", None, "chat", 1, None).await.unwrap();
+
+    db.add_model_mapping("mpm-model", "mpm-prov", "gpt-4", 1, 1.0).await.unwrap();
+    db.add_model_mapping("mpm-model", "mpm-prov", "gpt-4o", 2, 0.5).await.unwrap();
+
+    let mappings = db.list_model_mappings("mpm-model").await.unwrap();
+    assert_eq!(mappings.len(), 2);
+
+    // Remove one mapping
+    db.remove_model_mapping("mpm-model", "mpm-prov", "gpt-4").await.unwrap();
+    let after = db.list_model_mappings("mpm-model").await.unwrap();
+    assert_eq!(after.len(), 1);
+    assert_eq!(after[0].provider_model_id, "gpt-4o");
 }

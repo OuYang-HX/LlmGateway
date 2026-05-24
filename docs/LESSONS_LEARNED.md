@@ -95,3 +95,19 @@
 - 每个虚拟网关（A=49129, B=49130, C=49131）有独立 SQLite DB
 - 新增列后，每个虚拟网关的 DB 需要手动执行 `ALTER TABLE`
 - 每个虚拟网关有独立的 API Key，不同网关的 API Key 不能混用
+
+## 数据库迁移类
+
+### 1. SQLite 重建表迁移必须关闭外键
+- **错误**：迁移代码中 `ALTER TABLE ... RENAME TO` 在外键启用时失败，错误被 `let _` 吞掉
+- **后果**：数据库中 `model_mappings` 表被 DROP 但 RENAME 失败，导致 `no such table` 错误
+- **正确做法**：
+  1. 迁移前 `PRAGMA foreign_keys=OFF`
+  2. 检查是否需要迁移（避免每次启动都重建表）
+  3. `CREATE TABLE new → INSERT → DROP old → RENAME → PRAGMA ON`
+  4. 添加索引
+
+### 2. 函数签名变更后必须检查路由和前端
+- **场景**：`remove_model_mapping` 增加参数后，`main.rs` 路由和 `dashboard.html` API 路径也需要同步更新
+- **编译器无法检查**：API 路由路径和前端 JS 不受编译器保护
+- **正确做法**：修改函数签名后，`grep -rn` 搜索所有调用点，包括路由定义和前端代码

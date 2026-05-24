@@ -81,7 +81,7 @@ async fn main() -> anyhow::Result<()> {
         .route("/api/v1/models/:id", get(api::get_model).delete(api::delete_model).put(api::update_model))
         .route("/api/v1/models/:id/mappings", get(api::list_model_mappings))
         .route("/api/v1/models/:id/mappings", post(api::add_model_mapping))
-        .route("/api/v1/models/:id/mappings/:provider_id", put(api::update_model_mapping).delete(api::remove_model_mapping))
+        .route("/api/v1/models/:id/mappings/:provider_id/:provider_model_id", put(api::update_model_mapping).delete(api::remove_model_mapping))
 
         // Provider Quota management
         .route("/api/v1/quotas/usage", get(api::get_all_quota_usage))

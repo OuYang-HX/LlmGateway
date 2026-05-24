@@ -80,14 +80,14 @@ async fn test_api_model_mappings_crud() {
     assert_eq!(mappings[0].weight, 10);
     assert!(mappings[0].is_active);
 
-    // Update mapping
-    db.update_model_mapping("mm", "mp", "updated-internal", false, 5, 2.0).await.unwrap();
+    // Update mapping (now requires old_provider_model_id as the WHERE key)
+    db.update_model_mapping("mm", "mp", "internal-model", "updated-internal", false, 5, 2.0).await.unwrap();
     let updated = db.list_model_mappings("mm").await.unwrap();
     assert_eq!(updated[0].provider_model_id, "updated-internal");
     assert!(!updated[0].is_active);
 
-    // Remove mapping
-    db.remove_model_mapping("mm", "mp").await.unwrap();
+    // Remove mapping (now requires provider_model_id to uniquely identify)
+    db.remove_model_mapping("mm", "mp", "updated-internal").await.unwrap();
     let after = db.list_model_mappings("mm").await.unwrap();
     assert!(after.is_empty());
 }

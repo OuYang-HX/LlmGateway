@@ -32,3 +32,5 @@ Thumbs.db
 # autoresearch.jsonl
 # autoresearch.ideas.md
 llm_gateway_dev.db
+# Local Pi runtime state
+.atl/

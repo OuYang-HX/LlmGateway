@@ -45,7 +45,7 @@ async fn build_test_app() -> TestServer {
         .route("/api/v1/models", post(llm_gateway::api::create_model).get(llm_gateway::api::list_models))
         .route("/api/v1/models/:id", get(llm_gateway::api::get_model).delete(llm_gateway::api::delete_model).put(llm_gateway::api::update_model))
         .route("/api/v1/models/:id/mappings", get(llm_gateway::api::list_model_mappings).post(llm_gateway::api::add_model_mapping))
-        .route("/api/v1/models/:id/mappings/:provider_id", put(llm_gateway::api::update_model_mapping).delete(llm_gateway::api::remove_model_mapping))
+        .route("/api/v1/models/:id/mappings/:provider_id/:provider_model_id", put(llm_gateway::api::update_model_mapping).delete(llm_gateway::api::remove_model_mapping))
         .route("/api/v1/quotas/:provider_id", get(llm_gateway::api::get_provider_quota_usage).post(llm_gateway::api::set_provider_quota))
         .route("/api/v1/quotas/:provider_id/:quota_type", delete(llm_gateway::api::delete_provider_quota))
         .route("/api/v1/quotas/:provider_id/calibration", post(llm_gateway::api::set_quota_calibration).get(llm_gateway::api::get_provider_calibrations))
@@ -1643,7 +1643,7 @@ async fn test_http_model_mapping_crud_operations() {
     assert!(!mappings.is_empty(), "Should have at least one mapping");
     
     // Update mapping
-    let resp = server.put("/api/v1/models/map-model/mappings/map-prov")
+    let resp = server.put("/api/v1/models/map-model/mappings/map-prov/map-model")
         .json(&serde_json::json!({"provider_model_id":"map-model","weight":10,"cost_multiplier":2.0,"is_active":false}))
         .await;
     assert_eq!(resp.status_code(), StatusCode::OK);
@@ -1678,7 +1678,7 @@ async fn test_http_model_mapping_delete_cascades() {
         .await;
     
     // Delete mapping
-    let resp = server.delete("/api/v1/models/del-model/mappings/del-prov").await;
+    let resp = server.delete("/api/v1/models/del-model/mappings/del-prov/del-model").await;
     assert_eq!(resp.status_code(), StatusCode::OK);
     
     // Verify deleted
@@ -1707,7 +1707,7 @@ async fn test_http_model_mapping_update_changes_weight() {
         .await;
     
     // Update only weight - API requires all fields including provider_model_id
-    let resp = server.put("/api/v1/models/up-model/mappings/up-prov")
+    let resp = server.put("/api/v1/models/up-model/mappings/up-prov/up-model")
         .json(&serde_json::json!({
             "provider_model_id":"up-model",
             "is_active":true,"weight":20,"cost_multiplier":1.0
