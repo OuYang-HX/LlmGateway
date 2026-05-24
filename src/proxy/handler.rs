@@ -7,7 +7,7 @@ use axum::{
 };
 use regex::Regex;
 use std::sync::LazyLock;
-use crate::AppState;
+use crate::{AppState, db::ModelMappingRow};
 
 /// Pre-compiled regex for detecting rate-limit / quota-exhausted errors.
 static RATE_LIMIT_REGEX: LazyLock<Regex> = LazyLock::new(|| {
@@ -231,15 +231,33 @@ pub async fn proxy_request(
         ).into_response();
     }
 
-    // Select a mapping (weighted random selection)
-    let total_weight: i64 = valid_mappings.iter().map(|m| m.weight).sum();
-    if total_weight <= 0 {
-        return (StatusCode::INTERNAL_SERVER_ERROR, "Model mappings have invalid weights").into_response();
+    // Select a mapping — prefer provider whose api_type matches the request path
+    // /v1/messages → prefer anthropic, /v1/chat/completions → prefer openai
+    // This enables the same unified model to route to different providers
+    // based on the API format the client is using
+    let preferred_api_type = if path.contains("/messages") {
+        "anthropic"
+    } else {
+        "openai"
+    };
+    
+    // Load provider info for all valid mappings at once
+    let mut preferred_mapping: Option<&ModelMappingRow> = None;
+    let mut fallback_mapping: Option<&ModelMappingRow> = None;
+    
+    for m in &valid_mappings {
+        if let Ok(Some(p)) = state.db.get_provider(&m.provider_id).await {
+            if !p.is_active { continue; }
+            if p.api_type == preferred_api_type && preferred_mapping.is_none() {
+                preferred_mapping = Some(m);
+            } else if fallback_mapping.is_none() {
+                fallback_mapping = Some(m);
+            }
+        }
     }
     
-    // Simple selection: use first valid mapping for now
-    // TODO: implement weighted random selection
-    let selected_mapping = &valid_mappings[0];
+    let selected_mapping = preferred_mapping.or(fallback_mapping)
+        .unwrap_or(&valid_mappings[0]);
 
     // Get the mapped provider
     let provider_result = tokio::time::timeout(
