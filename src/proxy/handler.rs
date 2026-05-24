@@ -373,7 +373,10 @@ pub async fn proxy_request(
                 let db = state.db.clone();
                 let stats_collector = state.stats_collector.clone();
                 let api_key_id = api_key_row.id.clone();
-                let provider_id = provider.id.clone();
+                let provider_id = {
+                    let effective = provider.group_id.as_ref().unwrap_or(&provider.id);
+                    effective.clone()
+                };
                 let provider_api_type = provider.api_type.clone();
                 let log_path = path.clone();
                 let log_model = model.id.clone();

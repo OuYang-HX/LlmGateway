@@ -1380,7 +1380,7 @@ async fn test_provider_reasoning_path_field() {
         Some("key2"), None, None, None, None, None, None, None, None, None, None,
         "token", "refreshToken", "Authorization", "Bearer ", 86400, 1, true, false,
         false,
-        "custom.content.path", "custom.reasoning.path", None, None,
+        "custom.content.path", "custom.reasoning.path", None, None, None,
     ).await.unwrap();
 
     let updated = db.get_provider("prov-reason").await.unwrap().unwrap();
@@ -2312,7 +2312,7 @@ async fn test_update_provider_mock_mode() {
         "upd-mock", "upd-mock", "Updated Mock", "http://x.com", "openai", "api_key",
         Some("key"), None, None, None, None, None, None, None, None, None, None,
         "token", "refreshToken", "Authorization", "Bearer ", 86400, 1, false, true,
-        true, "choices.0.message.content", "choices.0.delta.reasoning_content", None, None,
+        true, "choices.0.message.content", "choices.0.delta.reasoning_content", None, None, None,
     ).await.unwrap();
     
     let p = db.get_provider("upd-mock").await.unwrap().unwrap();

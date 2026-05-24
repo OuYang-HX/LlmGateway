@@ -336,6 +336,17 @@ impl Database {
         .execute(&self.pool)
         .await;
 
+        // Migration: Add group_id column to providers for grouping
+        // providers that share the same upstream service (e.g., same provider
+        // with both OpenAI and Anthropic API formats).
+        // When group_id is set, request_logs and quotas are attributed to the
+        // group_id instead of the individual provider_id.
+        let _ = sqlx::query(
+            "ALTER TABLE providers ADD COLUMN group_id TEXT"
+        )
+        .execute(&self.pool)
+        .await;
+
         // Migration: Change model_mappings unique constraint from (model_id, provider_id)
         // to (model_id, provider_id, provider_model_id) to allow same provider
         // with same provider_model_id to be mapped to multiple unified models.
@@ -713,6 +724,7 @@ impl Database {
             chart_color: opt_str(r, "chart_color"),
             subscription_start: opt_str(r, "subscription_start"),
             mock_mode: r.try_get::<i64, _>("mock_mode").unwrap_or(0) != 0,
+            group_id: opt_str(r, "group_id"),
             created_at: r.try_get("created_at").unwrap_or_default(),
             updated_at: r.try_get("updated_at").unwrap_or_default(),
         }
@@ -748,6 +760,36 @@ impl Database {
         }
 
         Ok(())
+    }
+
+    /// Update provider group_id for grouping providers that share stats/quotas
+    pub async fn update_provider_group_id(&self, id: &str, group_id: Option<&str>) -> Result<(), sqlx::Error> {
+        sqlx::query(
+            "UPDATE providers SET group_id = ?, updated_at = datetime('now') WHERE id = ?"
+        )
+        .bind(group_id)
+        .bind(id)
+        .execute(&self.pool)
+        .await?;
+
+        Ok(())
+    }
+
+    /// Get the effective provider ID for stats/quotas:
+    /// - If the provider has a group_id, return the group_id
+    /// - Otherwise, return the provider's own id
+    pub async fn get_effective_provider_id(&self, provider_id: &str) -> Result<String, sqlx::Error> {
+        let provider = self.get_provider(provider_id).await?;
+        match provider {
+            Some(p) => Ok(p.group_id.unwrap_or(p.id)),
+            None => Ok(provider_id.to_string()),
+        }
+    }
+
+    /// List all providers in the same group
+    pub async fn list_providers_by_group(&self, group_id: &str) -> Result<Vec<ProviderRow>, sqlx::Error> {
+        let all = self.list_providers().await?;
+        Ok(all.into_iter().filter(|p| p.group_id.as_deref() == Some(group_id)).collect())
     }
 
     /// Update provider cookies (from Set-Cookie in auth response)
@@ -797,6 +839,7 @@ impl Database {
         response_reasoning_path: &str,
         chart_color: Option<&str>,
         subscription_start: Option<&str>,
+        group_id: Option<&str>,
     ) -> Result<(), sqlx::Error> {
         // If ID changed, cascade update all related tables
         // Disable FK checks temporarily since we're updating the referenced key
@@ -829,6 +872,7 @@ impl Database {
                 chart_color = ?,
                 subscription_start = ?,
                 mock_mode = ?,
+                group_id = ?,
                 updated_at = datetime('now')
                 WHERE id = ?"#
         )
@@ -861,6 +905,7 @@ impl Database {
         .bind(chart_color)
         .bind(subscription_start)
         .bind(mock_mode)
+        .bind(group_id)
         .bind(old_id)
         .execute(&self.pool)
         .await?;
@@ -2926,6 +2971,7 @@ pub struct ProviderRow {
     pub chart_color: Option<String>,
     pub subscription_start: Option<String>,
     pub mock_mode: bool,
+    pub group_id: Option<String>,
     pub created_at: String,
     pub updated_at: String,
 }

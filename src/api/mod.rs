@@ -259,6 +259,7 @@ pub struct CreateProviderRequest {
     pub subscription_start: Option<String>,
     #[serde(default)]
     pub mock_mode: bool,
+    pub group_id: Option<String>,
 }
 
 fn default_api_type() -> String { "openai".to_string() }
@@ -310,7 +311,13 @@ pub async fn create_provider(
         &req.response_content_path,
         &req.response_reasoning_path,
     ).await {
-        Ok(()) => (StatusCode::CREATED, Json(serde_json::json!({"id": req.id}))).into_response(),
+        Ok(()) => {
+            // Set group_id after creation if provided
+            if let Some(ref gid) = req.group_id {
+                let _ = state.db.update_provider_group_id(&req.id, Some(gid.as_str())).await;
+            }
+            (StatusCode::CREATED, Json(serde_json::json!({"id": req.id}))).into_response()
+        }
         Err(e) => {
             tracing::error!("Failed to create provider: {}", e);
             (StatusCode::INTERNAL_SERVER_ERROR, Json(serde_json::json!({"error": e.to_string()}))).into_response()
@@ -475,6 +482,7 @@ pub struct UpdateProviderRequest {
     pub subscription_start: Option<String>,
     pub new_id: Option<String>,
     pub mock_mode: Option<bool>,
+    pub group_id: Option<String>,
 }
 
 pub async fn update_provider(
@@ -555,6 +563,7 @@ pub async fn update_provider(
         response_reasoning_path,
         chart_color,
         subscription_start,
+        req.group_id.as_deref(),
     ).await {
         Ok(()) => (StatusCode::OK, Json(serde_json::json!({"id": id}))).into_response(),
         Err(e) => {

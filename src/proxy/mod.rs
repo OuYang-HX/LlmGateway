@@ -222,7 +222,8 @@ impl LlmProxy {
         let response_body_str = if !response_body.is_empty() { Some(String::from_utf8_lossy(&response_body).to_string()) } else { None };
         let _ = self.db.insert_request_log(
             api_key_id,
-            &provider.id,
+            // Use effective provider ID (respects group_id for shared stats/quotas)
+            provider.group_id.as_ref().unwrap_or(&provider.id),
             model.as_deref(),
             path,
             method,
@@ -333,7 +334,7 @@ impl LlmProxy {
         let request_body_str = if !body.is_empty() { Some(String::from_utf8_lossy(&body).to_string()) } else { None };
         let _ = self.db.insert_request_log(
             api_key_id,
-            &provider.id,
+            provider.group_id.as_ref().unwrap_or(&provider.id),
             model.as_deref(),
             path,
             method,

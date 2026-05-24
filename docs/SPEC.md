@@ -780,3 +780,77 @@ Anthropic 的 `base_url` 应配置为 `https://api.anthropic.com/v1`，这样 `/
 5. Anthropic 错误格式识别 — `type: "error"`
 6. 集成测试：provider `api_type=anthropic` 全链路转发
 7. Dashboard HTML 验证：anthropic 选项、类型标签
+
+---
+
+## 变更：Provider 分组（group_id）— 同一服务商多格式共享统计与配额
+
+### 背景
+
+同一服务商提供 OpenAI 和 Anthropic 两种 API 格式时，需要创建两个 Provider（因为 base_url、认证方式不同）。但统计和配额应该按服务商维度聚合，而不是按单个 provider 拆分。
+
+### 设计
+
+给 `providers` 表增加 `group_id` 字段：
+
+- `group_id` 为 NULL 时，按自身 `id` 计算统计和配额（向后兼容）
+- `group_id` 有值时，同组的 provider 共享统计和配额
+- `group_id` 本身不必对应某个真实 provider id，只是一个分组标签
+
+**示例**：
+
+```
+Provider: bedrock-openai     → group_id: "bedrock"
+Provider: bedrock-anthropic  → group_id: "bedrock"
+
+→ 统计 /v1/chat/completions 和 /v1/messages 的总用量
+→ 配额在 "bedrock" 组上设一次，两个 provider 都消耗同一份
+```
+
+### 数据库变更
+
+1. `providers` 表增加 `group_id TEXT` 列（NULLable，无默认值）
+2. 新增 migration: `ALTER TABLE providers ADD COLUMN group_id TEXT`
+
+### API 变更
+
+1. `CreateProviderRequest` 增加 `group_id: Option<String>`
+2. `UpdateProviderRequest` 增加 `group_id: Option<String>`
+3. `create_provider` / `update_provider` 签名增加 `group_id: Option<&str>` 参数
+
+### 核心逻辑变更
+
+#### 1. request_logs — 写入时用 group_id 替代 provider_id
+
+在 `insert_request_log` 中：
+- 查 provider 的 `group_id`
+- 如果有 `group_id`，写入 `group_id` 作为 `provider_id`
+- 如果没有，写入原始 `provider_id`
+
+这样 `request_logs` 天然按组聚合，统计和配额查询无需修改。
+
+#### 2. count_provider_requests — 无需修改
+
+因为 `request_logs.provider_id` 已经是 group_id，现有查询直接按组统计。
+
+#### 3. provider_quotas — 查询时用 group_id
+
+配额查询时：
+- 如果 provider 有 `group_id`，查 `provider_quotas WHERE provider_id = group_id`
+- 如果没有，查 `provider_quotas WHERE provider_id = provider.id`
+
+配额设置在 group_id 上（如 `bedrock`），两个 provider 都会找到并消耗同一份配额。
+
+### 前端变更
+
+1. Provider 表单增加 `group_id` 输入框（可选）
+2. Provider 列表显示分组标签
+3. 统计和配额页面按组聚合显示
+
+### 测试用例
+
+1. `db_provider_group_id` — 创建/更新 provider 设置 group_id
+2. `db_request_log_grouped` — 同组 provider 的请求日志写入 group_id
+3. `db_quota_shared_by_group` — 同组 provider 共享配额
+4. `db_stats_grouped` — 同组 provider 的统计聚合
+5. 向后兼容：group_id 为空时行为不变
