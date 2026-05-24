@@ -633,3 +633,115 @@ src/
 4. 原有功能不受影响 ✅
 
 *文档版本: 2026-05-24 | 代码版本对应: dev 分支 latest commit*
+
+---
+
+## 变更：Anthropic API 格式转发支持
+
+### 背景
+
+大模型服务商通常提供 OpenAI 和 Anthropic 两种 API 格式。当前 Gateway 仅支持 OpenAI 格式转发（`/v1/chat/completions`），需要增加对 Anthropic 格式（`/v1/messages`）的原生转发支持。
+
+### 核心差异
+
+| 维度 | OpenAI 格式 | Anthropic 格式 |
+|------|------------|----------------|
+| 端点 | `/v1/chat/completions` | `/v1/messages` |
+| 认证 | `Authorization: Bearer <key>` | `x-api-key: <key>` + `anthropic-version: 2023-06-01` |
+| 请求体 | `{"model","messages",...}` | `{"model","messages","max_tokens",...}` |
+| Streaming | `data: {"choices":[{"delta":{}}]}` | `event: content_block_delta\ndata: {"delta":{"text"}}` |
+| 用量 | `usage.prompt_tokens/completion_tokens` | `usage.input_tokens/output_tokens` |
+| 错误 | `{"error":{"message":"..."}}` | `{"type":"error","error":{"type":"...","message":"..."}}` |
+
+### 设计原则
+
+**Gateway 只做透明转发 + 用量提取**，不做格式转换。用户自行选择 API 格式，Gateway 根据 provider 的 `api_type` 字段：
+1. 设置正确的认证头
+2. 补充必要的 Anthropic 专用头
+3. 从响应中提取用量信息（适配 Anthropic 的 `input_tokens/output_tokens`）
+4. SSE 流处理适配 Anthropic 的 `event:` 前缀格式
+
+### 数据库变更
+
+无。`providers` 表已有 `api_type` 字段（`TEXT NOT NULL DEFAULT 'openai'`），当前支持 `"openai"` / `"anthropic"` / `"custom"`。
+
+### API 变更
+
+1. Provider 创建/更新 API 已支持 `api_type` 字段，无需变更
+2. Dashboard 前端 provider 表单的 `api_type` 下拉增加 `anthropic` 选项（当前仅有 `openai`）
+
+### 核心逻辑变更
+
+#### 1. 认证头适配 (`auth/mod.rs`)
+
+```rust
+// get_auth_header() 中根据 provider.api_type 返回不同认证头
+match provider.api_type.as_str() {
+    "anthropic" => ("x-api-key".into(), api_key.clone()),
+    _ => ("Authorization".into(), format!("Bearer {}", api_key)),
+}
+```
+
+Anthropic 额外需要 `anthropic-version` 头，在 proxy 转发时注入。
+
+#### 2. 请求头注入 (`proxy/mod.rs`)
+
+在 `forward_and_collect` / `forward_streaming` / `forward_streaming_no_log` 中，当 `api_type == "anthropic"` 时：
+- 注入 `anthropic-version: 2023-06-01` 头
+- 不剥离 `content-type` 头（Anthropic 需要 `application/json`）
+
+#### 3. 用量提取适配 (`usage/mod.rs`)
+
+新增 `extract_anthropic_usage()` 函数：
+- 从 Anthropic 响应中提取 `usage.input_tokens` / `usage.output_tokens`
+- 映射到 Gateway 的 `prompt_tokens` / `completion_tokens`
+
+```rust
+pub fn extract_anthropic_usage(response: &Value) -> (i64, i64, i64) {
+    let usage = response.get("usage");
+    match usage {
+        Some(u) => {
+            let input = u.get("input_tokens").and_then(|v| v.as_i64()).unwrap_or(0);
+            let output = u.get("output_tokens").and_then(|v| v.as_i64()).unwrap_or(0);
+            (input, output, input + output)
+        }
+        None => (0, 0, 0),
+    }
+}
+```
+
+在 `forward_and_collect` 中根据 `api_type` 选择提取函数。
+
+#### 4. SSE 流处理适配 (`proxy/handler.rs`)
+
+Anthropic SSE 格式与 OpenAI 不同：
+- OpenAI: `data: {"choices":[{"delta":{"content":"..."}}]}`
+- Anthropic: `event: content_block_delta\ndata: {"type":"content_block_delta","delta":{"type":"text_delta","text":"..."}}`
+
+在 `proxy_request` 的流处理分支中，当 `api_type == "anthropic"` 时：
+- 解析 `event:` 行判断事件类型
+- 从 `content_block_delta` 事件中提取 `delta.text` 作为内容
+- 从 `message_delta` 事件中提取 `usage.output_tokens` 作为用量
+- 最终 `[DONE]` 对应 Anthropic 的 `event: message_stop`
+
+#### 5. 路径映射
+
+当前逻辑已正确：`/v1/messages` 请求进来后，`strip_prefix("/v1")` 得到 `/messages`，拼接 `base_url` 得到 `https://api.anthropic.com/v1/messages`。
+
+Anthropic 的 `base_url` 应配置为 `https://api.anthropic.com/v1`，这样 `/v1/messages` → strip `/v1` → `/messages` → `base_url + /messages` = `https://api.anthropic.com/v1/messages`。
+
+### 前端变更
+
+1. Provider 表单的 `api_type` 下拉增加 `anthropic` 选项
+2. Provider 表单在 `api_type == "anthropic"` 时提示用户 `base_url` 应填写 Anthropic 的 API 地址
+3. Provider 列表增加 API 类型标签显示
+
+### 测试用例
+
+1. `extract_anthropic_usage` — 标准/部分/空响应
+2. `extract_anthropic_streaming_usage` — message_delta 事件
+3. Anthropic 认证头 — `x-api-key` 而非 Bearer
+4. Anthropic SSE 内容提取 — `content_block_delta` 事件
+5. Anthropic 错误格式识别 — `type: "error"`
+6. 集成测试：provider `api_type=anthropic` 全链路转发
+7. Dashboard HTML 验证：anthropic 选项、类型标签

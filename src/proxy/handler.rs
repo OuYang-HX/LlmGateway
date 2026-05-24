@@ -356,6 +356,7 @@ pub async fn proxy_request(
                 let stats_collector = state.stats_collector.clone();
                 let api_key_id = api_key_row.id.clone();
                 let provider_id = provider.id.clone();
+                let provider_api_type = provider.api_type.clone();
                 let log_path = path.clone();
                 let log_model = model.id.clone();
                 let request_body_str = if !body_bytes.is_empty() { Some(String::from_utf8_lossy(&body_bytes).to_string()) } else { None };
@@ -385,6 +386,8 @@ pub async fn proxy_request(
                                 // Parse SSE lines and accumulate content
                                 for line in chunk_str.split('\n') {
                                     let trimmed = line.trim();
+                                    // Skip event: lines (Anthropic SSE format)
+                                    if trimmed.starts_with("event:") { continue; }
                                     if !trimmed.starts_with("data:") { continue; }
                                     let json_str = trimmed.strip_prefix("data:").unwrap_or(trimmed).trim_start();
                                     if json_str.is_empty() { continue; }
@@ -424,17 +427,30 @@ pub async fn proxy_request(
                                             response_model = v.get("model").and_then(|v| v.as_str()).map(String::from);
                                         }
                                         // Accumulate delta content
-                                        if let Some(choices) = v.get("choices").and_then(|v| v.as_array()) {
-                                            for choice in choices {
-                                                if let Some(delta) = choice.get("delta") {
-                                                    if let Some(content) = delta.get("content").and_then(|v| v.as_str()) {
-                                                        all_delta_content.push_str(content);
+                                        if provider_api_type == "anthropic" {
+                                            // Anthropic SSE: content_block_delta with delta.text
+                                            if let Some(content) = crate::usage::extract_anthropic_sse_content(&format!("data: {}", json_str)) {
+                                                all_delta_content.push_str(&content);
+                                            }
+                                            // Anthropic SSE usage: message_delta for output tokens
+                                            let (ap, ac, at) = crate::usage::extract_anthropic_streaming_usage(&format!("data: {}", json_str));
+                                            if ap > 0 { prompt_tokens = ap; }
+                                            if ac > 0 { completion_tokens = ac; }
+                                            if at > 0 { total_tokens = at; }
+                                        } else {
+                                            // OpenAI SSE format
+                                            if let Some(choices) = v.get("choices").and_then(|v| v.as_array()) {
+                                                for choice in choices {
+                                                    if let Some(delta) = choice.get("delta") {
+                                                        if let Some(content) = delta.get("content").and_then(|v| v.as_str()) {
+                                                            all_delta_content.push_str(content);
+                                                        }
                                                     }
-                                                }
-                                                // Extract finish_reason if present
-                                                if let Some(fr) = choice.get("finish_reason").and_then(|v| v.as_str()) {
-                                                    if finish_reason.is_none() {
-                                                        finish_reason = Some(fr.to_string());
+                                                    // Extract finish_reason if present
+                                                    if let Some(fr) = choice.get("finish_reason").and_then(|v| v.as_str()) {
+                                                        if finish_reason.is_none() {
+                                                            finish_reason = Some(fr.to_string());
+                                                        }
                                                     }
                                                 }
                                             }

@@ -107,6 +107,142 @@ pub fn is_rate_limited(status_code: u16) -> bool {
     status_code == 429
 }
 
+// ==================== Anthropic API format support ====================
+
+/// Extract token usage from an Anthropic-compatible response
+/// Anthropic uses input_tokens/output_tokens instead of prompt_tokens/completion_tokens
+pub fn extract_anthropic_usage(response: &Value) -> (i64, i64, i64) {
+    let usage = response.get("usage");
+    match usage {
+        Some(u) => {
+            let input = u.get("input_tokens").and_then(|v| v.as_i64()).unwrap_or(0);
+            let output = u.get("output_tokens").and_then(|v| v.as_i64()).unwrap_or(0);
+            (input, output, input + output)
+        }
+        None => (0, 0, 0),
+    }
+}
+
+/// Extract token usage from an Anthropic SSE streaming chunk
+/// Anthropic streaming format uses "event:" prefix before "data:" lines
+/// Usage is sent in message_start (input) and message_delta (output) events
+pub fn extract_anthropic_streaming_usage(chunk: &str) -> (i64, i64, i64) {
+    let trimmed = chunk.trim();
+    if trimmed.is_empty() {
+        return (0, 0, 0);
+    }
+
+    // Parse the data line (may have preceding event line)
+    let data_str = if trimmed.starts_with("data:") {
+        trimmed.strip_prefix("data:").unwrap_or(trimmed).trim_start()
+    } else {
+        // Find data: line within multi-line chunk
+        let mut found = trimmed;
+        for line in trimmed.split('\n') {
+            if line.trim().starts_with("data:") {
+                found = line.trim().strip_prefix("data:").unwrap_or(line.trim()).trim_start();
+                break;
+            }
+        }
+        found
+    };
+
+    if data_str.is_empty() || data_str == "[DONE]" {
+        return (0, 0, 0);
+    }
+
+    match serde_json::from_str::<Value>(data_str) {
+        Ok(v) => {
+            let event_type = v.get("type").and_then(|v| v.as_str()).unwrap_or("");
+            match event_type {
+                "message_start" => {
+                    // Input tokens from message_start
+                    if let Some(msg) = v.get("message") {
+                        let input = msg.get("usage")
+                            .and_then(|u| u.get("input_tokens"))
+                            .and_then(|v| v.as_i64())
+                            .unwrap_or(0);
+                        return (input, 0, input);
+                    }
+                    (0, 0, 0)
+                }
+                "message_delta" => {
+                    // Output tokens from message_delta
+                    let output = v.get("usage")
+                        .and_then(|u| u.get("output_tokens"))
+                        .and_then(|v| v.as_i64())
+                        .unwrap_or(0);
+                    (0, output, output)
+                }
+                _ => (0, 0, 0),
+            }
+        }
+        Err(_) => (0, 0, 0),
+    }
+}
+
+/// Extract content text from an Anthropic SSE content_block_delta event
+/// Returns the text from text_delta events, None for other event types
+pub fn extract_anthropic_sse_content(chunk: &str) -> Option<String> {
+    let trimmed = chunk.trim();
+    if trimmed.is_empty() {
+        return None;
+    }
+
+    // Find the data line
+    let data_str = if trimmed.starts_with("data:") {
+        trimmed.strip_prefix("data:").unwrap_or(trimmed).trim_start()
+    } else {
+        let mut found = "";
+        for line in trimmed.split('\n') {
+            if line.trim().starts_with("data:") {
+                found = line.trim().strip_prefix("data:").unwrap_or(line.trim()).trim_start();
+                break;
+            }
+        }
+        found
+    };
+
+    if data_str.is_empty() {
+        return None;
+    }
+
+    match serde_json::from_str::<Value>(data_str) {
+        Ok(v) => {
+            // Only extract from content_block_delta with text_delta type
+            if v.get("type").and_then(|v| v.as_str()) == Some("content_block_delta") {
+                if let Some(delta) = v.get("delta") {
+                    if delta.get("type").and_then(|v| v.as_str()) == Some("text_delta") {
+                        return delta.get("text").and_then(|v| v.as_str()).map(|s| s.to_string());
+                    }
+                }
+            }
+            None
+        }
+        Err(_) => None,
+    }
+}
+
+/// Check if an Anthropic response is an error
+pub fn is_anthropic_error(response: &Value) -> bool {
+    response.get("type").and_then(|v| v.as_str()) == Some("error")
+}
+
+/// Check if an Anthropic response is a rate limit error
+pub fn is_anthropic_rate_limit_error(response: &Value) -> bool {
+    if response.get("type").and_then(|v| v.as_str()) != Some("error") {
+        return false;
+    }
+    if let Some(error) = response.get("error") {
+        matches!(
+            error.get("type").and_then(|v| v.as_str()),
+            Some("rate_limit_error") | Some("overloaded_error")
+        )
+    } else {
+        false
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

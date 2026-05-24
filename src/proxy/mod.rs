@@ -153,6 +153,11 @@ impl LlmProxy {
         }
         req_builder = req_builder.header(&auth_header_name, &auth_header_value);
 
+        // Inject Anthropic-specific headers when api_type is "anthropic"
+        if provider.api_type == "anthropic" {
+            req_builder = req_builder.header("anthropic-version", "2023-06-01");
+        }
+
         // Add stored cookies from auth response
         if let Some(cookies) = &provider.token_cookies {
             if !cookies.is_empty() {
@@ -178,7 +183,13 @@ impl LlmProxy {
 
         // Extract usage from response body
         let (mut prompt_tokens, mut completion_tokens, mut total_tokens) = serde_json::from_slice::<serde_json::Value>(&response_body)
-            .map(|v| usage::extract_openai_usage(&v))
+            .map(|v| {
+                if provider.api_type == "anthropic" {
+                    usage::extract_anthropic_usage(&v)
+                } else {
+                    usage::extract_openai_usage(&v)
+                }
+            })
             .unwrap_or((0, 0, 0));
 
         // If API returned 0 for both, estimate from content
@@ -293,6 +304,11 @@ impl LlmProxy {
         }
         req_builder = req_builder.header(&auth_header_name, &auth_header_value);
 
+        // Inject Anthropic-specific headers when api_type is "anthropic"
+        if provider.api_type == "anthropic" {
+            req_builder = req_builder.header("anthropic-version", "2023-06-01");
+        }
+
         // Add stored cookies from auth response
         if let Some(cookies) = &provider.token_cookies {
             if !cookies.is_empty() {
@@ -388,6 +404,11 @@ impl LlmProxy {
             }
         }
         req_builder = req_builder.header(&auth_header_name, &auth_header_value);
+
+        // Inject Anthropic-specific headers when api_type is "anthropic"
+        if provider.api_type == "anthropic" {
+            req_builder = req_builder.header("anthropic-version", "2023-06-01");
+        }
 
         // Add stored cookies from auth response
         if let Some(cookies) = &provider.token_cookies {
