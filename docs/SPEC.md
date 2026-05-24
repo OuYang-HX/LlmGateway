@@ -655,11 +655,46 @@ src/
 
 ### 设计原则
 
-**Gateway 只做透明转发 + 用量提取**，不做格式转换。用户自行选择 API 格式，Gateway 根据 provider 的 `api_type` 字段：
-1. 设置正确的认证头
-2. 补充必要的 Anthropic 专用头
-3. 从响应中提取用量信息（适配 Anthropic 的 `input_tokens/output_tokens`）
-4. SSE 流处理适配 Anthropic 的 `event:` 前缀格式
+**Gateway 只做透明转发 + 智能路由 + 用量提取**，不做格式转换。
+
+**同一个服务商两种格式的对接方式：创建两个 Provider。**
+
+理由：
+1. 两种格式的 **base_url 不同**（如 AWS Bedrock 的 OpenAI/Anthropic 端点 URL 不同）
+2. 两种格式的 **认证方式可能不同**（Anthropic 用 `x-api-key`，OpenAI 用 `Bearer`）
+3. 两种格式的 **api_type 不同**（决定了 header 注入、用量提取、SSE 解析逻辑）
+4. 两种格式的 **计费/配额可能不同**
+
+配置示例：
+
+```
+Provider: aws-bedrock-openai
+  base_url: https://bedrock-runtime.us-east-1.amazonaws.com/openai/v1
+  api_type: openai
+  auth_type: api_key
+  token_header_field: Authorization
+  token_header_prefix: Bearer 
+
+Provider: aws-bedrock-anthropic  
+  base_url: https://bedrock-runtime.us-east-1.amazonaws.com/anthropic/v1
+  api_type: anthropic
+  auth_type: api_key
+  token_header_field: x-api-key
+  token_header_prefix: (空)
+```
+
+然后通过模型映射，把同一个统一模型映射到两个 Provider：
+
+```
+统一模型: claude-3.5-sonnet
+  → aws-bedrock-openai / claude-3-5-sonnet  (weight: 1)
+  → aws-bedrock-anthropic / claude-3-5-sonnet-20241022  (weight: 1)
+```
+
+**智能路由**：Gateway 根据客户端请求的 API 格式自动选择匹配的 provider：
+- 客户端请求 `/v1/chat/completions` → 优先选择 `api_type=openai` 的 provider
+- 客户端请求 `/v1/messages` → 优先选择 `api_type=anthropic` 的 provider
+- 无匹配时 fallback 到任意可用 provider
 
 ### 数据库变更
 
