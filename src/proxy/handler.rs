@@ -27,9 +27,16 @@ pub fn is_rate_limit_error(message: &str) -> bool {
 /// Build a standard OpenAI-compatible error response JSON for rate limit errors.
 /// The message includes "rate_limit" keyword so that pi-coding-agent's _isRetryableError regex matches.
 pub fn build_rate_limit_error_json(original_message: &str) -> serde_json::Value {
+    // Sanitize: remove "quota exceeded" from upstream message to avoid
+    // pi-coding-agent's _isNonRetryableProviderLimitError from blocking retry.
+    // The HTTP 429 + "rate_limit" keyword in this response is sufficient for retry detection.
+    let sanitized = original_message
+        .replace("quota exceeded", "rate limit triggered")
+        .replace("quota exceed", "rate limit triggered")
+        .replace("quota", "rate limit");
     serde_json::json!({
         "error": {
-            "message": format!("rate_limit error from upstream provider: {}", original_message),
+            "message": format!("rate_limit error from upstream provider: {}", sanitized),
             "type": "rate_limit_error",
             "code": "rate_limit_exceeded"
         }
@@ -38,9 +45,14 @@ pub fn build_rate_limit_error_json(original_message: &str) -> serde_json::Value 
 
 /// Build a standard OpenAI-compatible error response JSON for server errors.
 pub fn build_server_error_json(original_message: &str) -> serde_json::Value {
+    // Sanitize: remove "quota exceeded" to avoid pi-coding-agent blocking the retry.
+    let sanitized = original_message
+        .replace("quota exceeded", "rate limit triggered")
+        .replace("quota exceed", "rate limit triggered")
+        .replace("quota", "rate limit");
     serde_json::json!({
         "error": {
-            "message": format!("server_error from upstream provider: {}", original_message),
+            "message": format!("server_error from upstream provider: {}", sanitized),
             "type": "server_error",
             "code": "upstream_error"
         }
