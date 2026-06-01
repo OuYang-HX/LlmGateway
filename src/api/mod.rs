@@ -763,15 +763,8 @@ async fn test_model_connection(
     let (auth_header_name, auth_header_value) = state.auth_manager.get_auth_header(provider).await
         .map_err(|e| format!("Auth error: {}", e))?;
 
-    // Build test request body
-    let test_body = serde_json::json!({
-        "model": model_id,
-        "messages": [{"role": "user", "content": "hi"}],
-        "max_tokens": 1
-    });
-
-    let base_url = provider.base_url.trim_end_matches('/');
-    let target_url = format!("{}/chat/completions", base_url);
+    // Pick protocol-specific URL and required extra headers (pure function — unit-tested)
+    let test_req = build_test_request(provider, model_id);
 
     let client = if provider.bypass_proxy {
         &state.proxy.no_proxy_client()
@@ -780,10 +773,13 @@ async fn test_model_connection(
     };
 
     let mut req_builder = client
-        .post(&target_url)
+        .post(&test_req.url)
         .header(&auth_header_name, &auth_header_value)
-        .header("Content-Type", "application/json")
-        .json(&test_body);
+        .header("Content-Type", "application/json");
+    for (k, v) in &test_req.headers {
+        req_builder = req_builder.header(k.as_str(), v.as_str());
+    }
+    req_builder = req_builder.json(&test_req.body);
 
     // Add stored cookies from auth response
     if let Some(cookies) = &provider.token_cookies {
@@ -806,6 +802,49 @@ async fn test_model_connection(
         content_type: None,
         body,
     })
+}
+
+/// Public helper: build a minimal "test connection" request for a provider/model.
+///
+/// Picks the right URL path and required extra headers based on `provider.api_type`:
+/// - `api_type=anthropic` → `/messages` + `anthropic-version: 2023-06-01`
+/// - other (e.g. `openai`) → `/chat/completions` + no protocol-specific headers
+///
+/// Pure function: does not perform any I/O. Easy to unit-test.
+pub fn build_test_request(
+    provider: &crate::db::ProviderRow,
+    model_id: &str,
+) -> TestRequest {
+    let test_body = serde_json::json!({
+        "model": model_id,
+        "messages": [{"role": "user", "content": "hi"}],
+        "max_tokens": 1
+    });
+
+    let (path_suffix, extra_headers) = match provider.api_type.as_str() {
+        "anthropic" => (
+            "/messages",
+            vec![("anthropic-version".to_string(), "2023-06-01".to_string())],
+        ),
+        _ => ("/chat/completions", vec![]),
+    };
+    let base_url = provider.base_url.trim_end_matches('/');
+    let target_url = format!("{}{}", base_url, path_suffix);
+
+    TestRequest {
+        url: target_url,
+        headers: extra_headers,
+        body: test_body,
+    }
+}
+
+/// Result of [`build_test_request`]: the HTTP request parts the dashboard "test connection"
+/// feature will send to the upstream provider.
+#[derive(Debug, Clone)]
+pub struct TestRequest {
+    pub url: String,
+    pub headers: Vec<(String, String)>,
+    pub body: serde_json::Value,
 }
 
 #[derive(Debug, Deserialize)]

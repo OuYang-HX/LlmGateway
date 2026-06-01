@@ -205,9 +205,19 @@ fn test_generate_mock_content_realistic_words() {
 
 #[test]
 fn test_build_rate_limit_error_json_structure() {
-    let json = handler::build_rate_limit_error_json("quota exceeded");
+    // Note: build_rate_limit_error_json intentionally sanitizes "quota" / "quota exceeded"
+    // upstream messages (see handler.rs) to avoid pi-coding-agent's
+    // _isNonRetryableProviderLimitError regex from blocking retry. The test asserts the
+    // post-sanitize behavior — i.e. "rate limit" remains in the message but "quota" is
+    // rewritten, and the response is still detectable as a rate-limit via the "type" field
+    // and the literal "rate_limit" substring.
+    let json = handler::build_rate_limit_error_json("quota exceeded for model X");
     assert_eq!(json["error"]["type"], "rate_limit_error");
-    assert!(json["error"]["message"].as_str().unwrap().contains("quota exceeded"));
+    let msg = json["error"]["message"].as_str().unwrap();
+    assert!(msg.contains("rate_limit"),
+        "message must contain 'rate_limit' for pi-coding-agent retry detection: got '{}'", msg);
+    assert!(!msg.to_lowercase().contains("quota"),
+        "message must NOT contain 'quota' (sanitized to avoid pi-coding-agent non-retryable detection): got '{}'", msg);
 }
 
 // ==================== build_server_error_json ====================

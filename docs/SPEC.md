@@ -937,3 +937,73 @@ export ANTHROPIC_MODEL=claude-haiku-4-5   # 可选:覆盖默认模型
 > **重要**:`ANTHROPIC_BASE_URL` **不要**带 `/v1` 后缀。Anthropic SDK 内部会拼上 `/v1/messages`,带 `/v1` 会得到 `/v1/v1/messages` 双 v1 路径,axum 路由不会匹配。
 >
 > 可用的统一模型:`claude-haiku-4-5`、`claude-opus-4-7`、`MiniMax-M2.7-highspeed`、`MiniMax-M3`、`astron-code-latest`(以 Dashboard → 服务商模型 页面为准)。
+
+---
+
+## 变更:`test_model_connection` 支持 anthropic 格式 provider
+
+### 背景
+
+Dashboard 的"测试连接"功能(`POST /api/v1/providers/:id/models/:model_id/test` 和 `test-all`)对所有 provider **写死**用 OpenAI 格式请求:
+
+```rust
+let target_url = format!("{}/chat/completions", base_url);
+let test_body = json!({"model":..., "messages":[...], "max_tokens":1});
+```
+
+这对 `api_type=openai` 的 provider 没问题,但对 `api_type=anthropic` 的 provider(如 `MiniMax-anthropic` 配置 `base_url=https://api.minimaxi.com/anthropic/v1`)会 404,因为:
+
+- 上游 Anthropic 端点**只接受 `/v1/messages`**,不接受 `/chat/completions`
+- Anthropic 协议需要 `anthropic-version: 2023-06-01` 头,测试代码不注入
+
+**复现**:
+
+```
+$ curl -X POST http://127.0.0.1:49127/api/v1/providers/MiniMax-anthropic/models/MiniMax-M2.7-highspeed/test
+{"status":"failed","message":"HTTP 404: 404 page not found",...}
+```
+
+但**实际代理路径**(`/v1/messages` 走 `proxy_request` handler)是**正常**的——`request_logs` 显示 Claude Code 调用 MiniMax-anthropic 全部 200。问题仅在 dashboard 测试功能。
+
+### 设计
+
+`test_model_connection` 根据 `provider.api_type` 选协议:
+
+| `api_type` | URL 路径 | 额外头 | Body 字段 |
+|------------|----------|--------|-----------|
+| `anthropic` | `/messages` | `anthropic-version: 2023-06-01` | 同 OpenAI 格式(`model`/`messages`/`max_tokens` 都是 Anthropic 协议的合法字段) |
+| 其他(含 `openai`) | `/chat/completions` | 无 | OpenAI 格式 |
+
+重构为两个步骤:
+1. **构建请求**(纯函数):`build_test_request(provider, model_id) -> (url, headers, body)`
+2. **执行请求**:`send_test_request(client, url, headers, body) -> Result<...>`
+
+纯函数 `build_test_request` 易单元测试,覆盖 openai / anthropic 两种分支。
+
+### 核心逻辑变更
+
+`src/api/mod.rs::test_model_connection` 内部:
+
+```rust
+let (path_suffix, extra_headers) = match provider.api_type.as_str() {
+    "anthropic" => ("/messages", vec![("anthropic-version", "2023-06-01")]),
+    _ => ("/chat/completions", vec![]),
+};
+let target_url = format!("{}{}", base_url.trim_end_matches('/'), path_suffix);
+
+let mut req_builder = client.post(&target_url)
+    .header(&auth_header_name, &auth_header_value)
+    .header("Content-Type", "application/json");
+for (k, v) in extra_headers {
+    req_builder = req_builder.header(k, v);
+}
+req_builder = req_builder.json(&test_body);
+```
+
+### 测试用例
+
+`tests/proxy_util_test.rs` 增补(如果 build_test_request 被公开)或新建 `tests/api_test.rs`:
+
+1. `test_build_test_request_anthropic` — 路径 = `base_url + /messages`,headers 含 `anthropic-version`
+2. `test_build_test_request_openai` — 路径 = `base_url + /chat/completions`,无 `anthropic-version`
+3. 集成测试:启动 mock upstream,跑 dashboard 测试 API,验证 anthropic 格式返回 200 / OpenAI 格式返回 200

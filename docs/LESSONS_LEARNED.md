@@ -163,3 +163,28 @@
 - **catch-all 写法**:`.route("/{*path}", ...)` 可以匹配多段(把 `*path` 放在 path 末尾,且前面用 `/{` 语法)。
 - **兜底方案**:`.fallback(handler)` 处理所有未匹配的请求。
 - **经验**:如果想让网关兼容"用户把 base_url 末尾加 `/v1`"的常见错误配置,要么用 catch-all,要么在 README 明确说明正确的 base_url 写法。
+
+## Dashboard / 诊断端点类
+
+### 1. Dashboard "测试连接"功能必须与正式代理路径协议一致
+- **症状**:Provider `api_type=anthropic` + `base_url=https://api.minimaxi.com/anthropic/v1` 时,dashboard 报 `HTTP 404: 404 page not found`,但真实代理路径(`/v1/messages`)工作正常,request_logs 全 200
+- **根因**:`test_model_connection` 写死 OpenAI 格式 `/chat/completions` 路径,不管 `api_type` 是什么
+- **修复**:抽 `build_test_request(provider, model_id) -> TestRequest` 纯函数,按 `api_type` 选路径(anthropic→`/messages`+`anthropic-version`,其他→`/chat/completions`)
+- **教训**:**任何 health check / test connection / diagnostic 端点必须与正式路径保持协议一致**。否则误导运维(以为 provider 挂了实际正常)
+- **相关 commit**: `fix: dashboard test connection supports anthropic api_type`
+
+### 2. Claude Code 升级会换默认 first-party 模型,网关需防御性注册
+- **现象**:Claude Code 2.1.150 内部版本升级,默认 first-party 模型从 `claude-opus-4-7` 改为 `claude-opus-4-8`。网关统一模型表没注册新名字,客户端请求 404
+- **防御**:
+  1. 用 `ANTHROPIC_MODEL=<已注册 ID>` 显式覆盖默认,生产配置里固化
+  2. 网关预置一组 Claude Code 常用 first-party 模型名,统一映射到现有 provider
+- **监控**:定期 `claude --version` 抓新版本,在 dashboard /v1/models 页面检查是否覆盖当前 Claude Code 默认
+
+### 3. `rand::thread_rng()` + 关键字断言 = 偶发 flaky 测试
+- **症状**:`test_generate_mock_content_realistic_words` 在 `cargo test` 并发跑(多文件并行)时约 1/3 概率失败,单独跑稳定通过
+- **根因**:`generate_mock_content` 用 `rand::thread_rng()`,多测试共享全局 RNG 状态,生成的 mock 内容可能不含断言期待的关键字
+- **待修**:
+  - 改 `generate_mock_content` 接受 `&mut impl Rng`,测试用确定性 seed
+  - 或测试加 `serial_test::serial` 注解
+  - 或放宽断言,允许同义替换
+- **教训**:**生产代码用全局随机数 + 测试断言依赖特定 token 出现 = 反模式**。要么注入 RNG,要么断言不依赖随机性
