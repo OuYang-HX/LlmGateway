@@ -36,6 +36,49 @@ fn test_extract_api_key_empty_bearer() {
     assert_eq!(result.unwrap(), "");
 }
 
+// === x-api-key header support (Claude Code / Anthropic SDK) ===
+
+#[test]
+fn test_extract_api_key_x_api_key() {
+    let mut headers = axum::http::HeaderMap::new();
+    headers.insert("x-api-key", "sk-test-key-123".parse().unwrap());
+    let result = handler::extract_api_key(&headers);
+    assert!(result.is_some());
+    assert_eq!(result.unwrap(), "sk-test-key-123");
+}
+
+#[test]
+fn test_extract_api_key_x_api_key_preferred() {
+    // When both x-api-key and Authorization are present, x-api-key wins
+    let mut headers = axum::http::HeaderMap::new();
+    headers.insert("x-api-key", "lgk-x-api-key-value".parse().unwrap());
+    headers.insert("authorization", "Bearer lgk-bearer-value".parse().unwrap());
+    let result = handler::extract_api_key(&headers);
+    assert!(result.is_some());
+    assert_eq!(result.unwrap(), "lgk-x-api-key-value");
+}
+
+#[test]
+fn test_extract_api_key_x_api_key_empty_falls_back_to_bearer() {
+    // Empty x-api-key should fall back to Authorization
+    let mut headers = axum::http::HeaderMap::new();
+    headers.insert("x-api-key", "   ".parse().unwrap());
+    headers.insert("authorization", "Bearer lgk-bearer-value".parse().unwrap());
+    let result = handler::extract_api_key(&headers);
+    assert!(result.is_some());
+    assert_eq!(result.unwrap(), "lgk-bearer-value");
+}
+
+#[test]
+fn test_extract_api_key_x_api_key_only_no_authorization() {
+    // Only x-api-key, no Authorization header
+    let mut headers = axum::http::HeaderMap::new();
+    headers.insert("x-api-key", "lgk-anthropic-style-key".parse().unwrap());
+    let result = handler::extract_api_key(&headers);
+    assert!(result.is_some());
+    assert_eq!(result.unwrap(), "lgk-anthropic-style-key");
+}
+
 // ==================== is_rate_limit_error ====================
 
 #[test]

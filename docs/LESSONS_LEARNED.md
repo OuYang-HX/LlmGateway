@@ -127,3 +127,39 @@
 - **两个 Provider**：因为 base_url 和认证方式不同，本质上是不同的上游端点
 - **group_id 聚合**：统计和配额按 group_id 维度，而非单个 provider_id
 - **实现策略**：request_logs 写入 effective_provider_id（group_id 或自身 id），现有统计/配额查询无需修改
+## 客户端接入类
+
+### 1. Claude Code 默认用 `x-api-key` 头做认证,不是 `Authorization: Bearer`
+- **根因**:Anthropic SDK 在 `ANTHROPIC_API_KEY` 被设置时,客户端请求使用 `x-api-key: <key>` 头;同时还会注入 `anthropic-version: 2023-06-01`。
+- **症状**:网关返回 `401 Missing API key`,因为 `extract_api_key` 只解析 `Authorization` 头。
+- **修复**:`src/proxy/handler.rs::extract_api_key()` 增加 `x-api-key` 优先解析,保留 `Authorization` 兼容。
+- **教训**:`ANTHROPIC_API_KEY`(用 `x-api-key`)和 `ANTHROPIC_AUTH_TOKEN`(用 `Authorization`)是 Anthropic 客户端的两种互斥认证方式,服务端必须两者都支持。
+
+### 2. `ANTHROPIC_BASE_URL` 不要带 `/v1` 后缀
+- **根因**:Anthropic SDK 内部会拼上 `/v1/messages`,如果 base_url 已经带 `/v1`,实际请求路径变成 `/v1/v1/messages`。
+- **症状**:`curl` 测试 `/v1/v1/messages` 返回 404 page not found(没有进入任何 axum 路由,因 `/v1/*path` 是单段 wildcard,不能跨段匹配 `v1/messages`)。
+- **正确配置**:
+  ```bash
+  export ANTHROPIC_BASE_URL=http://<gateway-host>:49127      # 不要带 /v1
+  export ANTHROPIC_API_KEY=lgk-<gateway-key>
+  ```
+- **常见错误**:很多教程(包括 LLM 网关的 README)写成 `http://host:port/v1`,这是 OpenAI 兼容网关的写法,Anthropic 客户端不适用。
+
+### 3. Claude Code 默认 first-party 模型需注册到统一模型表
+- **现象**:Claude Code 不带 `--model` 时使用内置默认模型(如 `claude-opus-4-7`),如果网关的统一模型表里没有这个名字,即使网关能处理 Anthropic 协议,Claude Code 也会收到 404。
+- **诊断**:`[API:timing] dispatching to firstParty model=claude-opus-4-7[1m]` 之后看到 `404 Model 'claude-opus-4-7' not found`。
+- **修复**:在 Dashboard → 服务商模型 里创建 `claude-opus-4-7` 统一模型,映射到 Anthropic 格式的 provider(如 `MiniMax-anthropic`)。
+- **可用统一模型清单**(2026-06 验证):`claude-haiku-4-5`、`claude-opus-4-7`、`MiniMax-M2.7-highspeed`、`MiniMax-M3`、`astron-code-latest`。
+- **自定义默认模型**:用 `ANTHROPIC_MODEL=claude-haiku-4-5` 覆盖 Claude Code 的默认模型。
+
+### 4. Claude Code 在 streaming 失败时会自动 fallback 到 non-streaming
+- **现象**:日志报 `Stream completed without receiving message_start event - triggering non-streaming fallback`,但用户仍能收到响应。
+- **可能原因**:MiniMax 等代理的 Anthropic 兼容端点会发出非标准事件(如 `event: ping`),Claude Code SDK 解析时丢弃整个流。
+- **影响**:非流式响应延迟略高(几秒),功能完全正常,可暂时不修。
+- **修复方向**:在 `src/proxy/handler.rs` streaming 路径中,过滤掉非标准 `event:` 类型的事件(只转发 SDK 期望的 `message_start`/`content_block_*`/`message_delta`/`message_stop`/`ping`)。
+
+### 5. axum 0.7 `*path` 是单段 wildcard,不能用 `/v1/*path` 匹配多段路径
+- **错误写法**:`.route("/v1/*path", ...)` 只能匹配 `/v1/<单段>`,如 `/v1/messages`,不能匹配 `/v1/v1/messages`。
+- **catch-all 写法**:`.route("/{*path}", ...)` 可以匹配多段(把 `*path` 放在 path 末尾,且前面用 `/{` 语法)。
+- **兜底方案**:`.fallback(handler)` 处理所有未匹配的请求。
+- **经验**:如果想让网关兼容"用户把 base_url 末尾加 `/v1`"的常见错误配置,要么用 catch-all,要么在 README 明确说明正确的 base_url 写法。

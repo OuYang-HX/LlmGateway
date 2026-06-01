@@ -50,14 +50,18 @@ cargo run --release
 ## 客户端接入
 
 ```bash
-# Claude Code
+# Claude Code — 注意：ANTHROPIC_BASE_URL 不要带 /v1 后缀
 export ANTHROPIC_API_KEY=lgk-your-gateway-key
-export ANTHROPIC_BASE_URL=http://localhost:49127/v1
+export ANTHROPIC_BASE_URL=http://localhost:49127
+export ANTHROPIC_MODEL=claude-haiku-4-5   # 可选：覆盖默认模型
 
 # OpenCode
 # providers.gateway.url = http://localhost:49127/v1
 # providers.gateway.key  = lgk-your-gateway-key
 ```
+
+> **Claude Code 模型名**：必须使用**统一模型 ID**（在 Dashboard → 服务商模型 里注册的名字），不是上游原始模型名。
+> 当前可用的统一模型：`claude-haiku-4-5`、`claude-opus-4-7`、`MiniMax-M2.7-highspeed`、`MiniMax-M3`、`astron-code-latest`。
 
 ## Android 客户端
 

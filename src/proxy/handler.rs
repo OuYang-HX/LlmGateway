@@ -896,7 +896,19 @@ pub fn generate_mock_content(target_len: usize) -> String {
 }
 
 /// Extract API key from Authorization header
+/// Also supports `x-api-key` (Anthropic SDK / Claude Code default) — preferred when present.
 pub fn extract_api_key(headers: &HeaderMap) -> Option<String> {
+    // 1. Anthropic native header (Claude Code, Anthropic SDK)
+    //    When ANTHROPIC_API_KEY is set, Claude Code sends `x-api-key: <key>`.
+    //    When ANTHROPIC_AUTH_TOKEN is set, it sends `Authorization: Bearer <token>`.
+    //    These are mutually exclusive in Claude Code, so x-api-key-first ordering is safe.
+    if let Some(v) = headers.get("x-api-key").and_then(|h| h.to_str().ok()) {
+        let trimmed = v.trim();
+        if !trimmed.is_empty() {
+            return Some(trimmed.to_string());
+        }
+    }
+    // 2. OpenAI-style `Authorization: Bearer <key>` (also ANTHROPIC_AUTH_TOKEN)
     let auth_header = headers.get("authorization")?.to_str().ok()?;
     if auth_header.starts_with("Bearer ") {
         Some(auth_header[7..].to_string())

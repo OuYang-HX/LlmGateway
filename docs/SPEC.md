@@ -854,3 +854,86 @@ Provider: bedrock-anthropic  → group_id: "bedrock"
 3. `db_quota_shared_by_group` — 同组 provider 共享配额
 4. `db_stats_grouped` — 同组 provider 的统计聚合
 5. 向后兼容：group_id 为空时行为不变
+
+---
+
+## 变更:客户端认证兼容 `x-api-key` 头(Claude Code 接入)
+
+### 背景
+
+Claude Code CLI 的官方 Anthropic SDK 在 `ANTHROPIC_API_KEY` 被设置时,会用 `x-api-key: <key>` 头对 API 请求做认证;同时也会注入 `anthropic-version: 2023-06-01` 头。
+
+当前网关 `extract_api_key()` 只解析 `Authorization` 头,导致 Claude Code 发出 `x-api-key` 头时返回 401 "Missing API key"。
+
+实测复现(修复前):
+
+```
+$ curl -i -H 'x-api-key: lgk-...' -H 'anthropic-version: 2023-06-01' \
+       -H 'Content-Type: application/json' \
+       -X POST http://127.0.0.1:49127/v1/messages \
+       -d '{"model":"claude-haiku-4-5","messages":[...], "max_tokens":20}'
+
+HTTP/1.1 401 Unauthorized
+content-length: 15
+Missing API key
+```
+
+### 设计
+
+扩展 `proxy::handler::extract_api_key()` 的解析顺序:
+
+1. `x-api-key` 头(Claude Code / Anthropic SDK 默认)
+2. `Authorization: Bearer <key>`(OpenAI 兼容客户端、`ANTHROPIC_AUTH_TOKEN`)
+3. `Authorization: <raw>`(无前缀的旧格式,向后兼容)
+
+`x-api-key` 优先是因为:
+- Claude Code 一次只会发出一种认证头(要么 `x-api-key` 要么 `Authorization`),所以两者互斥。
+- 把 Anthropic 原生格式放在最前,能让"配置 `ANTHROPIC_API_KEY`"的场景零改动跑通。
+
+数据库无变更。API 无变更。Provider 鉴权头(`token_header_field`)逻辑不变。
+
+### 核心逻辑变更
+
+`src/proxy/handler.rs::extract_api_key()`:
+
+```rust
+pub fn extract_api_key(headers: &HeaderMap) -> Option<String> {
+    // 1. Claude Code / Anthropic SDK 默认头
+    if let Some(v) = headers.get("x-api-key").and_then(|h| h.to_str().ok()) {
+        let trimmed = v.trim();
+        if !trimmed.is_empty() {
+            return Some(trimmed.to_string());
+        }
+    }
+    // 2. OpenAI 风格 / ANTHROPIC_AUTH_TOKEN
+    let auth_header = headers.get("authorization")?.to_str().ok()?;
+    if auth_header.starts_with("Bearer ") {
+        Some(auth_header[7..].to_string())
+    } else {
+        Some(auth_header.to_string())
+    }
+}
+```
+
+### 测试用例
+
+1. `test_extract_api_key_x_api_key` — `x-api-key: sk-test-123` 正确提取
+2. `test_extract_api_key_x_api_key_preferred` — 同时有 `x-api-key` 和 `Authorization` 时优先 `x-api-key`
+3. `test_extract_api_key_x_api_key_empty` — `x-api-key: `(空值)回退到 Authorization
+4. 原有 4 个测试用例保持通过(向后兼容)
+
+### 客户端接入指南
+
+Claude Code 用户最小配置(写入 `~/.bashrc` / shell rc):
+
+```bash
+export ANTHROPIC_API_KEY=lgk-<your-key>
+export ANTHROPIC_BASE_URL=http://<gateway-host>:49127/v1
+export ANTHROPIC_MODEL=claude-haiku-4-5   # 可选:覆盖默认模型
+```
+
+模型 ID 必须是网关里已注册的**统一模型 ID**(如 `claude-haiku-4-5`、`MiniMax-M3`),不是上游原始模型名。
+
+> **重要**:`ANTHROPIC_BASE_URL` **不要**带 `/v1` 后缀。Anthropic SDK 内部会拼上 `/v1/messages`,带 `/v1` 会得到 `/v1/v1/messages` 双 v1 路径,axum 路由不会匹配。
+>
+> 可用的统一模型:`claude-haiku-4-5`、`claude-opus-4-7`、`MiniMax-M2.7-highspeed`、`MiniMax-M3`、`astron-code-latest`(以 Dashboard → 服务商模型 页面为准)。
