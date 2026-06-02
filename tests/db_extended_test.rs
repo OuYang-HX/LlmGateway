@@ -683,3 +683,66 @@ async fn test_same_unified_model_multiple_provider_models() {
     assert_eq!(after.len(), 1);
     assert_eq!(after[0].provider_model_id, "gpt-4o");
 }
+
+// ==================== Request log: error/throttled/streaming fields ====================
+
+#[tokio::test]
+async fn test_insert_log_with_error_message() {
+    let db = test_db().await;
+    create_test_provider(&db, "err-log-prov").await;
+    db.create_api_key("err-log-key", "Key", "hash", "elk", None).await.unwrap();
+    let id = db.insert_request_log(
+        "err-log-key", "err-log-prov", Some("gpt-4"), "/v1/chat", "POST",
+        None, Some("request"), Some(429), None, Some("rate limit response"),
+        0, 0, 0, Some(100), false, true, Some("Rate limit exceeded"),
+    ).await.unwrap();
+    let log = db.get_request_log(id).await.unwrap().unwrap();
+    assert_eq!(log.response_status, Some(429));
+    assert_eq!(log.is_throttled, true);
+    assert_eq!(log.error_message, Some("Rate limit exceeded".to_string()));
+}
+
+#[tokio::test]
+async fn test_insert_log_streaming() {
+    let db = test_db().await;
+    create_test_provider(&db, "str-log-prov").await;
+    db.create_api_key("str-log-key", "Key", "hash", "slk", None).await.unwrap();
+    let id = db.insert_request_log(
+        "str-log-key", "str-log-prov", Some("gpt-4"), "/v1/chat", "POST",
+        None, None, Some(200), None, None,
+        10, 20, 30, Some(1500), true, false, None,
+    ).await.unwrap();
+    let log = db.get_request_log(id).await.unwrap().unwrap();
+    assert_eq!(log.is_streaming, true);
+    assert_eq!(log.duration_ms, Some(1500));
+}
+
+#[tokio::test]
+async fn test_insert_log_with_null_model() {
+    let db = test_db().await;
+    create_test_provider(&db, "null-model-prov").await;
+    db.create_api_key("null-model-key", "Key", "hash", "nmk", None).await.unwrap();
+    let id = db.insert_request_log(
+        "null-model-key", "null-model-prov", None, "/v1/chat", "POST",
+        None, None, Some(200), None, None,
+        10, 20, 30, None, false, false, None,
+    ).await.unwrap();
+    let log = db.get_request_log(id).await.unwrap().unwrap();
+    assert!(log.model.is_none());
+    assert!(log.duration_ms.is_none());
+}
+
+#[tokio::test]
+async fn test_insert_log_server_error() {
+    let db = test_db().await;
+    create_test_provider(&db, "srv-err-prov").await;
+    db.create_api_key("srv-err-key", "Key", "hash", "sek", None).await.unwrap();
+    let id = db.insert_request_log(
+        "srv-err-key", "srv-err-prov", Some("gpt-4"), "/v1/chat", "POST",
+        None, None, Some(503), None, None,
+        0, 0, 0, Some(5000), false, false, Some("Service Unavailable"),
+    ).await.unwrap();
+    let log = db.get_request_log(id).await.unwrap().unwrap();
+    assert_eq!(log.response_status, Some(503));
+    assert_eq!(log.error_message, Some("Service Unavailable".to_string()));
+}
