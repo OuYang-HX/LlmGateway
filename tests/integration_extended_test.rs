@@ -309,3 +309,50 @@ async fn int_top_provider_no_usage() {
     let top = db.get_top_provider_by_usage().await.unwrap();
     assert!(top.is_none());
 }
+
+// ==================== strip_thinking_tags_in_response integration ====================
+
+#[tokio::test]
+async fn int_strip_thinking_db_roundtrip() {
+    let db = test_db().await;
+    // Create with strip=true
+    db.create_provider(
+        "strip-int", "Strip Int", "https://api.example.com/v1", "openai", "api_key",
+        Some("test-key"), None, None, None, None, None, None, None, None, None, None,
+        "token", "refreshToken", "Authorization", "Bearer ", 86400, 1, true, false,
+        "choices.0.message.content", "choices.0.delta.reasoning_content", true,
+    ).await.unwrap();
+
+    // Read back
+    let p = db.get_provider("strip-int").await.unwrap().unwrap();
+    assert!(p.strip_thinking_tags_in_response);
+    assert_eq!(p.api_type, "openai");
+
+    // Disable via update
+    db.update_provider(
+        "strip-int", "strip-int", "Strip Int Updated", "https://api.example.com/v1", "openai", "api_key",
+        Some("test-key"), None, None, None, None, None, None, None, None, None, None,
+        "token", "refreshToken", "Authorization", "Bearer ", 86400, 1, true, false, false,
+        "choices.0.message.content", "choices.0.delta.reasoning_content", None, None, None, false,
+    ).await.unwrap();
+
+    let p2 = db.get_provider("strip-int").await.unwrap().unwrap();
+    assert!(!p2.strip_thinking_tags_in_response);
+}
+
+#[tokio::test]
+async fn int_strip_thinking_anthropic_type_ignored() {
+    let db = test_db().await;
+    // Anthropic provider with strip=true — field stored but NOT applied at proxy layer
+    db.create_provider(
+        "strip-anthropic", "Strip Anthropic", "https://api.example.com/v1", "anthropic", "api_key",
+        Some("test-key"), None, None, None, None, None, None, None, None, None, None,
+        "token", "refreshToken", "Authorization", "Bearer ", 86400, 1, true, false,
+        "", "", true,
+    ).await.unwrap();
+
+    let p = db.get_provider("strip-anthropic").await.unwrap().unwrap();
+    assert!(p.strip_thinking_tags_in_response);
+    assert_eq!(p.api_type, "anthropic");
+    // Note: proxy handler checks api_type=="openai" before applying strip
+}

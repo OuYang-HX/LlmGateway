@@ -1326,3 +1326,21 @@ fn test_dashboard_html_quota_table_has_usage_bar() {
     assert!(html.contains("usage_percent") || html.contains("usagePercent") || html.contains("用量占比") || html.contains("progress"),
         "quota table should have usage progress bar");
 }
+
+// === strip_thinking_tags_in_response Toggle Tests ===
+
+#[test]
+fn test_dashboard_html_provider_form_has_strip_thinking_toggle() {
+    let html = fs::read_to_string("src/dashboard.html").unwrap();
+    assert!(html.contains("strip_thinking_tags_in_response"),
+        "provider form should have strip_thinking_tags_in_response field");
+}
+
+#[test]
+fn test_dashboard_html_provider_table_shows_strip_badge() {
+    let html = fs::read_to_string("src/dashboard.html").unwrap();
+    // The dashboard should show a visual indicator when strip_thinking is enabled
+    // (badge, icon, or text like "Strip" / "剥离")
+    assert!(html.contains("strip_thinking") || html.contains("stripThinking"),
+        "provider table should reference strip_thinking for badge display");
+}
