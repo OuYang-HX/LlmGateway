@@ -490,7 +490,7 @@ pub async fn proxy_request(
         ).await.into_response();
     }
 
-    // Replace model name in body and inject stream_options for streaming
+    // Replace model name in body, inject stream_options, and set default max_completion_tokens
 
     let final_body = if let Ok(mut body_json) = serde_json::from_slice::<serde_json::Value>(&body_bytes) {
         if let Some(obj) = body_json.as_object_mut() {
@@ -498,6 +498,12 @@ pub async fn proxy_request(
             // For streaming, inject stream_options to get usage stats in final SSE chunk
             if is_streaming {
                 obj.insert("stream_options".to_string(), serde_json::json!({"include_usage": true}));
+            }
+            // If neither max_completion_tokens nor max_tokens is set, inject a safe default.
+            // Some providers (e.g. MiniMax M3) use a very low default when this is omitted,
+            // causing thinking to consume all tokens and leaving nothing for the actual response.
+            if !obj.contains_key("max_completion_tokens") && !obj.contains_key("max_tokens") {
+                obj.insert("max_completion_tokens".to_string(), serde_json::Value::Number(serde_json::Number::from(8192)));
             }
         }
         axum::body::Bytes::from(serde_json::to_string(&body_json).unwrap_or_default())
