@@ -746,3 +746,121 @@ async fn test_insert_log_server_error() {
     assert_eq!(log.response_status, Some(503));
     assert_eq!(log.error_message, Some("Service Unavailable".to_string()));
 }
+
+// ==================== Provider health stats ====================
+
+#[tokio::test]
+async fn test_provider_health_stats_basic() {
+    let db = test_db().await;
+    create_test_provider(&db, "health-prov").await;
+    db.create_api_key("health-key", "Key", "hash", "hk", None).await.unwrap();
+    db.insert_request_log("health-key", "health-prov", Some("gpt-4"), "/v1/chat", "POST",
+        None, None, Some(200), None, None, 10, 20, 30, Some(100), false, false, None).await.unwrap();
+    db.insert_request_log("health-key", "health-prov", Some("gpt-4"), "/v1/chat", "POST",
+        None, None, Some(500), None, None, 0, 0, 0, Some(200), false, false, Some("server error")).await.unwrap();
+
+    let stats = db.get_provider_health_stats().await.unwrap();
+    let prov_stat = stats.iter().find(|s| s.provider_id == "health-prov").unwrap();
+    assert_eq!(prov_stat.request_count_24h, 2);
+    assert_eq!(prov_stat.error_count_24h, 1); // only the 500 log has error_message
+    assert!(prov_stat.avg_duration_ms > 0.0);
+}
+
+#[tokio::test]
+async fn test_provider_health_stats_no_logs() {
+    let db = test_db().await;
+    create_test_provider(&db, "health-empty").await;
+    let stats = db.get_provider_health_stats().await.unwrap();
+    let found = stats.iter().find(|s| s.provider_id == "health-empty");
+    assert!(found.is_none(), "provider with no logs should not appear in health stats");
+}
+
+// ==================== Stats by API key with time filter ====================
+
+#[tokio::test]
+async fn test_stats_by_api_key_with_time_filter() {
+    let db = test_db().await;
+    create_test_provider(&db, "stats-tf-prov").await;
+    db.create_api_key("stats-tf-key", "Key", "hash", "stk", None).await.unwrap();
+    db.insert_request_log("stats-tf-key", "stats-tf-prov", Some("gpt-4"), "/v1/chat", "POST",
+        None, None, Some(200), None, None, 10, 20, 30, Some(100), false, false, None).await.unwrap();
+
+    // Wide range should include the log
+    let stats = db.get_stats_by_api_key(10, Some("2020-01-01"), Some("2099-12-31")).await.unwrap();
+    assert!(!stats.is_empty());
+    assert_eq!(stats[0].api_key_id, "stats-tf-key");
+    assert_eq!(stats[0].request_count, 1);
+    assert_eq!(stats[0].total_tokens, 30);
+
+    // Future range should exclude the log
+    let future = db.get_stats_by_api_key(10, Some("2100-01-01"), Some("2101-12-31")).await.unwrap();
+    assert!(future.is_empty());
+}
+
+#[tokio::test]
+async fn test_stats_by_api_key_error_count() {
+    let db = test_db().await;
+    create_test_provider(&db, "stats-te-prov").await;
+    db.create_api_key("stats-te-key", "Key", "hash", "stek", None).await.unwrap();
+    db.insert_request_log("stats-te-key", "stats-te-prov", None, "/v1/chat", "POST",
+        None, None, Some(200), None, None, 10, 20, 30, Some(100), false, false, None).await.unwrap();
+    db.insert_request_log("stats-te-key", "stats-te-prov", None, "/v1/chat", "POST",
+        None, None, Some(500), None, None, 0, 0, 0, Some(200), false, false, Some("error")).await.unwrap();
+
+    let stats = db.get_stats_by_api_key(10, None, None).await.unwrap();
+    assert_eq!(stats.len(), 1);
+    assert_eq!(stats[0].error_count, 1); // only the 500 log has error_message
+    assert_eq!(stats[0].request_count, 2);
+    assert_eq!(stats[0].total_tokens, 30); // only the 200 log has tokens
+}
+
+// ==================== Quota calibration edge cases ====================
+
+#[tokio::test]
+async fn test_quota_calibration_create_and_get() {
+    let db = test_db().await;
+    create_test_provider(&db, "cal-prov").await;
+    db.set_provider_quota("cal-prov", "daily", "fixed", "1d", None, None, Some("Asia/Shanghai"), 1000, true).await.unwrap();
+
+    // Set calibration
+    db.set_quota_calibration("cal-prov", "daily", 500, Some("2026-01-15T08:00:00+08:00"), None, None).await.unwrap();
+
+    let cal = db.get_quota_calibration("cal-prov", "daily").await.unwrap().unwrap();
+    assert_eq!(cal.calibration_offset, 500);
+    assert!(cal.calibration_window_start.is_some()); // window_start was provided
+}
+
+#[tokio::test]
+async fn test_quota_calibration_update_overwrite() {
+    let db = test_db().await;
+    create_test_provider(&db, "cal-upd-prov").await;
+    db.set_provider_quota("cal-upd-prov", "daily", "fixed", "1d", None, None, None, 1000, true).await.unwrap();
+
+    db.set_quota_calibration("cal-upd-prov", "daily", 500, Some("2026-01-15T08:00:00+08:00"), None, None).await.unwrap();
+    db.set_quota_calibration("cal-upd-prov", "daily", 800, Some("2026-01-16T10:00:00+08:00"), None, None).await.unwrap();
+
+    let cal = db.get_quota_calibration("cal-upd-prov", "daily").await.unwrap().unwrap();
+    assert_eq!(cal.calibration_offset, 800); // overwritten
+    assert!(cal.calibration_window_start.is_some());
+}
+
+#[tokio::test]
+async fn test_quota_calibration_not_found() {
+    let db = test_db().await;
+    let cal = db.get_quota_calibration("nonexistent", "daily").await.unwrap();
+    assert!(cal.is_none());
+}
+
+#[tokio::test]
+async fn test_list_provider_calibrations_multi() {
+    let db = test_db().await;
+    create_test_provider(&db, "cal-list-prov").await;
+    db.set_provider_quota("cal-list-prov", "daily", "fixed", "1d", None, None, None, 1000, true).await.unwrap();
+    db.set_provider_quota("cal-list-prov", "monthly", "fixed", "1M", None, None, None, 50000, true).await.unwrap();
+
+    db.set_quota_calibration("cal-list-prov", "daily", 100, Some("2026-01-15T08:00:00+08:00"), None, None).await.unwrap();
+    db.set_quota_calibration("cal-list-prov", "monthly", 5000, Some("2026-01-15T08:00:00+08:00"), None, None).await.unwrap();
+
+    let cals = db.list_provider_calibrations("cal-list-prov").await.unwrap();
+    assert_eq!(cals.len(), 2);
+}
