@@ -367,3 +367,105 @@ async fn test_set_provider_models_empty_clears_all() {
     let models = db.list_provider_models("spm-empty").await.unwrap();
     assert!(models.is_empty());
 }
+
+// ==================== DB: delete_request_logs_filtered edge cases ====================
+
+#[tokio::test]
+async fn db_delete_logs_filtered_by_date_range() {
+    let db = test_db().await;
+    create_test_provider(&db, "del-range-prov").await;
+    db.create_api_key("del-range-key", "Key", "hash", "drk", None).await.unwrap();
+    // Insert logs (they get current timestamp)
+    for i in 0..5 {
+        db.insert_request_log(
+            "del-range-key", "del-range-prov", Some("model-a"), "/v1/chat", "POST",
+            None, None, Some(200), None, None,
+            10 + i, 20, 30, Some(100), false, false, None,
+        ).await.unwrap();
+    }
+    let total = db.count_request_logs(None, None, None, None, None, None, None).await.unwrap();
+    assert_eq!(total, 5);
+    // Delete with future date range — should delete nothing
+    let deleted = db.delete_request_logs_filtered(
+        None, None, Some("2100-01-01T00:00:00Z"), Some("2100-12-31T23:59:59Z"),
+        None, None, None,
+    ).await.unwrap();
+    assert_eq!(deleted, 0);
+    // Delete with wide past range — should delete all 5
+    let deleted = db.delete_request_logs_filtered(
+        None, None, Some("2020-01-01T00:00:00Z"), Some("2099-12-31T23:59:59Z"),
+        None, None, None,
+    ).await.unwrap();
+    assert_eq!(deleted, 5);
+    let remaining = db.count_request_logs(None, None, None, None, None, None, None).await.unwrap();
+    assert_eq!(remaining, 0);
+}
+
+#[tokio::test]
+async fn db_delete_logs_by_api_key() {
+    let db = test_db().await;
+    create_test_provider(&db, "del-ak-prov").await;
+    db.create_api_key("del-ak-a", "Key A", "hash", "dak", None).await.unwrap();
+    db.create_api_key("del-ak-b", "Key B", "hash-b", "dbk", None).await.unwrap();
+    db.insert_request_log("del-ak-a", "del-ak-prov", None, "/v1/chat", "POST", None, None, Some(200), None, None, 10, 20, 30, None, false, false, None).await.unwrap();
+    db.insert_request_log("del-ak-a", "del-ak-prov", None, "/v1/chat", "POST", None, None, Some(200), None, None, 10, 20, 30, None, false, false, None).await.unwrap();
+    db.insert_request_log("del-ak-b", "del-ak-prov", None, "/v1/chat", "POST", None, None, Some(200), None, None, 10, 20, 30, None, false, false, None).await.unwrap();
+    let total = db.count_request_logs(None, None, None, None, None, None, None).await.unwrap();
+    assert_eq!(total, 3);
+    let deleted = db.delete_request_logs_by_api_key("del-ak-a").await.unwrap();
+    assert_eq!(deleted, 2);
+    let remaining = db.count_request_logs(None, None, None, None, None, None, None).await.unwrap();
+    assert_eq!(remaining, 1);
+}
+
+#[tokio::test]
+async fn db_delete_logs_by_provider() {
+    let db = test_db().await;
+    create_test_provider(&db, "del-prov-a").await;
+    create_test_provider(&db, "del-prov-b").await;
+    db.create_api_key("del-prov-key", "Key", "hash", "dpk", None).await.unwrap();
+    db.insert_request_log("del-prov-key", "del-prov-a", None, "/v1/chat", "POST", None, None, Some(200), None, None, 10, 20, 30, None, false, false, None).await.unwrap();
+    db.insert_request_log("del-prov-key", "del-prov-b", None, "/v1/chat", "POST", None, None, Some(200), None, None, 10, 20, 30, None, false, false, None).await.unwrap();
+    db.insert_request_log("del-prov-key", "del-prov-b", None, "/v1/chat", "POST", None, None, Some(500), None, None, 10, 20, 30, None, false, false, None).await.unwrap();
+    let deleted = db.delete_request_logs_by_provider("del-prov-b").await.unwrap();
+    assert_eq!(deleted, 2);
+    let remaining = db.count_request_logs(None, None, None, None, None, None, None).await.unwrap();
+    assert_eq!(remaining, 1);
+}
+
+#[tokio::test]
+async fn db_delete_all_request_logs() {
+    let db = test_db().await;
+    create_test_provider(&db, "del-all-prov").await;
+    db.create_api_key("del-all-key", "Key", "hash", "dalk", None).await.unwrap();
+    for _ in 0..3 {
+        db.insert_request_log("del-all-key", "del-all-prov", None, "/v1/chat", "POST", None, None, Some(200), None, None, 10, 20, 30, None, false, false, None).await.unwrap();
+    }
+    let deleted = db.delete_all_request_logs().await.unwrap();
+    assert_eq!(deleted, 3);
+    let remaining = db.count_request_logs(None, None, None, None, None, None, None).await.unwrap();
+    assert_eq!(remaining, 0);
+}
+
+#[tokio::test]
+async fn db_get_request_log_detail_and_delete() {
+    let db = test_db().await;
+    create_test_provider(&db, "detail-del-prov").await;
+    db.create_api_key("detail-del-key", "Key", "hash", "ddk", None).await.unwrap();
+    let id = db.insert_request_log(
+        "detail-del-key", "detail-del-prov", Some("gpt-4"), "/v1/chat", "POST",
+        None, Some("request body"), Some(200), None, Some("response body"),
+        10, 20, 30, Some(100), false, false, None,
+    ).await.unwrap();
+    // Get detail
+    let log = db.get_request_log(id).await.unwrap().unwrap();
+    assert_eq!(log.provider_id, "detail-del-prov");
+    // Delete single
+    let ok = db.delete_request_log(id).await.unwrap();
+    assert!(ok);
+    let gone = db.get_request_log(id).await.unwrap();
+    assert!(gone.is_none());
+    // Delete again — should return false
+    let ok2 = db.delete_request_log(id).await.unwrap();
+    assert!(!ok2);
+}
