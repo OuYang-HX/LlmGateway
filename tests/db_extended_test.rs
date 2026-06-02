@@ -864,3 +864,67 @@ async fn test_list_provider_calibrations_multi() {
     let cals = db.list_provider_calibrations("cal-list-prov").await.unwrap();
     assert_eq!(cals.len(), 2);
 }
+
+// ==================== Time-bucketed stats ====================
+
+#[tokio::test]
+async fn test_time_bucketed_stats_day_granularity() {
+    let db = test_db().await;
+    create_test_provider(&db, "bucket-prov").await;
+    db.create_api_key("bucket-key", "Key", "hash", "bk", None).await.unwrap();
+    db.insert_request_log("bucket-key", "bucket-prov", Some("gpt-4"), "/v1/chat", "POST",
+        None, None, Some(200), None, None, 10, 20, 30, Some(100), false, false, None).await.unwrap();
+
+    let now = chrono::Utc::now().format("%Y-%m-%d %H:%M:%S").to_string();
+    let yesterday = (chrono::Utc::now() - chrono::Duration::days(1)).format("%Y-%m-%d %H:%M:%S").to_string();
+    let stats = db.get_time_bucketed_stats(None, None, &yesterday, &now, "day").await.unwrap();
+    assert!(!stats.is_empty());
+    assert!(stats[0].request_count >= 1);
+    assert!(stats[0].total_tokens >= 30);
+}
+
+#[tokio::test]
+async fn test_time_bucketed_stats_with_provider_filter() {
+    let db = test_db().await;
+    create_test_provider(&db, "bucket-prov-a").await;
+    create_test_provider(&db, "bucket-prov-b").await;
+    db.create_api_key("bucket-key2", "Key", "hash", "bk2", None).await.unwrap();
+    db.insert_request_log("bucket-key2", "bucket-prov-a", None, "/v1/chat", "POST",
+        None, None, Some(200), None, None, 10, 20, 30, Some(100), false, false, None).await.unwrap();
+    db.insert_request_log("bucket-key2", "bucket-prov-b", None, "/v1/chat", "POST",
+        None, None, Some(200), None, None, 5, 10, 15, Some(50), false, false, None).await.unwrap();
+
+    let now = chrono::Utc::now().format("%Y-%m-%d %H:%M:%S").to_string();
+    let yesterday = (chrono::Utc::now() - chrono::Duration::days(1)).format("%Y-%m-%d %H:%M:%S").to_string();
+    let filtered = db.get_time_bucketed_stats(None, Some("bucket-prov-a"), &yesterday, &now, "day").await.unwrap();
+    assert!(!filtered.is_empty());
+    assert!(filtered[0].total_tokens >= 30); // only prov-a's tokens
+}
+
+#[tokio::test]
+async fn test_time_bucketed_stats_empty_range() {
+    let db = test_db().await;
+    let stats = db.get_time_bucketed_stats(None, None, "2100-01-01", "2101-12-31", "day").await.unwrap();
+    assert!(stats.is_empty());
+}
+
+// ==================== get_all_quota_usage ====================
+
+#[tokio::test]
+async fn test_get_all_quota_usage_empty() {
+    let db = test_db().await;
+    let usage = db.get_all_quota_usage().await.unwrap();
+    assert!(usage.is_empty());
+}
+
+#[tokio::test]
+async fn test_get_all_quota_usage_with_quota() {
+    let db = test_db().await;
+    create_test_provider(&db, "usage-prov").await;
+    db.set_provider_quota("usage-prov", "fixed:1d", "fixed", "1d", None, None, None, 1000, true).await.unwrap();
+    let usage = db.get_all_quota_usage().await.unwrap();
+    assert_eq!(usage.len(), 1);
+    assert_eq!(usage[0].provider_id, "usage-prov");
+    assert_eq!(usage[0].limit_count, 1000);
+    assert!(usage[0].is_enabled);
+}

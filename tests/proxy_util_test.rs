@@ -366,3 +366,28 @@ fn test_strip_thinking_from_openai_response_body_preserves_other_fields() {
     assert_eq!(v["choices"][0]["message"]["content"].as_str().unwrap(), "Answer");
     assert_eq!(v["usage"]["total_tokens"].as_i64().unwrap(), 15);
 }
+
+// ==================== strip_thinking_from_openai_response_body: streaming chunk ====================
+
+#[test]
+fn test_strip_thinking_from_streaming_chunk() {
+    // SSE data lines are not full JSON objects; strip should be a no-op
+    let body = br#"data: {"id":"chatcmpl-1","choices":[{"delta":{"content":"Hello"}}]}"#;
+    let out = handler::strip_thinking_from_openai_response_body(body);
+    assert_eq!(out, body);
+}
+
+// ==================== strip_thinking_tags: nested thinking ====================
+
+#[test]
+fn test_strip_thinking_tags_nested_pair() {
+    // Non-greedy regex removes each <think>...</think> pair individually
+    let content = "Before<think>inner</think>Mid<think>deep</think>After";
+    let result = handler::strip_thinking_tags(content);
+    // Both <think>...</think> pairs should be removed
+    assert!(!result.contains("<think>"));
+    assert!(!result.contains("</think>"));
+    assert!(result.contains("Before"));
+    assert!(result.contains("Mid"));
+    assert!(result.contains("After"));
+}
