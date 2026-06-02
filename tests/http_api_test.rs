@@ -2039,3 +2039,115 @@ async fn test_http_deactivated_api_key_cannot_authenticate() {
     let key_detail: serde_json::Value = get_resp.json();
     assert!(key_detail["is_active"].as_bool().unwrap());
 }
+
+// ==================== Provider: strip_thinking_tags_in_response HTTP API ====================
+
+#[tokio::test]
+async fn test_http_create_provider_with_strip_thinking() {
+    let server = build_test_app().await;
+
+    let resp = server.post("/api/v1/providers")
+        .json(&serde_json::json!({
+            "id": "strip-http",
+            "name": "Strip HTTP",
+            "base_url": "https://api.example.com/v1",
+            "api_type": "openai",
+            "auth_type": "api_key",
+            "api_key": "test-key",
+            "strip_thinking_tags_in_response": true
+        }))
+        .await;
+    assert_eq!(resp.status_code(), StatusCode::CREATED);
+
+    let get_resp = server.get("/api/v1/providers/strip-http").await;
+    let detail: serde_json::Value = get_resp.json();
+    assert!(detail["strip_thinking_tags_in_response"].as_bool().unwrap(),
+        "should be true when created with true");
+}
+
+#[tokio::test]
+async fn test_http_create_provider_strip_thinking_default_false() {
+    let server = build_test_app().await;
+
+    let resp = server.post("/api/v1/providers")
+        .json(&serde_json::json!({
+            "id": "strip-default",
+            "name": "Strip Default",
+            "base_url": "https://api.example.com/v1",
+            "api_type": "openai",
+            "auth_type": "api_key",
+            "api_key": "test-key"
+        }))
+        .await;
+    assert_eq!(resp.status_code(), StatusCode::CREATED);
+
+    let get_resp = server.get("/api/v1/providers/strip-default").await;
+    let detail: serde_json::Value = get_resp.json();
+    assert!(!detail["strip_thinking_tags_in_response"].as_bool().unwrap(),
+        "default should be false");
+}
+
+#[tokio::test]
+async fn test_http_update_provider_strip_thinking() {
+    let server = build_test_app().await;
+
+    // Create with default (false)
+    server.post("/api/v1/providers")
+        .json(&serde_json::json!({
+            "id": "strip-upd-http",
+            "name": "Strip Upd HTTP",
+            "base_url": "https://api.example.com/v1",
+            "api_type": "openai",
+            "auth_type": "api_key",
+            "api_key": "test-key"
+        }))
+        .await;
+
+    // Update to enable
+    let resp = server.put("/api/v1/providers/strip-upd-http")
+        .json(&serde_json::json!({
+            "strip_thinking_tags_in_response": true
+        }))
+        .await;
+    assert_eq!(resp.status_code(), StatusCode::OK);
+
+    let get_resp = server.get("/api/v1/providers/strip-upd-http").await;
+    let detail: serde_json::Value = get_resp.json();
+    assert!(detail["strip_thinking_tags_in_response"].as_bool().unwrap(),
+        "should be true after update");
+}
+
+#[tokio::test]
+async fn test_http_provider_list_includes_strip_thinking() {
+    let server = build_test_app().await;
+
+    server.post("/api/v1/providers")
+        .json(&serde_json::json!({
+            "id": "strip-list-1",
+            "name": "Strip List 1",
+            "base_url": "https://api.example.com/v1",
+            "api_type": "openai",
+            "auth_type": "api_key",
+            "api_key": "test-key"
+        }))
+        .await;
+
+    server.post("/api/v1/providers")
+        .json(&serde_json::json!({
+            "id": "strip-list-2",
+            "name": "Strip List 2",
+            "base_url": "https://api.example.com/v1",
+            "api_type": "openai",
+            "auth_type": "api_key",
+            "api_key": "test-key",
+            "strip_thinking_tags_in_response": true
+        }))
+        .await;
+
+    let resp = server.get("/api/v1/providers").await;
+    let list: serde_json::Value = resp.json();
+    let p1 = list.as_array().unwrap().iter().find(|p| p["id"] == "strip-list-1").unwrap();
+    let p2 = list.as_array().unwrap().iter().find(|p| p["id"] == "strip-list-2").unwrap();
+    assert!(!p1["strip_thinking_tags_in_response"].as_bool().unwrap());
+    assert!(p2["strip_thinking_tags_in_response"].as_bool().unwrap());
+}

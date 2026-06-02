@@ -544,3 +544,73 @@ async fn db_query_logs_lightweight_with_filter() {
     let filtered = db.query_request_logs_lightweight(None, Some("lwl-f-prov"), None, None, None, None, None, 100, 0).await.unwrap();
     assert_eq!(filtered.len(), 2);
 }
+
+// ==================== Provider: strip_thinking_tags_in_response ====================
+
+#[tokio::test]
+async fn db_provider_strip_thinking_default_false() {
+    let db = test_db().await;
+    create_test_provider(&db, "strip-default").await;
+    let p = db.get_provider("strip-default").await.unwrap().unwrap();
+    assert!(!p.strip_thinking_tags_in_response, "default should be false");
+}
+
+#[tokio::test]
+async fn db_provider_strip_thinking_create_enabled() {
+    let db = test_db().await;
+    db.create_provider(
+        "strip-on", "Strip On", "https://api.example.com/v1", "openai", "api_key",
+        Some("test-key"), None, None, None, None, None, None, None, None, None, None,
+        "token", "refreshToken", "Authorization", "Bearer ", 86400, 1, false, false,
+        "", "", true,
+    ).await.unwrap();
+    let p = db.get_provider("strip-on").await.unwrap().unwrap();
+    assert!(p.strip_thinking_tags_in_response, "should be true when created with true");
+}
+
+#[tokio::test]
+async fn db_provider_strip_thinking_update() {
+    let db = test_db().await;
+    create_test_provider(&db, "strip-upd").await;
+    // Update: enable strip_thinking_tags_in_response
+    db.update_provider(
+        "strip-upd", "strip-upd", "Strip Upd", "https://api.example.com/v1", "openai", "api_key",
+        Some("test-key"), None, None, None, None, None, None, None, None, None, None,
+        "token", "refreshToken", "Authorization", "Bearer ", 86400, 1, true, false, false,
+        "choices.0.message.content", "choices.0.delta.reasoning_content", None, None, None, true,
+    ).await.unwrap();
+    let p = db.get_provider("strip-upd").await.unwrap().unwrap();
+    assert!(p.strip_thinking_tags_in_response, "should be true after update");
+}
+
+#[tokio::test]
+async fn db_provider_strip_thinking_preserved_on_token_update() {
+    let db = test_db().await;
+    db.create_provider(
+        "strip-tok", "Strip Tok", "https://api.example.com/v1", "openai", "dynamic_token",
+        None, Some("https://auth.com"), Some("user"), Some("pass"),
+        None, None, None, None, None, None, None,
+        "token", "refreshToken", "Authorization", "Bearer ", 86400, 1, true, false, "", "", true,
+    ).await.unwrap();
+    // Update token (should not reset strip_thinking_tags_in_response)
+    db.update_provider_token("strip-tok", "new-token", Some("new-refresh"), "2099-01-01T00:00:00Z").await.unwrap();
+    let p = db.get_provider("strip-tok").await.unwrap().unwrap();
+    assert!(p.strip_thinking_tags_in_response, "should still be true after token update");
+    assert_eq!(p.current_token, Some("new-token".to_string()));
+}
+
+#[tokio::test]
+async fn db_provider_strip_thinking_list() {
+    let db = test_db().await;
+    create_test_provider(&db, "strip-list-a").await; // default false
+    db.create_provider(
+        "strip-list-b", "Strip B", "https://api.example.com/v1", "openai", "api_key",
+        Some("test-key"), None, None, None, None, None, None, None, None, None, None,
+        "token", "refreshToken", "Authorization", "Bearer ", 86400, 1, false, false, "", "", true,
+    ).await.unwrap();
+    let providers = db.list_providers().await.unwrap();
+    let a = providers.iter().find(|p| p.id == "strip-list-a").unwrap();
+    let b = providers.iter().find(|p| p.id == "strip-list-b").unwrap();
+    assert!(!a.strip_thinking_tags_in_response);
+    assert!(b.strip_thinking_tags_in_response);
+}
