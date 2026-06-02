@@ -107,6 +107,158 @@ pub fn strip_thinking_from_openai_response_body(body: &[u8]) -> Vec<u8> {
     serde_json::to_vec(&v).unwrap_or_else(|_| body.to_vec())
 }
 
+/// Tracks state for stripping thinking tags from SSE streaming responses.
+/// Thinking tags (like `<think>...</think>`) can span multiple SSE chunks,
+/// so we need a state machine that buffers content while inside a thinking block.
+pub struct SseThinkingStripper {
+    /// Whether we're currently inside a thinking block
+    inside_thinking: bool,
+    /// Buffer for content that might be part of a thinking tag
+    buffer: String,
+}
+
+impl SseThinkingStripper {
+    pub fn new() -> Self {
+        Self {
+            inside_thinking: false,
+            buffer: String::new(),
+        }
+    }
+
+    /// Process a content delta string and return the content that should be
+    /// sent to the client. Returns None if the entire content is inside a
+    /// thinking block and should be suppressed.
+    pub fn strip_delta(&mut self, content: &str) -> Option<String> {
+        if content.is_empty() {
+            if self.inside_thinking {
+                return None;
+            }
+            return Some(String::new());
+        }
+
+        if self.inside_thinking {
+            // We're inside a thinking block, look for the closing tag
+            self.buffer.push_str(content);
+            if let Some(pos) = self.buffer.find("</think>") {
+                // Found closing tag - everything after it is real content
+                self.inside_thinking = false;
+                let after = self.buffer[pos + 8..].to_string();
+                self.buffer.clear();
+                if after.is_empty() {
+                    return None;
+                }
+                // The content after </think> might contain another <think>
+                return self.strip_delta(&after);
+            }
+            // Still inside thinking block, suppress this content
+            return None;
+        }
+
+        // Not inside thinking block, look for opening tag
+        if let Some(pos) = content.find("<think>") {
+            // Found opening tag
+            let before = content[..pos].to_string();
+            let after = content[pos + 7..].to_string();
+            self.inside_thinking = true;
+            self.buffer.clear();
+            self.buffer.push_str(&after);
+
+            // Look for closing tag in the remaining content
+            if let Some(cpos) = self.buffer.find("</think>") {
+                self.inside_thinking = false;
+                let after_close = self.buffer[cpos + 8..].to_string();
+                self.buffer.clear();
+                // Recursively process the content after the closing tag
+                let mut result = before;
+                if let Some(more) = self.strip_delta(&after_close) {
+                    result.push_str(&more);
+                }
+                if result.is_empty() {
+                    return None;
+                }
+                return Some(result);
+            }
+
+            if before.is_empty() {
+                return None;
+            }
+            return Some(before);
+        }
+
+        // No thinking tags in this content, pass through
+        Some(content.to_string())
+    }
+
+    /// Called at the end of the stream to flush any remaining buffered content.
+    /// If we're still inside a thinking block when the stream ends, we discard
+    /// the thinking content (it was never properly closed).
+    pub fn flush(&mut self) -> Option<String> {
+        if self.inside_thinking {
+            // Stream ended inside a thinking block - discard it
+            // But check if the buffer contains content after an unclosed </think>
+            self.inside_thinking = false;
+            let remaining = std::mem::take(&mut self.buffer);
+            // Apply strip_thinking_tags as a final cleanup
+            let cleaned = strip_thinking_tags(&remaining);
+            if cleaned.is_empty() {
+                return None;
+            }
+            return Some(cleaned);
+        }
+        None
+    }
+}
+
+/// Process an SSE chunk through the thinking stripper state machine.
+/// Returns cleaned bytes (potentially empty if entire chunk was inside thinking).
+fn strip_thinking_from_sse_chunk_with_state(chunk_str: &str, stripper: &mut SseThinkingStripper) -> axum::body::Bytes {
+    let mut output_lines: Vec<String> = Vec::new();
+    
+    for line in chunk_str.split('\n') {
+        let trimmed = line.trim();
+        if !trimmed.starts_with("data:") {
+            output_lines.push(line.to_string());
+            continue;
+        }
+        
+        let json_str = trimmed.strip_prefix("data:").unwrap_or(trimmed).trim_start();
+        if json_str.is_empty() || json_str == "[DONE]" {
+            output_lines.push(line.to_string());
+            continue;
+        }
+        
+        if let Ok(mut v) = serde_json::from_str::<serde_json::Value>(json_str) {
+            if let Some(choices) = v.get_mut("choices").and_then(|c| c.as_array_mut()) {
+                for choice in choices {
+                    if let Some(delta) = choice.get_mut("delta") {
+                        if let Some(content_value) = delta.get_mut("content") {
+                            if let Some(content_str) = content_value.as_str() {
+                                match stripper.strip_delta(content_str) {
+                                    Some(cleaned) => {
+                                        *content_value = serde_json::Value::String(cleaned);
+                                    }
+                                    None => {
+                                        // Entire content is inside thinking block - set to empty
+                                        *content_value = serde_json::Value::String(String::new());
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+            let cleaned_json = serde_json::to_string(&v).unwrap_or_else(|_| json_str.to_string());
+            output_lines.push(format!("data: {}", cleaned_json));
+        } else {
+            output_lines.push(line.to_string());
+        }
+    }
+    
+    let result = output_lines.join("\n");
+    axum::body::Bytes::from(result)
+}
+
+
 /// Standard OpenAI-compatible /v1/models endpoint.
 /// Lists all active unified models that are accessible by the given API key.
 async fn list_models_for_api_key(
@@ -423,6 +575,8 @@ pub async fn proxy_request(
                 let log_model = model.id.clone();
                 let request_body_str = if !body_bytes.is_empty() { Some(String::from_utf8_lossy(&body_bytes).to_string()) } else { None };
 
+                let mut sse_stripper = if provider.strip_thinking_tags_in_response && provider.api_type == "openai" { Some(SseThinkingStripper::new()) } else { None };
+
                 // Spawn a task that collects all chunks for logging while forwarding to client
                 tokio::spawn(async move {
                     use futures::StreamExt;
@@ -539,7 +693,17 @@ pub async fn proxy_request(
                                     break;
                                 }
 
-                                if tx.send(Ok::<_, std::convert::Infallible>(bytes)).await.is_err() {
+                                // Strip thinking tags from SSE content deltas when enabled
+                                let send_bytes = if sse_stripper.is_some() {
+                                    strip_thinking_from_sse_chunk_with_state(&chunk_str, sse_stripper.as_mut().unwrap())
+                                } else {
+                                    bytes
+                                };
+                                if send_bytes.is_empty() {
+                                    // Entire chunk was inside a thinking block, skip it
+                                    continue;
+                                }
+                                if tx.send(Ok::<_, std::convert::Infallible>(send_bytes)).await.is_err() {
                                     break;
                                 }
                             }
