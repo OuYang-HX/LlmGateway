@@ -356,3 +356,62 @@ async fn int_strip_thinking_anthropic_type_ignored() {
     assert_eq!(p.api_type, "anthropic");
     // Note: proxy handler checks api_type=="openai" before applying strip
 }
+
+// ==================== Dashboard summary integration ====================
+
+#[tokio::test]
+async fn int_dashboard_summary_basic() {
+    let db = test_db().await;
+    create_test_provider(&db, "sum-prov").await;
+    db.create_api_key("sum-key", "Key", "hash", "sk", None).await.unwrap();
+    db.insert_request_log("sum-key", "sum-prov", Some("gpt-4"), "/v1/chat", "POST",
+        None, None, Some(200), None, None, 10, 20, 30, Some(100), false, false, None).await.unwrap();
+
+    let summary = db.get_dashboard_summary().await.unwrap();
+    assert_eq!(summary.total_api_keys, 1);
+    assert_eq!(summary.active_api_keys, 1);
+    assert!(summary.total_providers >= 1);
+    assert!(summary.active_providers >= 1);
+    assert!(summary.total_requests_24h >= 1);
+    assert!(summary.total_tokens_24h >= 30);
+}
+
+#[tokio::test]
+async fn int_int_dashboard_summary_empty() {
+    let db = test_db().await;
+    let summary = db.get_dashboard_summary().await.unwrap();
+    assert_eq!(summary.total_api_keys, 0);
+    assert_eq!(summary.total_providers, 0);
+    assert_eq!(summary.total_requests_24h, 0);
+    assert_eq!(summary.total_tokens_24h, 0);
+}
+
+// ==================== Token rate snapshot integration ====================
+
+#[tokio::test]
+async fn int_token_rate_snapshot_with_provider() {
+    let db = test_db().await;
+    db.insert_token_rate_snapshot(Some("rate-prov"), 100.5, 60, 40, 5, 10.0).await.unwrap();
+    db.insert_token_rate_snapshot(Some("rate-prov"), 200.0, 120, 80, 10, 10.0).await.unwrap();
+    db.insert_token_rate_snapshot(Some("rate-prov2"), 50.0, 30, 20, 3, 10.0).await.unwrap();
+
+    let now = chrono::Utc::now().format("%Y-%m-%d %H:%M:%S").to_string();
+    let all = db.get_token_rate_snapshots(None, &now, 100).await.unwrap();
+    assert_eq!(all.len(), 3); // all 3 have non-null provider_id
+
+    let prov = db.get_token_rate_snapshots(Some("rate-prov"), &now, 100).await.unwrap();
+    assert_eq!(prov.len(), 2);
+}
+
+// ==================== get_top_provider_by_usage integration ====================
+
+#[tokio::test]
+async fn int_top_provider_with_usage() {
+    let db = test_db().await;
+    // get_top_provider_by_usage queries token_rate_snapshots (last 1h), not request_logs
+    db.insert_token_rate_snapshot(Some("top-a"), 100.0, 60, 40, 5, 10.0).await.unwrap();
+    db.insert_token_rate_snapshot(Some("top-b"), 50.0, 30, 20, 3, 10.0).await.unwrap();
+
+    let top = db.get_top_provider_by_usage().await.unwrap();
+    assert_eq!(top, Some("top-a".to_string())); // top-a has 100 prompt+completion vs top-b's 50
+}
