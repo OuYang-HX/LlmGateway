@@ -714,6 +714,41 @@ pub async fn proxy_request(
                         }
                     }
 
+                    // Flush the SSE thinking stripper state machine
+                    // This handles the case where thinking consumed all tokens and the
+                    // closing tag was never sent (truncated thinking block)
+                    if let Some(ref mut stripper) = sse_stripper {
+                        if let Some(flushed) = stripper.flush() {
+                            // Stream ended mid-thinking but there's content after an unclosed tag
+                            if !flushed.trim().is_empty() {
+                                let flush_chunk = format!(
+                                    "data: {{\"id\":\"{}\",\"model\":\"{}\",\"choices\":[{{\"index\":0,\"delta\":{{\"content\":\"{}\"}},\"finish_reason\":null}}]}}\n\n",
+                                    response_id.as_deref().unwrap_or("chatcmpl-flush"),
+                                    response_model.as_deref().unwrap_or("unknown"),
+                                    flushed.replace("\\", "\\\\").replace("\"", "\\\"").replace("\n", "\\n")
+                                );
+                                let _ = tx.send(Ok::<_, std::convert::Infallible>(axum::body::Bytes::from(flush_chunk))).await;
+                            }
+                        }
+                    }
+
+                    // If strip_thinking was enabled and the entire response was thinking content,
+                    // send a notice to the client so they don't get an empty response
+                    if sse_stripper.is_some() && !all_delta_content.is_empty() {
+                        let clean = strip_thinking_tags(&all_delta_content);
+                        if clean.trim().is_empty() {
+                            // All content was thinking - send a notice delta
+                            let notice = "[thinking content stripped - model used all tokens for reasoning]";
+                            let notice_chunk = format!(
+                                "data: {{\"id\":\"{}\",\"model\":\"{}\",\"choices\":[{{\"index\":0,\"delta\":{{\"content\":\"{}\"}},\"finish_reason\":null}}]}}\n\n",
+                                response_id.as_deref().unwrap_or("chatcmpl-stripped"),
+                                response_model.as_deref().unwrap_or("unknown"),
+                                notice
+                            );
+                            let _ = tx.send(Ok::<_, std::convert::Infallible>(axum::body::Bytes::from(notice_chunk))).await;
+                        }
+                    }
+
                     // Stream finished - build reconstructed non-streaming response
                     let duration_ms = start.elapsed().as_millis() as i64;
                     let final_model = response_model.clone().or(Some(log_model));
