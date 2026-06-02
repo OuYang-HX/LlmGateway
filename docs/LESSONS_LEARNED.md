@@ -188,3 +188,16 @@
   - 或测试加 `serial_test::serial` 注解
   - 或放宽断言,允许同义替换
 - **教训**:**生产代码用全局随机数 + 测试断言依赖特定 token 出现 = 反模式**。要么注入 RNG,要么断言不依赖随机性
+
+## API/协议兼容类
+
+### 1. 非标准 LLM 实现把 thinking 用 `<think>` 标签混杂在 content 字段
+- **症状**:`MiniMax-M3` 走 OpenAI 协议时,响应里 thinking 内容**用 `<think>...</think>` markdown 标签直接放在 `message.content`**,违反 OpenAI 2025+ reasoning 字段标准(应放 `reasoning_content`)
+- **影响**:pi agent / Claude Code 等客户端把整段 content 渲染给用户,thinking 占用终端大量空间,看起来"截断"
+- **修复**:网关层加 opt-in provider 配置 `strip_thinking_tags_in_response`(默认 `false`)
+  - non-streaming 路径在 `proxy_request` 拿到 response body 后,用 `strip_thinking_from_openai_response_body()` 处理(纯函数,可单测)
+  - 日志仍记录**原始** body(让 dashboard 审计完整 thinking),只清理给客户端的响应
+  - 复用 `handler::strip_thinking_tags` 函数
+- **关键设计**:**opt-in** 保持"透明转发"原则;只对 `api_type=openai` 生效(Anthropic 协议响应是结构化 block,SDK 能处理)
+- **未来 streaming 路径**:TODO 留,需要 buffer + 状态机处理跨 chunk 的 `<think>` 标签边界
+- **相关 commit**: `feat: opt-in strip thinking tags from openai response body`

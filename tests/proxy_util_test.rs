@@ -228,3 +228,141 @@ fn test_build_server_error_json_structure() {
     assert_eq!(json["error"]["type"], "server_error");
     assert!(json["error"]["message"].as_str().unwrap().contains("internal error"));
 }
+
+// ==================== strip_thinking_from_openai_response_body ====================
+
+fn parse_body(body: &[u8]) -> serde_json::Value {
+    serde_json::from_slice(body).expect("body should be valid JSON")
+}
+
+#[test]
+fn test_strip_thinking_from_openai_response_body_basic() {
+    // The MiniMax-M3 pattern: <think>...</think> then actual response
+    let body = br#"{"choices":[{"message":{"role":"assistant","content":"<think>\nThe user wants a 3-sentence explanation.\n</think>\nRust is a systems language."}}]}"#;
+    let out = handler::strip_thinking_from_openai_response_body(body);
+    let v = parse_body(&out);
+    let content = v["choices"][0]["message"]["content"].as_str().unwrap();
+    assert_eq!(content, "Rust is a systems language.",
+        "thinking block must be removed, leaving only actual response: got {:?}", content);
+}
+
+#[test]
+fn test_strip_thinking_from_openai_response_body_multiple_choices() {
+    let body = br#"{"choices":[
+        {"message":{"role":"assistant","content":"<think>\nthink1\n</think>\nAnswer 1"}},
+        {"message":{"role":"assistant","content":"No thinking here, just answer"}},
+        {"message":{"role":"assistant","content":"<think>\nthink3\n</think>\nAnswer 3"}}
+    ]}"#;
+    let out = handler::strip_thinking_from_openai_response_body(body);
+    let v = parse_body(&out);
+    let contents: Vec<&str> = v["choices"].as_array().unwrap()
+        .iter()
+        .map(|c| c["message"]["content"].as_str().unwrap())
+        .collect();
+    assert_eq!(contents[0], "Answer 1");
+    assert_eq!(contents[1], "No thinking here, just answer");
+    assert_eq!(contents[2], "Answer 3");
+}
+
+#[test]
+fn test_strip_thinking_from_openai_response_body_no_thinking() {
+    // No <think> tags — content must pass through unchanged
+    let original = br#"{"choices":[{"message":{"role":"assistant","content":"Just a normal response with no tags."}}]}"#;
+    let out = handler::strip_thinking_from_openai_response_body(original);
+    let v = parse_body(&out);
+    assert_eq!(
+        v["choices"][0]["message"]["content"].as_str().unwrap(),
+        "Just a normal response with no tags."
+    );
+}
+
+#[test]
+fn test_strip_thinking_from_openai_response_body_multiple_thinking_blocks() {
+    let body = br#"{"choices":[{"message":{"role":"assistant","content":"<think>\nfirst thought\n</think>\nMiddle text <think>\nsecond thought\n</think>\nEnd text"}}]}"#;
+    let out = handler::strip_thinking_from_openai_response_body(body);
+    let v = parse_body(&out);
+    let content = v["choices"][0]["message"]["content"].as_str().unwrap();
+    assert!(!content.contains("first thought"));
+    assert!(!content.contains("second thought"));
+    assert!(content.contains("Middle text"));
+    assert!(content.contains("End text"));
+}
+
+#[test]
+fn test_strip_thinking_from_openai_response_body_only_thinking() {
+    // Content is ONLY a thinking block — result should be empty string
+    let body = br#"{"choices":[{"message":{"role":"assistant","content":"<think>\njust thinking, no actual answer\n</think>"}}]}"#;
+    let out = handler::strip_thinking_from_openai_response_body(body);
+    let v = parse_body(&out);
+    let content = v["choices"][0]["message"]["content"].as_str().unwrap();
+    assert_eq!(content, "", "Pure thinking should yield empty content");
+}
+
+#[test]
+fn test_strip_thinking_from_openai_response_body_multiline_thinking() {
+    let body = br#"{"choices":[{"message":{"role":"assistant","content":"<think>\nLine 1\nLine 2\nLine 3\nwith detail\n</think>\nThe actual answer is 42."}}]}"#;
+    let out = handler::strip_thinking_from_openai_response_body(body);
+    let v = parse_body(&out);
+    let content = v["choices"][0]["message"]["content"].as_str().unwrap();
+    assert_eq!(content, "The actual answer is 42.");
+    assert!(!content.contains("Line 1"));
+    assert!(!content.contains("with detail"));
+}
+
+#[test]
+fn test_strip_thinking_from_openai_response_body_malformed_json() {
+    // Not JSON — must return body unchanged (silent skip, not error)
+    let body = b"not json at all, just plain text";
+    let out = handler::strip_thinking_from_openai_response_body(body);
+    assert_eq!(out, body.to_vec());
+}
+
+#[test]
+fn test_strip_thinking_from_openai_response_body_no_choices() {
+    // Valid JSON but no `choices` key (e.g. error response) — pass through
+    let body = br#"{"error":{"message":"rate limit exceeded"}}"#;
+    let out = handler::strip_thinking_from_openai_response_body(body);
+    let v = parse_body(&out);
+    assert_eq!(v["error"]["message"].as_str().unwrap(), "rate limit exceeded");
+}
+
+#[test]
+fn test_strip_thinking_from_openai_response_body_no_message_field() {
+    // Streaming delta shape — no `message` key, only `delta`
+    let body = br#"{"choices":[{"delta":{"content":"hello"}}]}"#;
+    let out = handler::strip_thinking_from_openai_response_body(body);
+    let v = parse_body(&out);
+    // Must not crash, must not invent a message field
+    assert!(v["choices"][0].get("message").is_none(),
+        "must not add a message field if it didn't exist");
+    assert_eq!(v["choices"][0]["delta"]["content"].as_str().unwrap(), "hello");
+}
+
+#[test]
+fn test_strip_thinking_from_openai_response_body_content_not_string() {
+    // Some OpenAI variants may have `content: null` or array of parts
+    let body = br#"{"choices":[{"message":{"role":"assistant","content":null}}]}"#;
+    let out = handler::strip_thinking_from_openai_response_body(body);
+    let v = parse_body(&out);
+    assert!(v["choices"][0]["message"]["content"].is_null(),
+        "null content must pass through unchanged");
+}
+
+#[test]
+fn test_strip_thinking_from_openai_response_body_preserves_other_fields() {
+    // Verify model/usage/finish_reason etc. are preserved untouched
+    let body = br#"{
+        "id":"chatcmpl-abc",
+        "model":"MiniMax-M3",
+        "choices":[{"message":{"role":"assistant","content":"<think>\nthink\n</think>\nAnswer"},"finish_reason":"stop","index":0}],
+        "usage":{"prompt_tokens":10,"completion_tokens":5,"total_tokens":15}
+    }"#;
+    let out = handler::strip_thinking_from_openai_response_body(body);
+    let v = parse_body(&out);
+    assert_eq!(v["id"].as_str().unwrap(), "chatcmpl-abc");
+    assert_eq!(v["model"].as_str().unwrap(), "MiniMax-M3");
+    assert_eq!(v["choices"][0]["finish_reason"].as_str().unwrap(), "stop");
+    assert_eq!(v["choices"][0]["index"].as_i64().unwrap(), 0);
+    assert_eq!(v["choices"][0]["message"]["content"].as_str().unwrap(), "Answer");
+    assert_eq!(v["usage"]["total_tokens"].as_i64().unwrap(), 15);
+}

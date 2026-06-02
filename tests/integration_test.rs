@@ -1284,7 +1284,7 @@ fn test_provider_extra_headers_stored() {
             None, Some("https://auth.com/login"), Some("user"), Some("pass"),
             Some("POST"), Some("json"), Some("username"), Some("password"),
             None, Some(r#"{"X-App-Id":"myapp","X-Api-Version":"v2"}"#), None,
-            "token", "refreshToken", "Authorization", "Bearer ", 86400, 1, false, false, "choices.0.message.content", "choices.0.delta.reasoning_content",
+            "token", "refreshToken", "Authorization", "Bearer ", 86400, 1, false, false, "choices.0.message.content", "choices.0.delta.reasoning_content", false,
         ).await.unwrap();
 
         let p = db.get_provider("prov-eh").await.unwrap().unwrap();
@@ -1320,7 +1320,7 @@ fn test_provider_update_extra_headers() {
             None, Some("https://auth.com/login"), Some("user"), Some("pass"),
             Some("POST"), Some("json"), Some("username"), Some("password"),
             None, Some(r#"{"X-Custom":"val1"}"#), None,
-            "token", "refreshToken", "Authorization", "Bearer ", 86400, 1, false, false, "choices.0.message.content", "choices.0.delta.reasoning_content",
+            "token", "refreshToken", "Authorization", "Bearer ", 86400, 1, false, false, "choices.0.message.content", "choices.0.delta.reasoning_content", false,
         ).await.unwrap();
 
         // Update via delete + recreate with new headers
@@ -1330,7 +1330,7 @@ fn test_provider_update_extra_headers() {
             None, Some("https://auth.com/login"), Some("user"), Some("pass"),
             Some("POST"), Some("json"), Some("username"), Some("password"),
             None, Some(r#"{"X-Custom":"val2","X-New":"header"}"#), None,
-            "token", "refreshToken", "Authorization", "Bearer ", 86400, 1, false, false, "choices.0.message.content", "choices.0.delta.reasoning_content",
+            "token", "refreshToken", "Authorization", "Bearer ", 86400, 1, false, false, "choices.0.message.content", "choices.0.delta.reasoning_content", false,
         ).await.unwrap();
 
         let p = db.get_provider("prov-eh2").await.unwrap().unwrap();
@@ -1367,7 +1367,7 @@ async fn test_provider_reasoning_path_field() {
         Some("key"), None, None, None, None, None, None, None, None, None, None,
         "token", "refreshToken", "Authorization", "Bearer ", 86400, 1, false,
         false,
-        "choices.0.message.content", "choices.0.delta.reasoning_content",
+        "choices.0.message.content", "choices.0.delta.reasoning_content", false,
     ).await.unwrap();
 
     let provider = db.get_provider("prov-reason").await.unwrap().unwrap();
@@ -1380,7 +1380,7 @@ async fn test_provider_reasoning_path_field() {
         Some("key2"), None, None, None, None, None, None, None, None, None, None,
         "token", "refreshToken", "Authorization", "Bearer ", 86400, 1, true, false,
         false,
-        "custom.content.path", "custom.reasoning.path", None, None, None,
+        "custom.content.path", "custom.reasoning.path", None, None, None, false,
     ).await.unwrap();
 
     let updated = db.get_provider("prov-reason").await.unwrap().unwrap();
@@ -1396,7 +1396,7 @@ async fn test_provider_model_list_add_remove() {
         Some("key"), None, None, None, None, None, None, None, None, None, None,
         "token", "refreshToken", "Authorization", "Bearer ", 86400, 1, false,
         false,
-        "choices.0.message.content", "choices.0.delta.reasoning_content",
+        "choices.0.message.content", "choices.0.delta.reasoning_content", false,
     ).await.unwrap();
 
     // List models (should be empty)
@@ -1430,7 +1430,7 @@ async fn test_stats_by_api_key_grouping() {
         Some("key"), None, None, None, None, None, None, None, None, None, None,
         "token", "refreshToken", "Authorization", "Bearer ", 86400, 1, false,
         false,
-        "choices.0.message.content", "choices.0.delta.reasoning_content",
+        "choices.0.message.content", "choices.0.delta.reasoning_content", false,
     ).await.unwrap();
     db.create_api_key("stat-key-xyz-1", "Stat Key XYZ 1", "sk-xyz-test1", "sk-xyz1", None).await.unwrap();
     db.create_api_key("stat-key-xyz-2", "Stat Key XYZ 2", "sk-xyz-test2", "sk-xyz2", None).await.unwrap();
@@ -1609,7 +1609,7 @@ async fn test_stats_by_api_key_with_time_range() {
         Some("key"), None, None, None, None, None, None, None, None, None, None,
         "token", "refreshToken", "Authorization", "Bearer ", 86400, 1, false,
         false,
-        "choices.0.message.content", "choices.0.delta.reasoning_content",
+        "choices.0.message.content", "choices.0.delta.reasoning_content", false,
     ).await.unwrap();
     db.create_api_key("time-key-abc", "Time Key ABC", "sk-time-abc", "sk-tab", None).await.unwrap();
 
@@ -1663,7 +1663,7 @@ async fn test_stats_by_api_key_time_range_filter() {
         Some("key"), None, None, None, None, None, None, None, None, None, None,
         "token", "refreshToken", "Authorization", "Bearer ", 86400, 1, false,
         false,
-        "choices.0.message.content", "choices.0.delta.reasoning_content",
+        "choices.0.message.content", "choices.0.delta.reasoning_content", false,
     ).await.unwrap();
     db.create_api_key("time-key-2", "Time Key 2", "sk-time-2", "sk-t2", None).await.unwrap();
 
@@ -1692,7 +1692,7 @@ async fn test_stats_by_api_key_token_breakdown() {
         Some("key"), None, None, None, None, None, None, None, None, None, None,
         "token", "refreshToken", "Authorization", "Bearer ", 86400, 1, false,
         false,
-        "choices.0.message.content", "choices.0.delta.reasoning_content",
+        "choices.0.message.content", "choices.0.delta.reasoning_content", false,
     ).await.unwrap();
     db.create_api_key("breakdown-key", "Breakdown Key", "sk-break", "sk-bk", None).await.unwrap();
 
@@ -1727,7 +1727,7 @@ async fn test_list_active_provider_models() {
         Some("key"), None, None, None, None, None, None, None, None, None, None,
         "token", "refreshToken", "Authorization", "Bearer ", 86400, 1, false,
         false,
-        "choices.0.message.content", "choices.0.delta.reasoning_content",
+        "choices.0.message.content", "choices.0.delta.reasoning_content", false,
     ).await.unwrap();
 
     db.add_provider_model("model-prov-2", "gpt-4o-mini").await.unwrap();
@@ -1750,7 +1750,7 @@ async fn test_stats_by_api_key_multiple_keys() {
         Some("key"), None, None, None, None, None, None, None, None, None, None,
         "token", "refreshToken", "Authorization", "Bearer ", 86400, 1, false,
         false,
-        "choices.0.message.content", "choices.0.delta.reasoning_content",
+        "choices.0.message.content", "choices.0.delta.reasoning_content", false,
     ).await.unwrap();
     
     db.create_api_key("multi-key-1", "Multi Key 1", "sk-multi1", "sk-m1", None).await.unwrap();
@@ -1783,7 +1783,7 @@ async fn test_stats_by_api_key_calculated_correctly() {
         Some("key"), None, None, None, None, None, None, None, None, None, None,
         "token", "refreshToken", "Authorization", "Bearer ", 86400, 1, false,
         false,
-        "choices.0.message.content", "choices.0.delta.reasoning_content",
+        "choices.0.message.content", "choices.0.delta.reasoning_content", false,
     ).await.unwrap();
     db.create_api_key("calc-key", "Calc Key", "sk-calc", "sk-c", None).await.unwrap();
 
@@ -1811,7 +1811,7 @@ async fn test_provider_health_stats_with_requests() {
         Some("key"), None, None, None, None, None, None, None, None, None, None,
         "token", "refreshToken", "Authorization", "Bearer ", 86400, 1, false,
         false,
-        "choices.0.message.content", "choices.0.delta.reasoning_content",
+        "choices.0.message.content", "choices.0.delta.reasoning_content", false,
     ).await.unwrap();
     db.create_api_key("health-key", "Health Key", "sk-health", "sk-h", None).await.unwrap();
 
@@ -1837,7 +1837,7 @@ async fn test_stats_by_api_key_ordering_desc() {
         Some("key"), None, None, None, None, None, None, None, None, None, None,
         "token", "refreshToken", "Authorization", "Bearer ", 86400, 1, false,
         false,
-        "choices.0.message.content", "choices.0.delta.reasoning_content",
+        "choices.0.message.content", "choices.0.delta.reasoning_content", false,
     ).await.unwrap();
     db.create_api_key("order-key-1", "Order Key 1", "sk-order1", "sk-o1", None).await.unwrap();
     db.create_api_key("order-key-2", "Order Key 2", "sk-order2", "sk-o2", None).await.unwrap();
@@ -1869,7 +1869,7 @@ async fn test_stats_by_api_key_includes_error_count() {
         Some("key"), None, None, None, None, None, None, None, None, None, None,
         "token", "refreshToken", "Authorization", "Bearer ", 86400, 1, false,
         false,
-        "choices.0.message.content", "choices.0.delta.reasoning_content",
+        "choices.0.message.content", "choices.0.delta.reasoning_content", false,
     ).await.unwrap();
     db.create_api_key("err-key", "Error Key", "sk-err", "sk-e", None).await.unwrap();
 
@@ -1900,7 +1900,7 @@ async fn test_stats_by_api_key_throttle_count() {
         Some("key"), None, None, None, None, None, None, None, None, None, None,
         "token", "refreshToken", "Authorization", "Bearer ", 86400, 1, false,
         false,
-        "choices.0.message.content", "choices.0.delta.reasoning_content",
+        "choices.0.message.content", "choices.0.delta.reasoning_content", false,
     ).await.unwrap();
     db.create_api_key("throttle-key", "Throttle Key", "sk-throttle", "sk-t", None).await.unwrap();
 
@@ -1955,7 +1955,7 @@ async fn test_stats_by_api_key_avg_duration() {
         Some("key"), None, None, None, None, None, None, None, None, None, None,
         "token", "refreshToken", "Authorization", "Bearer ", 86400, 1, false,
         false,
-        "choices.0.message.content", "choices.0.delta.reasoning_content",
+        "choices.0.message.content", "choices.0.delta.reasoning_content", false,
     ).await.unwrap();
     db.create_api_key("dur-key", "Dur Key", "sk-dur", "sk-d", None).await.unwrap();
 
@@ -2031,7 +2031,7 @@ async fn test_provider_health_stats_zero_requests() {
         Some("key"), None, None, None, None, None, None, None, None, None, None,
         "token", "refreshToken", "Authorization", "Bearer ", 86400, 1, false,
         false,
-        "choices.0.message.content", "choices.0.delta.reasoning_content",
+        "choices.0.message.content", "choices.0.delta.reasoning_content", false,
     ).await.unwrap();
     
     // No logs for this provider
@@ -2053,7 +2053,7 @@ async fn test_stats_by_api_key_with_time_filter() {
         Some("key"), None, None, None, None, None, None, None, None, None, None,
         "token", "refreshToken", "Authorization", "Bearer ", 86400, 1, false,
         false,
-        "choices.0.message.content", "choices.0.delta.reasoning_content",
+        "choices.0.message.content", "choices.0.delta.reasoning_content", false,
     ).await.unwrap();
     db.create_api_key("timef-key", "TimeFilter Key", "sk-tf", "sk-timef", None).await.unwrap();
 
@@ -2279,7 +2279,7 @@ async fn test_mock_mode_provider_stores_correctly() {
         "mock-prov", "Mock Provider", "http://mock", "openai", "api_key",
         Some("key"), None, None, None, None, None, None, None, None, None, None,
         "token", "refreshToken", "Authorization", "Bearer ", 86400, 1, false, true,
-        "choices.0.message.content", "choices.0.delta.reasoning_content",
+        "choices.0.message.content", "choices.0.delta.reasoning_content", false,
     ).await.unwrap();
     
     let p = db.get_provider("mock-prov").await.unwrap().unwrap();
@@ -2290,7 +2290,7 @@ async fn test_mock_mode_provider_stores_correctly() {
         "real-prov", "Real Provider", "http://real", "openai", "api_key",
         Some("key"), None, None, None, None, None, None, None, None, None, None,
         "token", "refreshToken", "Authorization", "Bearer ", 86400, 1, false, false,
-        "choices.0.message.content", "choices.0.delta.reasoning_content",
+        "choices.0.message.content", "choices.0.delta.reasoning_content", false,
     ).await.unwrap();
     
     let p2 = db.get_provider("real-prov").await.unwrap().unwrap();
@@ -2305,14 +2305,14 @@ async fn test_update_provider_mock_mode() {
         "upd-mock", "Update Mock", "http://x.com", "openai", "api_key",
         Some("key"), None, None, None, None, None, None, None, None, None, None,
         "token", "refreshToken", "Authorization", "Bearer ", 86400, 1, false, false,
-        "choices.0.message.content", "choices.0.delta.reasoning_content",
+        "choices.0.message.content", "choices.0.delta.reasoning_content", false,
     ).await.unwrap();
     
     db.update_provider(
         "upd-mock", "upd-mock", "Updated Mock", "http://x.com", "openai", "api_key",
         Some("key"), None, None, None, None, None, None, None, None, None, None,
         "token", "refreshToken", "Authorization", "Bearer ", 86400, 1, false, true,
-        true, "choices.0.message.content", "choices.0.delta.reasoning_content", None, None, None,
+        true, "choices.0.message.content", "choices.0.delta.reasoning_content", None, None, None, false,
     ).await.unwrap();
     
     let p = db.get_provider("upd-mock").await.unwrap().unwrap();
@@ -2327,7 +2327,7 @@ async fn test_provider_list_includes_mock_mode() {
         "ml-prov", "ML Provider", "http://ml.com", "openai", "api_key",
         Some("key"), None, None, None, None, None, None, None, None, None, None,
         "token", "refreshToken", "Authorization", "Bearer ", 86400, 1, false, true,
-        "choices.0.message.content", "choices.0.delta.reasoning_content",
+        "choices.0.message.content", "choices.0.delta.reasoning_content", false,
     ).await.unwrap();
     
     let providers = db.list_providers().await.unwrap();

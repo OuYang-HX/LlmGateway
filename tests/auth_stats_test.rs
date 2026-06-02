@@ -24,6 +24,7 @@ fn make_api_key_provider(id: &str) -> llm_gateway::db::ProviderRow {
         response_content_path: String::new(), response_reasoning_path: String::new(),
         chart_color: None, subscription_start: None, mock_mode: false,
         group_id: None,
+        strip_thinking_tags_in_response: false,
         created_at: String::new(), updated_at: String::new(),
     }
 }
@@ -51,6 +52,7 @@ fn make_dynamic_token_provider(id: &str) -> llm_gateway::db::ProviderRow {
         response_content_path: String::new(), response_reasoning_path: String::new(),
         chart_color: None, subscription_start: None, mock_mode: false,
         group_id: None,
+        strip_thinking_tags_in_response: false,
         created_at: String::new(), updated_at: String::new(),
     }
 }
@@ -192,7 +194,7 @@ async fn test_stats_active_providers_with_data() {
     db.create_provider(
         "active-stats-prov", "Stats Provider", "https://api.example.com/v1", "openai", "api_key",
         Some("test-key"), None, None, None, None, None, None, None, None, None, None,
-        "token", "refreshToken", "Authorization", "Bearer ", 86400, 1, true, false, "", "",
+        "token", "refreshToken", "Authorization", "Bearer ", 86400, 1, true, false, "", "", false,
     ).await.unwrap();
     let stats = StatsCollector::new(db);
     stats.record_usage("active-stats-prov", 10, 5).await;

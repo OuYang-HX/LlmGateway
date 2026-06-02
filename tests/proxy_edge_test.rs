@@ -19,7 +19,7 @@ async fn create_test_provider(db: &Database, id: &str, weight: i64, active: bool
         id, id, "https://api.example.com/v1", "openai", "api_key",
         Some("test-key"), None, None, None, None, None, None, None, None, None, None,
         "token", "refreshToken", "Authorization", "Bearer ", 86400, weight, active, false,
-        "", "",
+        "", "", false,
     ).await.unwrap();
 }
 

@@ -1007,3 +1007,115 @@ req_builder = req_builder.json(&test_body);
 1. `test_build_test_request_anthropic` — 路径 = `base_url + /messages`,headers 含 `anthropic-version`
 2. `test_build_test_request_openai` — 路径 = `base_url + /chat/completions`,无 `anthropic-version`
 3. 集成测试:启动 mock upstream,跑 dashboard 测试 API,验证 anthropic 格式返回 200 / OpenAI 格式返回 200
+
+---
+
+## 变更:Provider 配置 `strip_thinking_tags_in_response` 剥离 `<think>` 块
+
+### 背景
+
+`MiniMax-M3` 走 OpenAI 协议(`/v1/chat/completions`)时,响应里 **thinking 内容用 `<think>...</think>` markdown 标签直接放在 `content` 字段**——这违反 OpenAI 2025 reasoning 字段标准(标准应放 `reasoning_content` 字段)。
+
+实测:
+```json
+{"choices":[{"message":{
+  "content": "<think>\nThe user wants...\n</think>\nRust is a modern...",
+  "role": "assistant"
+}}]}
+```
+
+**对客户端的影响**:
+- pi agent 等 client 把整段 content 渲染给用户,thinking 部分也显示
+- thinking 内容可能 1-3K 字符,加上终端 buffer 限制,用户感知"agent 经常截断"
+- 实际上功能正常(工具仍被调用),只是显示问题
+
+**与 Anthropic 协议路径不同**:Anthropic 协议下 MiniMax 用结构化 `type: thinking` content block,SDK 能正确解析;OpenAI 协议下用 markdown 标签混杂,SDK/客户端无法区分。
+
+### 设计
+
+加 provider 配置 `strip_thinking_tags_in_response: bool`(默认 `false`,保持协议透明)。
+
+**作用域**:
+- 仅对 OpenAI 协议响应生效(Anthropic 协议响应是结构化 block,SDK 能解析,不需要 strip)
+- 仅在 `forward_and_collect` (non-streaming) 路径生效
+- streaming 路径留 TODO(复杂,需要状态机 buffer;短期影响小因为 pi agent 走 non-streaming)
+
+**实现**:
+- 在 `proxy_request` non-streaming 路径,拿到 `proxy_response.body` 后
+- 检查 `provider.strip_thinking_tags_in_response` && `provider.api_type == "openai"`
+- parse JSON,找到 `choices[*].message.content`
+- 用现有 `handler::strip_thinking_tags` 函数去除 `<think>...</think>` 块
+- 重新序列化,替换 body
+- 日志记录字段使用**原始**(未 strip)的 content(让 dashboard 仍能看到 thinking)
+
+**为什么 opt-in**:
+- 默认 `false` 保持"透明转发"原则
+- 开启的副作用:dashboard 日志里 response_body 仍是 thinking 内容(因为日志用原始),但客户端收到的 content 字段已 strip
+- 留 dashboard 完整审计,只对客户端展示清理
+
+### 数据库变更
+
+`providers` 表加列:
+```sql
+ALTER TABLE providers ADD COLUMN strip_thinking_tags_in_response BOOLEAN NOT NULL DEFAULT 0
+```
+
+### API 变更
+
+- `CreateProviderRequest` 增加 `strip_thinking_tags_in_response: Option<bool>` (默认 None = false)
+- `UpdateProviderRequest` 增加 `strip_thinking_tags_in_response: Option<bool>`
+- `ProviderRow` 增加 `pub strip_thinking_tags_in_response: bool`
+- `create_provider` / `update_provider` 签名增加 `strip_thinking_tags_in_response: bool` 参数
+
+### 核心逻辑变更
+
+`src/proxy/handler.rs::proxy_request` non-streaming 路径:
+
+```rust
+let mut response_body = proxy_response.body.to_vec();
+
+// Opt-in: strip <think>...</think> tags from OpenAI responses
+if provider.api_type == "openai" && provider.strip_thinking_tags_in_response {
+    if let Ok(mut v) = serde_json::from_slice::<serde_json::Value>(&response_body) {
+        let mut modified = false;
+        if let Some(choices) = v.get_mut("choices").and_then(|c| c.as_array_mut()) {
+            for choice in choices {
+                if let Some(content) = choice.get_mut("message")
+                    .and_then(|m| m.get_mut("content"))
+                    .and_then(|c| c.as_str())
+                {
+                    let stripped = strip_thinking_tags(content);
+                    if stripped != content {
+                        *choice.get_mut("message").unwrap()
+                            .get_mut("content").unwrap() = serde_json::Value::String(stripped);
+                        modified = true;
+                    }
+                }
+            }
+        }
+        if modified {
+            if let Ok(new_bytes) = serde_json::to_vec(&v) {
+                response_body = new_bytes;
+            }
+        }
+    }
+}
+```
+
+注意:日志记录**用原始** `proxy_response.body`(修改前),让 dashboard 仍显示完整 thinking 内容。
+
+### 前端变更(可选,Dashboard 暂不实现)
+
+- Provider 编辑表单加 checkbox "剥离响应中的 <think> 标签"(默认 unchecked)
+- 解释文字:"开启后,从该 provider 转发的 OpenAI 协议响应会移除 `<think>...</think>` 块,适用于 MiniMax 等用 markdown 标签表示 thinking 的非标准实现"
+
+### 测试用例
+
+1. `test_strip_thinking_from_openai_response_basic` — 简单 thinking 块被移除
+2. `test_strip_thinking_from_openai_response_multiple_blocks` — 多个 `<think>` 块都被移除
+3. `test_strip_thinking_from_openai_response_no_thinking` — 无 thinking 时原样返回
+4. `test_strip_thinking_from_openai_response_multiline_thinking` — 多行 thinking 内容
+5. `test_strip_thinking_from_openai_response_only_thinking` — 纯 thinking 无正文时返回空字符串
+6. `test_strip_thinking_from_openai_response_malformed_json` — 响应不是 JSON 时跳过(不报错)
+7. `test_strip_thinking_from_openai_response_no_message_field` — 响应缺 message 字段时跳过
+

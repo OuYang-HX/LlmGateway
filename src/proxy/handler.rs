@@ -78,6 +78,35 @@ pub fn strip_thinking_tags(content: &str) -> String {
     result.trim().to_string()
 }
 
+/// Strip `<think>...</think>` blocks from each choice's `message.content` in an
+/// OpenAI-protocol chat completion response body.
+///
+/// This is a pure function: takes raw response bytes, returns modified bytes.
+/// Non-JSON bodies and bodies without `choices[*].message.content` strings are
+/// returned unchanged (silent skip — caller may log if needed).
+///
+/// Used to fix non-OpenAI-compliant upstreams (e.g. MiniMax-M3) that mix
+/// thinking content into the `content` field using `<think>` markdown tags
+/// instead of the standard `reasoning_content` field.
+pub fn strip_thinking_from_openai_response_body(body: &[u8]) -> Vec<u8> {
+    let Ok(mut v) = serde_json::from_slice::<serde_json::Value>(body) else {
+        return body.to_vec();
+    };
+    let Some(choices) = v.get_mut("choices").and_then(|c| c.as_array_mut()) else {
+        return body.to_vec();
+    };
+    for choice in choices {
+        let Some(message) = choice.get_mut("message") else { continue };
+        let Some(content_value) = message.get_mut("content") else { continue };
+        let Some(content_str) = content_value.as_str() else { continue };
+        let stripped = strip_thinking_tags(content_str);
+        if stripped != content_str {
+            *content_value = serde_json::Value::String(stripped);
+        }
+    }
+    serde_json::to_vec(&v).unwrap_or_else(|_| body.to_vec())
+}
+
 /// Standard OpenAI-compatible /v1/models endpoint.
 /// Lists all active unified models that are accessible by the given API key.
 async fn list_models_for_api_key(
@@ -630,6 +659,18 @@ pub async fn proxy_request(
 
     match response {
         Ok(proxy_response) => {
+            // Opt-in: strip <think>...</think> tags from OpenAI-protocol response body.
+            // Useful for non-OpenAI-compliant upstreams (e.g. MiniMax-M3) that mix
+            // thinking content into `message.content` using markdown tags instead of
+            // the standard `reasoning_content` field. The dashboard log still records
+            // the ORIGINAL body (with thinking), only the response to the client is
+            // cleaned. See docs/SPEC.md "strip_thinking_tags_in_response".
+            let stripped_body = if provider.api_type == "openai" && provider.strip_thinking_tags_in_response {
+                strip_thinking_from_openai_response_body(&proxy_response.body)
+            } else {
+                proxy_response.body.to_vec()
+            };
+
             let body_text = String::from_utf8_lossy(&proxy_response.body).to_string();
 
             // Check if the response body contains a rate-limit / quota error
@@ -657,7 +698,7 @@ pub async fn proxy_request(
             } else {
                 let status = StatusCode::from_u16(proxy_response.status_code as u16)
                     .unwrap_or(StatusCode::INTERNAL_SERVER_ERROR);
-                (status, proxy_response.body.to_vec())
+                (status, stripped_body)
             };
 
             let mut builder = Response::builder().status(final_status);

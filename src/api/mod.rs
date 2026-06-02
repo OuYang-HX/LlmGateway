@@ -260,6 +260,8 @@ pub struct CreateProviderRequest {
     #[serde(default)]
     pub mock_mode: bool,
     pub group_id: Option<String>,
+    #[serde(default)]
+    pub strip_thinking_tags_in_response: bool,
 }
 
 fn default_api_type() -> String { "openai".to_string() }
@@ -310,6 +312,7 @@ pub async fn create_provider(
         req.mock_mode,
         &req.response_content_path,
         &req.response_reasoning_path,
+        req.strip_thinking_tags_in_response,
     ).await {
         Ok(()) => {
             // Set group_id after creation if provided
@@ -483,6 +486,7 @@ pub struct UpdateProviderRequest {
     pub new_id: Option<String>,
     pub mock_mode: Option<bool>,
     pub group_id: Option<String>,
+    pub strip_thinking_tags_in_response: Option<bool>,
 }
 
 pub async fn update_provider(
@@ -540,6 +544,7 @@ pub async fn update_provider(
     let subscription_start = req.subscription_start.as_deref().or(existing.subscription_start.as_deref());
     let new_id = req.new_id.as_deref().unwrap_or(&existing.id);
     let mock_mode = req.mock_mode.unwrap_or(existing.mock_mode);
+    let strip_thinking_tags_in_response = req.strip_thinking_tags_in_response.unwrap_or(existing.strip_thinking_tags_in_response);
 
     // Check if new_id conflicts with an existing provider (when ID is changing)
     if new_id != id {
@@ -564,6 +569,7 @@ pub async fn update_provider(
         chart_color,
         subscription_start,
         req.group_id.as_deref(),
+        strip_thinking_tags_in_response,
     ).await {
         Ok(()) => (StatusCode::OK, Json(serde_json::json!({"id": id}))).into_response(),
         Err(e) => {

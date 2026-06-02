@@ -18,6 +18,7 @@ fn make_provider(api_type: &str, base_url: &str) -> ProviderRow {
         response_content_path: String::new(), response_reasoning_path: String::new(),
         chart_color: None, subscription_start: None, mock_mode: false,
         group_id: None,
+        strip_thinking_tags_in_response: false,
         created_at: String::new(), updated_at: String::new(),
     }
 }

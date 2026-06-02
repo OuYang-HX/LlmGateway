@@ -64,7 +64,7 @@ async fn test_api_model_mappings_crud() {
         None, None, None,
         "token", "refreshToken", "Authorization", "Bearer ", 86400, 1, false,
         false,
-        "choices.0.message.content", "choices.0.delta.reasoning_content",
+        "choices.0.message.content", "choices.0.delta.reasoning_content", false,
     ).await.unwrap();
 
     // Create model
@@ -126,7 +126,7 @@ async fn test_api_key_update_allowed_providers() {
         None, None, None,
         "token", "refreshToken", "Authorization", "Bearer ", 86400, 1, false,
         false,
-        "choices.0.message.content", "choices.0.delta.reasoning_content",
+        "choices.0.message.content", "choices.0.delta.reasoning_content", false,
     ).await.unwrap();
     db.create_api_key("key-ap", "AP Test", "lgk-ap", "lgk-ap", None).await.unwrap();
 
@@ -150,7 +150,7 @@ async fn test_list_models_excludes_inactive() {
         None, None, None,
         "token", "refreshToken", "Authorization", "Bearer ", 86400, 1, false,
         false,
-        "choices.0.message.content", "choices.0.delta.reasoning_content",
+        "choices.0.message.content", "choices.0.delta.reasoning_content", false,
     ).await.unwrap();
     db.create_model("active-model", "Active", None, "chat", 50, None).await.unwrap();
     db.create_model("inactive-model", "Inactive", None, "chat", 50, None).await.unwrap();
@@ -189,7 +189,7 @@ async fn test_list_models_with_mappings_includes_provider() {
         None, None, None,
         "token", "refreshToken", "Authorization", "Bearer ", 86400, 1, false,
         false,
-        "choices.0.message.content", "choices.0.delta.reasoning_content",
+        "choices.0.message.content", "choices.0.delta.reasoning_content", false,
     ).await.unwrap();
     db.create_model("with-prov", "With Provider", None, "chat", 50, None).await.unwrap();
     db.add_model_mapping("with-prov", "mprov", "wp-i", 1, 1.0).await.unwrap();

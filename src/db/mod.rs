@@ -347,6 +347,16 @@ impl Database {
         .execute(&self.pool)
         .await;
 
+        // Migration: opt-in flag to strip <think>...</think> tags from OpenAI-protocol
+        // response bodies. Some non-compliant upstreams (e.g. MiniMax-M3) mix thinking
+        // content into the `content` field using markdown tags instead of the standard
+        // `reasoning_content` field. See docs/SPEC.md "strip_thinking_tags_in_response".
+        let _ = sqlx::query(
+            "ALTER TABLE providers ADD COLUMN strip_thinking_tags_in_response BOOLEAN NOT NULL DEFAULT 0"
+        )
+        .execute(&self.pool)
+        .await;
+
         // Migration: Change model_mappings unique constraint from (model_id, provider_id)
         // to (model_id, provider_id, provider_model_id) to allow same provider
         // with same provider_model_id to be mapped to multiple unified models.
@@ -587,10 +597,11 @@ impl Database {
         mock_mode: bool,
         response_content_path: &str,
         response_reasoning_path: &str,
+        strip_thinking_tags_in_response: bool,
     ) -> Result<(), sqlx::Error> {
         sqlx::query(
-            r#"INSERT INTO providers (id, name, base_url, api_type, auth_type, api_key, token_url, token_username, token_password, token_request_method, token_content_type, token_username_field, token_password_field, token_body_template, token_extra_headers, token_cookies, token_field, refresh_token_field, token_header_field, token_header_prefix, token_expiry_seconds, weight, bypass_proxy, mock_mode, response_content_path, response_reasoning_path)
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)"#
+            r#"INSERT INTO providers (id, name, base_url, api_type, auth_type, api_key, token_url, token_username, token_password, token_request_method, token_content_type, token_username_field, token_password_field, token_body_template, token_extra_headers, token_cookies, token_field, refresh_token_field, token_header_field, token_header_prefix, token_expiry_seconds, weight, bypass_proxy, mock_mode, response_content_path, response_reasoning_path, strip_thinking_tags_in_response)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)"#
         )
         .bind(id)
         .bind(name)
@@ -618,6 +629,7 @@ impl Database {
         .bind(mock_mode)
         .bind(response_content_path)
         .bind(response_reasoning_path)
+        .bind(strip_thinking_tags_in_response)
         .execute(&self.pool)
         .await?;
 
@@ -649,7 +661,7 @@ impl Database {
             api_key, token_url, token_username, token_password,
             None, None, None, None, None, None, None,
             token_field, refresh_token_field, token_header_field, token_header_prefix,
-            token_expiry_seconds, weight, false, false, "choices.0.message.content", "choices.0.delta.reasoning_content",
+            token_expiry_seconds, weight, false, false, "choices.0.message.content", "choices.0.delta.reasoning_content", false,
         ).await
     }
 
@@ -725,6 +737,7 @@ impl Database {
             subscription_start: opt_str(r, "subscription_start"),
             mock_mode: r.try_get::<i64, _>("mock_mode").unwrap_or(0) != 0,
             group_id: opt_str(r, "group_id"),
+            strip_thinking_tags_in_response: r.try_get::<i64, _>("strip_thinking_tags_in_response").unwrap_or(0) != 0,
             created_at: r.try_get("created_at").unwrap_or_default(),
             updated_at: r.try_get("updated_at").unwrap_or_default(),
         }
@@ -840,6 +853,7 @@ impl Database {
         chart_color: Option<&str>,
         subscription_start: Option<&str>,
         group_id: Option<&str>,
+        strip_thinking_tags_in_response: bool,
     ) -> Result<(), sqlx::Error> {
         // If ID changed, cascade update all related tables
         // Disable FK checks temporarily since we're updating the referenced key
@@ -873,6 +887,7 @@ impl Database {
                 subscription_start = ?,
                 mock_mode = ?,
                 group_id = ?,
+                strip_thinking_tags_in_response = ?,
                 updated_at = datetime('now')
                 WHERE id = ?"#
         )
@@ -906,6 +921,7 @@ impl Database {
         .bind(subscription_start)
         .bind(mock_mode)
         .bind(group_id)
+        .bind(strip_thinking_tags_in_response)
         .bind(old_id)
         .execute(&self.pool)
         .await?;
@@ -2972,6 +2988,11 @@ pub struct ProviderRow {
     pub subscription_start: Option<String>,
     pub mock_mode: bool,
     pub group_id: Option<String>,
+    /// Opt-in: strip `<think>...</think>` tags from OpenAI-protocol response bodies.
+    /// Useful for non-OpenAI-compliant upstreams (e.g. MiniMax-M3) that put thinking
+    /// content in the `content` field with markdown tags instead of the standard
+    /// `reasoning_content` field. See docs/SPEC.md.
+    pub strip_thinking_tags_in_response: bool,
     pub created_at: String,
     pub updated_at: String,
 }

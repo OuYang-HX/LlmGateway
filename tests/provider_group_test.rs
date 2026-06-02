@@ -9,7 +9,7 @@ async fn create_test_provider(db: &Database, id: &str) {
         id, id, "https://api.example.com/v1", "openai", "api_key",
         Some("test-key"), None, None, None, None, None, None, None, None, None, None,
         "token", "refreshToken", "Authorization", "Bearer ", 86400, 1, false, false,
-        "", "",
+        "", "", false,
     ).await.unwrap();
 }
 
@@ -18,7 +18,7 @@ async fn create_test_provider_with_group(db: &Database, id: &str, api_type: &str
         id, id, "https://api.example.com/v1", api_type, "api_key",
         Some("test-key"), None, None, None, None, None, None, None, None, None, None,
         "token", "refreshToken", "Authorization", "Bearer ", 86400, 1, false, false,
-        "", "",
+        "", "", false,
     ).await.unwrap();
     db.update_provider_group_id(id, Some(group_id)).await.unwrap();
 }
