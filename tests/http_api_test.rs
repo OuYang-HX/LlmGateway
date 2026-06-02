@@ -46,6 +46,7 @@ async fn build_test_app() -> TestServer {
         .route("/api/v1/models/:id", get(llm_gateway::api::get_model).delete(llm_gateway::api::delete_model).put(llm_gateway::api::update_model))
         .route("/api/v1/models/:id/mappings", get(llm_gateway::api::list_model_mappings).post(llm_gateway::api::add_model_mapping))
         .route("/api/v1/models/:id/mappings/:provider_id/:provider_model_id", put(llm_gateway::api::update_model_mapping).delete(llm_gateway::api::remove_model_mapping))
+        .route("/api/v1/quotas/usage", get(llm_gateway::api::get_all_quota_usage))
         .route("/api/v1/quotas/:provider_id", get(llm_gateway::api::get_provider_quota_usage).post(llm_gateway::api::set_provider_quota))
         .route("/api/v1/quotas/:provider_id/:quota_type", delete(llm_gateway::api::delete_provider_quota))
         .route("/api/v1/quotas/:provider_id/calibration", post(llm_gateway::api::set_quota_calibration).get(llm_gateway::api::get_provider_calibrations))
@@ -2150,4 +2151,74 @@ async fn test_http_provider_list_includes_strip_thinking() {
     let p2 = list.as_array().unwrap().iter().find(|p| p["id"] == "strip-list-2").unwrap();
     assert!(!p1["strip_thinking_tags_in_response"].as_bool().unwrap());
     assert!(p2["strip_thinking_tags_in_response"].as_bool().unwrap());
+}
+
+// ==================== Provider quota usage HTTP API ====================
+
+#[tokio::test]
+async fn test_http_quota_usage_empty() {
+    let server = build_test_app().await;
+    let resp = server.get("/api/v1/quotas/usage").await;
+    assert_eq!(resp.status_code(), StatusCode::OK);
+    let list: serde_json::Value = resp.json();
+    assert!(list.as_array().unwrap().is_empty());
+}
+
+#[tokio::test]
+async fn test_http_quota_crud_and_usage() {
+    let server = build_test_app().await;
+
+    // Create provider first
+    server.post("/api/v1/providers")
+        .json(&serde_json::json!({
+            "id": "quota-prov",
+            "name": "Quota Provider",
+            "base_url": "https://api.example.com/v1",
+            "api_type": "openai",
+            "auth_type": "api_key",
+            "api_key": "test-key"
+        }))
+        .await;
+
+    // Set quota (use new window_mode + window_size format)
+    let resp = server.post("/api/v1/quotas/quota-prov")
+        .json(&serde_json::json!({
+            "window_mode": "fixed",
+            "window_size": "1d",
+            "limit_count": 1000,
+            "is_enabled": true
+        }))
+        .await;
+    assert_eq!(resp.status_code(), StatusCode::OK);
+
+    // Get provider quotas
+    let resp = server.get("/api/v1/quotas/quota-prov").await;
+    assert_eq!(resp.status_code(), StatusCode::OK);
+    let quotas: serde_json::Value = resp.json();
+    assert!(quotas.as_array().unwrap().len() >= 1);
+
+    // Get all quota usage
+    let resp = server.get("/api/v1/quotas/usage").await;
+    assert_eq!(resp.status_code(), StatusCode::OK);
+    let usage: serde_json::Value = resp.json();
+    let arr = usage.as_array().unwrap();
+    assert!(!arr.is_empty(), "quota usage should not be empty after creating a quota");
+    let u = arr.iter().find(|q| q["provider_id"] == "quota-prov").unwrap();
+    assert_eq!(u["limit_count"].as_i64().unwrap(), 1000);
+    assert!(u["is_enabled"].as_bool().unwrap());
+
+    // Delete quota (quota_type in path is the internal format like "fixed:1d")
+    let quotas: serde_json::Value = server.get("/api/v1/quotas/quota-prov").await.json();
+    let qt = quotas.as_array().unwrap()[0]["quota_type"].as_str().unwrap();
+    let resp = server.delete(&format!("/api/v1/quotas/quota-prov/{}", qt)).await;
+    assert_eq!(resp.status_code(), StatusCode::OK);
+}
+
+#[tokio::test]
+async fn test_http_provider_health_stats() {
+    let server = build_test_app().await;
+    let resp = server.get("/api/v1/dashboard/health").await;
+    assert_eq!(resp.status_code(), StatusCode::OK);
+    let stats: serde_json::Value = resp.json();
+    assert!(stats.is_array());
 }
