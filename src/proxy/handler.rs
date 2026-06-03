@@ -231,15 +231,35 @@ fn strip_thinking_from_sse_chunk_with_state(chunk_str: &str, stripper: &mut SseT
             if let Some(choices) = v.get_mut("choices").and_then(|c| c.as_array_mut()) {
                 for choice in choices {
                     if let Some(delta) = choice.get_mut("delta") {
-                        if let Some(content_value) = delta.get_mut("content") {
-                            if let Some(content_str) = content_value.as_str() {
-                                match stripper.strip_delta(content_str) {
-                                    Some(cleaned) => {
-                                        *content_value = serde_json::Value::String(cleaned);
-                                    }
-                                    None => {
-                                        // Entire content is inside thinking block - set to empty
-                                        *content_value = serde_json::Value::String(String::new());
+                        // Handle reasoning_content for MiniMax M3 - move to content if content is empty
+                        let has_reasoning = delta.get("reasoning_content").and_then(|v| v.as_str()).map(|s| !s.is_empty()).unwrap_or(false);
+                        if has_reasoning {
+                            // MiniMax M3 uses reasoning_content field instead of 
+                            let reasoning_value = delta.get("reasoning_content").unwrap().as_str().unwrap_or("");
+                            if !reasoning_value.is_empty() {
+                                let existing = delta.get("content").and_then(|v| v.as_str()).unwrap_or("").to_string();
+                                let new_content = if existing.is_empty() {
+                                    reasoning_value.to_string()
+                                } else {
+                                    format!("{}\n{}", existing, reasoning_value)
+                                };
+                                if let Some(v) = delta.get_mut("content") {
+                                    *v = serde_json::Value::String(new_content);
+                                }
+                            }
+                            if let Some(v) = delta.get_mut("reasoning_content") {
+                                *v = serde_json::Value::String(String::new());
+                            }
+                        } else {
+                            if let Some(content_value) = delta.get_mut("content") {
+                                if let Some(content_str) = content_value.as_str() {
+                                    match stripper.strip_delta(content_str) {
+                                        Some(cleaned) => {
+                                            *content_value = serde_json::Value::String(cleaned);
+                                        }
+                                        None => {
+                                            *content_value = serde_json::Value::String(String::new());
+                                        }
                                     }
                                 }
                             }
@@ -253,12 +273,63 @@ fn strip_thinking_from_sse_chunk_with_state(chunk_str: &str, stripper: &mut SseT
             output_lines.push(line.to_string());
         }
     }
-    
     let result = output_lines.join("\n");
     axum::body::Bytes::from(result)
 }
-
-
+/// Transform MiniMax M3's reasoning_content field to content field for OpenAI compatibility.
+fn transform_reasoning_content_to_content(chunk_str: &str) -> axum::body::Bytes {
+    let mut output_lines: Vec<String> = Vec::new();
+    for line in chunk_str.split('\n') {
+        let trimmed = line.trim();
+        if !trimmed.starts_with("data:") {
+            output_lines.push(line.to_string());
+            continue;
+        }
+        let json_str = trimmed.strip_prefix("data:").unwrap_or(trimmed).trim_start();
+        if json_str.is_empty() || json_str == "[DONE]" {
+            output_lines.push(line.to_string());
+            continue;
+        }
+        if let Ok(mut v) = serde_json::from_str::<serde_json::Value>(json_str) {
+            if let Some(choices) = v.get_mut("choices").and_then(|c| c.as_array_mut()) {
+                for choice in choices {
+                    if let Some(delta) = choice.get_mut("delta") {
+                        let reasoning_value = delta.get("reasoning_content")
+                            .and_then(|v| v.as_str())
+                            .unwrap_or("");
+                        if !reasoning_value.is_empty() {
+                            let existing = delta.get("content")
+                                .and_then(|v| v.as_str())
+                                .unwrap_or("")
+                                .to_string();
+                            let new_content = if existing.is_empty() {
+                                reasoning_value.to_string()
+                            } else {
+                                format!("{}\n{}", existing, reasoning_value)
+                            };
+                            if let Some(v) = delta.get_mut("content") {
+                                *v = serde_json::Value::String(new_content);
+                            }
+                            if let Some(v) = delta.get_mut("reasoning_content") {
+                                *v = serde_json::Value::String(String::new());
+                            }
+                            if let Some(v) = delta.get_mut("reasoning_details") {
+                                *v = serde_json::Value::Array(Vec::new());
+                            }
+                        }
+                    }
+                }
+            }
+            let transformed = serde_json::to_string(&v).unwrap_or_else(|_| json_str.to_string());
+            output_lines.push(format!("data: {}", transformed));
+        } else {
+            output_lines.push(line.to_string());
+        }
+    }
+    let result = output_lines.join("\n");
+    axum::body::Bytes::from(result)
+}
+/// Standard OpenAI-compatible /v1/models endpoint.
 /// Standard OpenAI-compatible /v1/models endpoint.
 /// Lists all active unified models that are accessible by the given API key.
 async fn list_models_for_api_key(
@@ -670,8 +741,12 @@ pub async fn proxy_request(
                                             if let Some(choices) = v.get("choices").and_then(|v| v.as_array()) {
                                                 for choice in choices {
                                                     if let Some(delta) = choice.get("delta") {
+                                                        // Extract content from both content and reasoning_content fields (MiniMax M3)
                                                         if let Some(content) = delta.get("content").and_then(|v| v.as_str()) {
                                                             all_delta_content.push_str(content);
+                                                        }
+                                                        if let Some(reasoning) = delta.get("reasoning_content").and_then(|v| v.as_str()) {
+                                                            all_delta_content.push_str(reasoning);
                                                         }
                                                     }
                                                     // Extract finish_reason if present
@@ -702,12 +777,15 @@ pub async fn proxy_request(
                                         format!("data: {}\n\ndata: [DONE]\n\n", err_json)
                                     };
                                     let _ = tx.send(Ok::<_, std::convert::Infallible>(axum::body::Bytes::from(error_event))).await;
-                                    break;
                                 }
-
                                 // Strip thinking tags from SSE content deltas when enabled
-                                let send_bytes = if sse_stripper.is_some() {
+                                // For MiniMax M3 which uses reasoning_content field, we need special handling
+                                let has_reasoning_content = chunk_str.contains("reasoning_content");
+                                let send_bytes = if sse_stripper.is_some() && !has_reasoning_content {
                                     strip_thinking_from_sse_chunk_with_state(&chunk_str, sse_stripper.as_mut().unwrap())
+                                } else if has_reasoning_content {
+                                    // MiniMax M3: move reasoning_content to content for OpenAI compatibility
+                                    transform_reasoning_content_to_content(&chunk_str)
                                 } else {
                                     bytes
                                 };
