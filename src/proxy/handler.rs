@@ -276,7 +276,16 @@ fn strip_thinking_from_sse_chunk_with_state(chunk_str: &str, stripper: &mut SseT
     let result = output_lines.join("\n");
     axum::body::Bytes::from(result)
 }
-/// Transform MiniMax M3's reasoning_content field to content field for OpenAI compatibility.
+// transform_reasoning_content_to_content: Extract actual reply from MiniMax M3 content.
+// MiniMax M3 streaming format (without reasoning_split):
+//   - content field contains: 思考内容...</think>\n实际回复
+//   - We extract everything after </think>\n as the actual reply
+// MiniMax M3 streaming format (with reasoning_split):
+//   - content field = actual reply (already clean)
+//   - reasoning_content field = thinking (not needed)
+// OMP clients only understand content field, so we:
+//   1. Extract actual reply from content (strip thinking tags)
+//   2. Clear reasoning_content and reasoning_details
 fn transform_reasoning_content_to_content(chunk_str: &str) -> axum::body::Bytes {
     let mut output_lines: Vec<String> = Vec::new();
     for line in chunk_str.split('\n') {
@@ -294,28 +303,30 @@ fn transform_reasoning_content_to_content(chunk_str: &str) -> axum::body::Bytes 
             if let Some(choices) = v.get_mut("choices").and_then(|c| c.as_array_mut()) {
                 for choice in choices {
                     if let Some(delta) = choice.get_mut("delta") {
-                        let reasoning_value = delta.get("reasoning_content")
+                        // Get content
+                        let content_value = delta.get("content")
                             .and_then(|v| v.as_str())
-                            .unwrap_or("");
-                        if !reasoning_value.is_empty() {
-                            let existing = delta.get("content")
-                                .and_then(|v| v.as_str())
-                                .unwrap_or("")
-                                .to_string();
-                            let new_content = if existing.is_empty() {
-                                reasoning_value.to_string()
-                            } else {
-                                format!("{}\n{}", existing, reasoning_value)
-                            };
-                            if let Some(v) = delta.get_mut("content") {
-                                *v = serde_json::Value::String(new_content);
-                            }
-                            if let Some(v) = delta.get_mut("reasoning_content") {
-                                *v = serde_json::Value::String(String::new());
-                            }
-                            if let Some(v) = delta.get_mut("reasoning_details") {
-                                *v = serde_json::Value::Array(Vec::new());
-                            }
+                            .unwrap_or("")
+                            .to_string();
+                        // Extract actual reply: take content after </think>\n (MiniMax format)
+                        let actual_reply = if content_value.contains("</think>") {
+                            // Split by </think>\n and take the last part (actual reply)
+                            let parts: Vec<&str> = content_value.split("</think>").collect();
+                            let after_think = parts.last().unwrap_or(&"").trim_start_matches('\n');
+                            after_think.to_string()
+                        } else {
+                            content_value
+                        };
+                        // Update content with actual reply
+                        if let Some(v) = delta.get_mut("content") {
+                            *v = serde_json::Value::String(actual_reply);
+                        }
+                        // Clear reasoning fields - OMP doesn't understand them
+                        if let Some(v) = delta.get_mut("reasoning_content") {
+                            *v = serde_json::Value::String(String::new());
+                        }
+                        if let Some(v) = delta.get_mut("reasoning_details") {
+                            *v = serde_json::Value::Array(Vec::new());
                         }
                     }
                 }
