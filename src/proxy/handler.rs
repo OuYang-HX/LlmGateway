@@ -505,6 +505,12 @@ pub async fn proxy_request(
             if !obj.contains_key("max_completion_tokens") && !obj.contains_key("max_tokens") {
                 obj.insert("max_completion_tokens".to_string(), serde_json::Value::Number(serde_json::Number::from(8192)));
             }
+            // Inject reasoning_split for providers that support it (e.g. MiniMax M3).
+            // This separates thinking into reasoning_content field instead of mixing
+            // thinking tags into content, keeping content always clean.
+            if !obj.contains_key("reasoning_split") {
+                obj.insert("reasoning_split".to_string(), serde_json::Value::Bool(true));
+            }
         }
         axum::body::Bytes::from(serde_json::to_string(&body_json).unwrap_or_default())
     } else {
