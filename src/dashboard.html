@@ -1884,8 +1884,7 @@ async function saveExternalId() {
     try {
         // 1. 检查对外ID对应的统一模型是否存在
         let modelExists = false;
-        const existingModels = await fetch(API + '/models/' + externalId).then(r => r.json()).catch(() => null);
-        
+        const existingModels = await fetch(API + '/models/' + encodeURIComponent(externalId)).then(r => r.json()).catch(() => null);
         if (existingModels && existingModels.model && existingModels.model.id === externalId) {
             modelExists = true;
             // 检查该服务商模型是否已映射到此统一模型
@@ -1898,7 +1897,6 @@ async function saveExternalId() {
                 return;
             }
         }
-        
         // 2. 如果统一模型不存在，先创建
         if (!modelExists) {
             const createResp = await fetch(API + '/models', {
@@ -1917,9 +1915,8 @@ async function saveExternalId() {
                 return;
             }
         }
-        
         // 3. 添加映射
-        const mappingResp = await fetch(API + '/models/' + externalId + '/mappings', {
+        const mappingResp = await fetch(API + '/models/' + encodeURIComponent(externalId) + '/mappings', {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify({
@@ -1951,18 +1948,17 @@ async function removeExternalId(providerModelId, externalId) {
     if (!confirm('确定要删除对外ID "' + externalId + '" 的映射吗？')) return;
     if (!currentModelProviderId) return;
     try {
-        const resp = await fetch(API + '/models/' + externalId + '/mappings/' + currentModelProviderId + '/' + encodeURIComponent(providerModelId), {
+        const resp = await fetch(API + '/models/' + encodeURIComponent(externalId) + '/mappings/' + currentModelProviderId + '/' + encodeURIComponent(providerModelId), {
             method: 'DELETE'
         });
         if (resp.ok) {
-            // 检查该统一模型是否还有其他映射，如果没有则删除空模型
-            const modelData = await fetch(API + '/models/' + externalId).then(r => r.json()).catch(() => null);
+            const modelData = await fetch(API + '/models/' + encodeURIComponent(externalId)).then(r => r.json()).catch(() => null);
             if (modelData && modelData.mappings && modelData.mappings.length === 0) {
-                await fetch(API + '/models/' + externalId, { method: 'DELETE' });
+                await fetch(API + '/models/' + encodeURIComponent(externalId), { method: 'DELETE' });
             }
             await loadModels();
         } else {
-            const err = await resp.json();
+            const err = await resp.json().catch(() => ({ error: resp.statusText }));
             alert('删除失败: ' + (err.error || resp.statusText));
         }
     } catch (e) { alert('网络错误: ' + e.message); }
