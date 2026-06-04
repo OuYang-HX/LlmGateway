@@ -179,10 +179,9 @@ impl SseThinkingStripper {
                 return Some(result);
             }
 
-            if before.is_empty() {
-                return None;
-            }
-            return Some(before);
+            // MiniMax content before <think> is always thinking (never actual reply).
+            // Suppress it to prevent thinking leaking into the response.
+            return None;
         }
 
         // No thinking tags in this content, pass through
